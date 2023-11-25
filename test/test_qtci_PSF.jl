@@ -69,4 +69,10 @@
 
     @test maximum(abs.((qttdata .- inputdata))) < 1.e-7
     @test maximum(abs.((Acont[1:end-1, 1:end-1] .- inputdata))) < 1.e-10
+
+    @test qttdata ≈ qtt[:,:]
+    @test qttdata[:,100] ≈ qtt[:,100]
+    @test qttdata[100,:] ≈ qtt[100,:]
+    @test qttdata[100,:] ≈ qtt[100,:]
+    
 end
