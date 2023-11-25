@@ -4,6 +4,7 @@ import TensorCrossInterpolation as TCI
 using TCI4Keldysh
 using MAT
 using JLD
+using Plots
 
 begin 
 function get_ωcont(ωmax, Nωcont_pos)
@@ -80,9 +81,9 @@ begin
     T = 0.01 * U
     Δ = (U/pi)/0.5
     # EOM paper:        U=5*Δ
-    Δ = 0.1
-    U = 0.5*Δ
-    T = 0.01*Δ
+    #Δ = 0.1
+    #U = 0.5*Δ
+    #T = 0.01*Δ
 
     ### Broadening ######################
     #   parameters      σ       γ       #
@@ -95,10 +96,10 @@ begin
     #####################################
     σ = 0.6
     sigmab = [σ]
-    g = T * 0.5
+    g = T * 1.
     tol = 1.e-14
-    estep = 600
-    emin = 1e-6; emax = 1e2;
+    estep = 2048
+    emin = 1e-6; emax = 1e3;
     Lfun = "FD" 
     is2sum = false
     verbose = false
@@ -109,8 +110,8 @@ begin
     qR_K3 = 2^R_K3
     qmesh = collect(Int, range(1, qR_K3, length=qR_K3));
     Nωcont_pos = div(qR_K3,2)
-    #ωcont = get_ωcont(D*0.5, Nωcont_pos)
-    ωcont = get_ωcont(D*2., Nωcont_pos)
+    ωcont = get_ωcont(D*0.5, Nωcont_pos)
+    #ωcont = get_ωcont(D*2., Nωcont_pos)
 
     println("parameters: \n\tT = ", T, "\n\tU = ", U, "\n\tΔ = ", Δ)
 
@@ -118,60 +119,24 @@ begin
 
 end;
 
+qttdat = broadenedPsf.(qmesh,qmesh')
+#inputfile = load("./strange_lowres.h5")
+#qttdat = inputfile["qttdat"]
+#qttdat = qttdat[126:126+511, 126:126+511]
+#qttdat = reverse(qttdat)
+qmesh = collect(1:size(qttdat, 1))
+
+dataaxes = collect(collect.(axes(qttdat)))
+qttK3a, ranks, errors = quanticscrossinterpolate(Float64, broadenedPsf        , dataaxes; tolerance=1e-6)
+#qttK3a2, ranks, errors = quanticscrossinterpolate(Float64, (i,j) -> qttdat[i,j], dataaxes; tolerance=1e-6)
+qttdata = qttK3a.(qmesh,qmesh')
 
 
-tol_high = 1e-3
-tol_low  = 1e-4
-qttK3a , _, _ = qtci_my_PSF(broadenedPsf,qmesh,tol_high)
-qttK3a2, _, _ = qtci_my_PSF(broadenedPsf,qmesh,tol_low )
+save_plotdata("data/plotdata_4pPSFs1.h5", qttK3a , qttdata , qmesh, ωcont, dict_K3)
 
-
-### evaluate on some slice --> can be plotted
-Length = 218
-qplotmesh = Int.(round.(range(2^(R_K3-1)-250, 2^(R_K3-1)+250, length=Length)))
-qttdata = qttK3a.(qplotmesh, qplotmesh',2^(R_K3-1))
-qttdata2 = qttK3a2.(qplotmesh, qplotmesh',2^(R_K3-1))
-vmax = maximum(abs.(qttdata))
-kwargs = Dict(:vmax=>vmax, :vmin=>-vmax)
-save_plotdata("data/plotdata_4pPSFs1.h5", qttK3a , qttdata, qplotmesh, ωcont, dict_K3)
-save_plotdata("data/plotdata_4pPSFs2.h5", qttK3a2, qttdata, qplotmesh, ωcont, dict_K3)
-
-save("data/qtts.jld", "qtt1", qttK3a)
-save("data/qtts.jld", "qtt2", qttK3a2)
-save("data/qtts.jld", "broadenedPsf", broadenedPsf)
+#save("data/qtts.jld", "qtt1", qttK3a)
+#save("data/qtts.jld", "qtt2", qttK3a2)
+#save("data/qtts.jld", "broadenedPsf", broadenedPsf)
 
 
 
-
-begin
-    fig, axs = subplots(ncols=2, nrows=2, figsize=(300, 250)./72)
-
-    axs[1, 1].set_title(L"\mathrm{Re}(K_{3a;\, \omega,\nu,\nu'})")
-    axs[1, 1].imshow(real(qttK3adata)'; kwargs...) |> colorbar
-    #axs[1, 2].set_title(L"\mathrm{Im}(K_{3a})")
-    #axs[1, 2].imshow(imag(qttK3adata)'; extent=box, kwargs...) |> colorbar
-
-    axs[1, 1].set_ylabel(L"\nu'")
-    for ax in axs[1, :]
-        ax.set_xlabel(L"\nu")
-    end
-    axs[2, 1].semilogy(1:TCI.rank(qttK3a.tt), qttK3a.tt.pivoterrors, label=L"\epsilon=10^{-3}")
-    axs[2, 1].semilogy(1:TCI.rank(qttK3a2.tt), qttK3a2.tt.pivoterrors, label=L"\epsilon=10^{-4}")
-    axs[2, 1].set_xlabel(L"D_{\max}")
-    axs[2, 1].set_ylabel("abs. error")
-
-    axs[2, 2].semilogy(1:3R_K3-1, 2 .^ min.(1:3R_K3-1, 3R_K3-1:-1:1), color="gray", linewidth=0.5)
-    axs[2, 2].semilogy(1:3R_K3-1, TCI.linkdims(qttK3a.tt))
-    axs[2, 2].semilogy(1:3R_K3-1, TCI.linkdims(qttK3a2.tt))
-    axs[2, 2].set_xlabel(L"\ell")
-    axs[2, 2].set_ylabel(L"D_\ell")
-    #axs[2, 2].set_ylim(1.5, 300)
-    axs[2, 2].set_xticks([1, 10, 19])
-
-    axs[2, 1].legend()
-    fig.suptitle("QTCI of 4p PSF")
-    tight_layout()
-
-
-    fig.savefig("PSF_4p.pdf")
-end

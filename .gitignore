@@ -1,2 +1,4 @@
 data/*
 Manifest.toml
+scripts/plots/*
+*.ipynb

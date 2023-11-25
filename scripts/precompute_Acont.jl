@@ -68,15 +68,15 @@ begin
     #####################################
     σ = 0.6
     sigmab = [σ]
-    g = T * 0.5
+    g = T * 1.
     tol = 1.e-14
-    estep = 600
-    emin = 1e-6; emax = 1e2;
+    estep = 2048
+    emin = 1e-6; emax = 1e4;
     Lfun = "FD" 
     is2sum = false
     verbose = false
 
-    Nωcont_pos = 256 # 512#
+    Nωcont_pos = 2^13 # 512#
     #ωcont = get_ωcont(D*0.5, Nωcont_pos)
     ωcont = get_ωcont(D*2., Nωcont_pos)
 
@@ -85,7 +85,7 @@ end;
 
 
 @time ωcont, Acont = TCI4Keldysh.getAcont_mp(ωdisc, Adisc, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
-broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+#broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
 
-filename_broadened = "TCI4Keldysh/data/precomputedAcont"
+filename_broadened = "data/precomputedAcont_estep"*string(estep)*"_Nw"*string(Nωcont_pos)
 save_Acont(filename_broadened, ωdisc, Adisc, ωcont, Acont)
