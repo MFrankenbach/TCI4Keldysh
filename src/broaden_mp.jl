@@ -42,41 +42,7 @@ function getAcont_mp(
 
 
     D, _, Adisc, Kernels, ωcont = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; kwargs...)
-    sz = [size(Adisc)...]
-    
-    ##########################################################
-    ### EFFICIENCY IN TERMS OF   CPU TIME: 🙈     RAM: 😄  ###
-    ##########################################################
-    #if D == 1
-    #    M1 = Kernels[1]
-    #    @tullio Acont[i] := M1[i,a] * Adisc[a]
-    #elseif D == 2
-    #    M1, M2 = Kernels[1], Kernels[2]
-    #    @tullio Acont[i,j] := M1[i,a] * M2[j,b] * Adisc[a,b]
-    #else     # D == 3
-    #    M1, M2, M3 = Kernels[1], Kernels[2], Kernels[3]
-    #    @tullio Acont[i,j,k] := M1[i,a] * M2[j,b] * M3[k,c] * Adisc[a,b,c]
-    #end
-
-    
-    ##########################################################
-    ### EFFICIENCY IN TERMS OF   CPU TIME: 😄     RAM: 🙈  ###
-    ##########################################################
-    Acont = copy(Adisc)  # Initialize
-    for it1 in 1:D
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tit1 = ", it1)
-        Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1]))
-        Acont = Kernels[it1] * Acont
-
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tconvolution [done]")
-        sz[it1] = length(ωcont)
-        Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
-        if D>1
-            Acont = permutedims(Acont, (collect(2:D)..., 1))
-        end
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tpermutation [done]")
-        #GC.gc()
-    end
+    Acont = convolute_with_broadening_kernel_mp(Kernels, Adisc)
 
     return ωcont, Acont
 end
@@ -121,6 +87,47 @@ function prepare_broadening_mp(
 end
 
 
+function convolute_with_broadening_kernel_mp(Kernels, Adisc)
+    sz = [size(Adisc)...]
+    D = ndims(Adisc)
+
+    ##########################################################
+    ### EFFICIENCY IN TERMS OF   CPU TIME: 🙈     RAM: 😄  ###
+    ##########################################################
+    #if D == 1
+    #    M1 = Kernels[1]
+    #    @tullio Acont[i] := M1[i,a] * Adisc[a]
+    #elseif D == 2
+    #    M1, M2 = Kernels[1], Kernels[2]
+    #    @tullio Acont[i,j] := M1[i,a] * M2[j,b] * Adisc[a,b]
+    #else     # D == 3
+    #    M1, M2, M3 = Kernels[1], Kernels[2], Kernels[3]
+    #    @tullio Acont[i,j,k] := M1[i,a] * M2[j,b] * M3[k,c] * Adisc[a,b,c]
+    #end
+
+    
+    ##########################################################
+    ### EFFICIENCY IN TERMS OF   CPU TIME: 😄     RAM: 🙈  ###
+    ##########################################################
+    Acont = copy(Adisc)  # Initialize
+    for it1 in 1:D
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tit1 = ", it1)
+        Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1]))
+        Acont = Kernels[it1] * Acont
+
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tconvolution [done]")
+        sz[it1] = size(Kernels[it1])[1]
+        Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
+        if D>1
+            Acont = permutedims(Acont, (collect(2:D)..., 1))
+        end
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tpermutation [done]")
+        #GC.gc()
+    end
+
+    return Acont
+end
+
 struct BroadenedPSF{D}
     Adisc   ::Array{Float64,D}
     Kernels ::NTuple{D,Matrix{Float64}}
@@ -163,3 +170,45 @@ function (psf::BroadenedPSF{D})(idx::Vararg{Int,D})  ::Float64 where {D}
 end
 
 
+
+function Base.:getindex(
+    psf :: BroadenedPSF{D},
+    w   :: Vararg{Union{Int, Colon}, D} # , UnitRange
+    )   :: Union{Float64, AbstractArray{Float64}} where {D}
+
+    function check_bounds_int(d)
+        if !(1<=w[d]<=size(psf.Kernels[d], 1))
+            throw(BoundsError(psf, w))
+        end
+        return nothing
+    end
+    function check_bounds_ur(d)
+        if !(1<=firstindex(w[d])<lastindex(w[d])<=size(psf.Kernels[d], 1))
+            throw(BoundsError(psf, w))
+        end
+        return nothing
+    end
+
+    kernels_new = [psf.Kernels[i] for i in 1:D]# [qtt.tt.T[i][:,qw[i],:] for i in 1:DR]
+    # bounds check
+    #@assert all(1 .<= w .<= 2^R)
+
+    #qw = Array{Union{UnitRange,Colon}}(undef, DR)
+    for d in 1:D
+        if typeof(w[d]) == Int
+            @boundscheck check_bounds_int(d)
+                
+            kernels_new[d] = kernels_new[d][w[d]:w[d],:]
+            
+        elseif typeof(w[d]) == UnitRange
+            @boundscheck check_bounds_ur(d)
+
+            kernels_new[d] = kernels_new[d][w[d],:]
+            
+        end
+     end
+    
+    result = convolute_with_broadening_kernel_mp(kernels_new, psf.Adisc)
+
+    return result
+end

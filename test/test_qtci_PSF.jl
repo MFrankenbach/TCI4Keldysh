@@ -50,7 +50,9 @@
     is2sum = false
     verbose = false
 
-    R = 8
+
+
+    R = 6
     Nωcont_pos = 2^R # 512#
     ωcont = get_ωcont(D*0.5, Nωcont_pos)
 
@@ -70,9 +72,12 @@
     @test maximum(abs.((qttdata .- inputdata))) < 1.e-7
     @test maximum(abs.((Acont[1:end-1, 1:end-1] .- inputdata))) < 1.e-10
 
+    # test slicing for qtts:
     @test qttdata ≈ qtt[:,:]
     @test qttdata[:,100] ≈ qtt[:,100]
     @test qttdata[100,:] ≈ qtt[100,:]
     @test qttdata[100,:] ≈ qtt[100,:]
-    
+
+    # test slicing for BroadenedPSF:
+    @test broadenedPsf[:,:] ≈ Acont
 end
