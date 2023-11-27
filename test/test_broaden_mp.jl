@@ -36,7 +36,7 @@ end
     ### compare with broadened Dirac-δ peak:        2p
     idx_ω′s1 = [40]
     ωdisc, Adisc1 = get_Adisc_δpeak_mp(idx_ω′s1, Nωs_pos, 1)
-    Δωdisc = get_Δω(ωdisc)
+    Δωdisc = TCI4Keldysh.get_ω_binwidths(ωdisc)
     idx_ω′2 = [-40]
     _, Adisc2 = get_Adisc_δpeak_mp(idx_ω′2, Nωs_pos, 1)
     α = 0.3
@@ -53,7 +53,7 @@ end
     Nωs_pos = 30
     idx_ω′s1 = [10, 12]
     ωdisc, Adisc1 = get_Adisc_δpeak_mp(idx_ω′s1, Nωs_pos, 2)
-    Δωdisc = get_Δω(ωdisc)
+    Δωdisc = TCI4Keldysh.get_ω_binwidths(ωdisc)
     idx_ω′2 = [-10, 13]
     _, Adisc2 = get_Adisc_δpeak_mp(idx_ω′2, Nωs_pos, 2)
     α = 0.3
@@ -68,7 +68,7 @@ end
     Nωs_pos = 10
     idx_ω′s1 = [2, 3, 4]
     ωdisc, Adisc1 = get_Adisc_δpeak_mp(idx_ω′s1, Nωs_pos, 3)
-    Δωdisc = get_Δω(ωdisc)
+    Δωdisc = TCI4Keldysh.get_ω_binwidths(ωdisc)
     idx_ω′2 = [-2, -3, 4]
     _, Adisc2 = get_Adisc_δpeak_mp(idx_ω′2, Nωs_pos, 3)
     α = 0.3

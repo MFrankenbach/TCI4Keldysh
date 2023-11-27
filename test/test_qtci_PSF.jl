@@ -2,15 +2,9 @@
 
     function get_ωcont(ωmax, Nωcont_pos)
         ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
-        #Δωcont = get_Δω(ωcont)
-        #Acont = zeros((ones(Int, D).*(Nωcont_pos*2+1))...)
         return ωcont
     end
 
-    function get_Δω(ωs)
-        Δωs = [ωs[2] - ωs[1]; (ωs[3:end] - ωs[1:end-2]) / 2; ωs[end] - ωs[end-1]]  # width of the frequency bin
-        return Δωs 
-    end
 
     filename = joinpath(dirname(@__FILE__), "test_PSF_2D.h5")
     f = h5open(filename, "r")

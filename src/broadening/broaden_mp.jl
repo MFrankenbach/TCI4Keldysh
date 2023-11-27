@@ -128,11 +128,11 @@ function convolute_with_broadening_kernel_mp(Kernels, Adisc)
     return Acont
 end
 
-struct BroadenedPSF{D}
-    Adisc   ::Array{Float64,D}
-    Kernels ::NTuple{D,Matrix{Float64}}
-    ωcont   ::Vector{Float64}
-    sz      ::NTuple{D,Int}
+struct BroadenedPSF{D}                  ### D = number of frequency dimensions
+    Adisc   ::Array{Float64,D}          ### discrete spectral data; best: compactified with compactAdisc(...)
+    Kernels ::NTuple{D,Matrix{Float64}} ### broadening kernels
+    ωcont   ::Vector{Float64}           ### continous frequencies for all D dimensions
+    sz      ::NTuple{D,Int}             ### size of Adisc
 
     function BroadenedPSF(
         ωdisc   ::Vector{Float64},  # Logarithimic frequency bins. 

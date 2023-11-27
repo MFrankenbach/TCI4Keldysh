@@ -10,15 +10,11 @@ function lorentzian(ω, ω′; σ=1.)
     return 1. / pi / σ / (1 + ((ω - ω′)/σ)^2)
 end
 
-function get_Δω(ωs)
-    Δωs = [ωs[2] - ωs[1]; (ωs[3:end] - ωs[1:end-2]) / 2; ωs[end] - ωs[end-1]]  # width of the frequency bin
-    return Δωs 
-end
 
 
 function get_ωcont(ωmax, Nωcont_pos, D)
     ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
-    Δωcont = get_Δω(ωcont)
+    Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
     Acont = zeros(Nωcont_pos*2+1,D)
     return ωcont, Δωcont, Acont
 end
@@ -51,7 +47,7 @@ end
         ### compare with broadened Dirac-δ peak:
         idx_ω′1 = 700
         ωdisc, Adisc1 = get_Adisc_δpeak(idx_ω′1, Nωs_pos, D)
-        Δωdisc = get_Δω(ωdisc)
+        Δωdisc = TCI4Keldysh.get_ω_binwidths(ωdisc)
         idx_ω′2 = -400
         _, Adisc2 = get_Adisc_δpeak(idx_ω′2, Nωs_pos, D)
         α = 0.3

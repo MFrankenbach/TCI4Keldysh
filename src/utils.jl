@@ -40,3 +40,8 @@ function compactAdisc(
 
     return oks, ωdiscs, Adisc
 end
+
+function get_ω_binwidths(ωs::Vector{Float64}) ::Vector{Float64}
+    Δωs = [ωs[2] - ωs[1]; (ωs[3:end] - ωs[1:end-2]) / 2; ωs[end] - ωs[end-1]]  # width of the frequency bin
+    return Δωs 
+end

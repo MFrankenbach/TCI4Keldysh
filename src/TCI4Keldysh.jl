@@ -9,11 +9,11 @@ using QuanticsTCI
 
 include("utils.jl")
 include("TCI_utils.jl")
-include("broaden.jl")
-include("broaden_mp.jl")
-include("broaden_logGauss.jl")
-include("broaden_lin.jl")
-include("broaden_Gauss.jl")
+include("broadening/broaden_1D.jl")
+include("broadening/broaden_mp.jl")
+include("broadening/broaden_logGauss.jl")
+include("broadening/broaden_lin.jl")
+include("broadening/broaden_Gauss.jl")
 
 
 end # module TCI4Keldysh

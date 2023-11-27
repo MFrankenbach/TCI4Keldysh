@@ -80,7 +80,7 @@ function getAcont_logBroaden(
     if length(log10ωcont) > 1
         logωcont = log10ωcont * log(10)  # exponents of frequencies (base e)
         ωcont = 10 .^ log10ωcont  # center of the frequency bin
-        Δωcont = [ωcont[2] - ωcont[1]; (ωcont[3:end] - ωcont[1:end-2]) / 2; ωcont[end] - ωcont[end-1]]  # width of the frequency bin
+        Δωcont = get_ω_binwidths(ωcont)  # width of the frequency bin
         Acont = zeros(length(ωcont), length(sigmab))  # temporary result; weights are to be binned
 
         odiscmat = ωdisc .+ zeros(1, length(sigmab))

@@ -2,7 +2,7 @@
 
     function get_ωcont(ωmax, Nωcont_pos)
         ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
-        Δωcont = get_Δω(ωcont)
+        Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
         Acont = zeros(Nωcont_pos*2+1,1)
         return ωcont, Δωcont, Acont
     end
@@ -35,7 +35,7 @@
         ### compare with broadened Dirac-δ peak:
         idx_ω′1 = 700
         ωdisc, Adisc1 = get_Adisc_δpeak(idx_ω′1, Nωs_pos)
-        Δωdisc = get_Δω(ωdisc)
+        Δωdisc = TCI4Keldysh.get_ω_binwidths(ωdisc)
         idx_ω′2 = -600
         _, Adisc2 = get_Adisc_δpeak(idx_ω′2, Nωs_pos)
         α = 0.3
