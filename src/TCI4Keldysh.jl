@@ -6,6 +6,7 @@ using Printf
 #using Tullio
 using Dates
 using QuanticsTCI
+using FFTW
 
 include("utils/utils.jl")
 include("utils/TCI_utils.jl")
