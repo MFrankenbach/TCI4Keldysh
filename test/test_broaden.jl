@@ -1,12 +1,5 @@
 @testset "broaden with log then lin: " begin
 
-    function get_ωcont(ωmax, Nωcont_pos)
-        ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
-        Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
-        Acont = zeros(Nωcont_pos*2+1,1)
-        return ωcont, Δωcont, Acont
-    end
-
     function get_Adisc_δpeak(idx_ω′, Nωs_pos)
 
         
@@ -40,7 +33,11 @@
         _, Adisc2 = get_Adisc_δpeak(idx_ω′2, Nωs_pos)
         α = 0.3
         Adisc3 = α * Adisc1 + (1. - α) * Adisc2
-        ωcont, Δωcont, Acont = get_ωcont(1000., 10000)
+        Nωcont_pos = 10000
+        ωcont = get_ωcont(1000., Nωcont_pos)
+        Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
+        Acont = zeros(Nωcont_pos*2+1,1)
+
 
         #println("ωdisc1 = ", ωdisc[Nωs_pos+1 + idx_ω′1])
         #println("ωdisc2 = ", ωdisc[Nωs_pos+1 + idx_ω′2])

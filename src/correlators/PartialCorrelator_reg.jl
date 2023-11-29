@@ -7,35 +7,83 @@ partial correlator ̃Gₚ(ω₁, ω₂, ...) = ∫dε₁dε₂ ̃K(ω₁-ε₁) 
 struct PartialCorrelator_reg{D}
     Adisc   ::  Array{Float64,D}                # discrete PSF data; best: compactified with compactAdisc(...)
     Kernels ::  NTuple{D,Matrix{ComplexF64}}    # regular kernels
-    ωs      ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
-    isBos   ::  NTuple{D,Bool}                  # indicates whether ω_i/ε_i is a bosonic frequency
-
+    ωs_ext  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
+    ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
+    ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices
+    ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of indices
 
     ####################
     ### Constructors ###
     ####################
-    function PartialCorrelator_reg(Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, isBos::NTuple{D,Bool}, ωs::Vararg{Vector{ComplexF64},D}) where {D}
-
+    function PartialCorrelator_reg(Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
+        ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
         # Delete rows/columns that contain only zeros
-        AdiscIsZero_oks, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
+        _, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
         # Then pray that Adisc has no contributions for which the kernels diverge:
-        Kernels = ntuple(i -> get_regular_1DKernel(ωs[i], ωdiscs[i]) ,D)
-        return new{D}(Adisc, Kernels, (ωs..., ), isBos)
+        Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], ωdiscs[i]) ,D)
+        return new{D}(Adisc, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end
-    function PartialCorrelator_reg(Acont::BroadenedPSF{D}, isBos::NTuple{D,Bool}, ωs::Vararg{Vector{ComplexF64},D}) where {D}
+    function PartialCorrelator_reg(Acont::BroadenedPSF{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
+        ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
         δωcont = get_ω_binwidths(Acont.ωcont)
         # 1.: rediscretization of broadening kernel
         # 2.: contraction with regular kernel
-        Kernels = ntuple(i -> get_regular_1DKernel(ωs[i], Acont.ωcont) * (δωcont .* Acont.Kernels[i]), D)
-        return new{D}(Acont.Adisc, Kernels, (ωs..., ), isBos)
+        Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (δωcont .* Acont.Kernels[i]), D)
+        return new{D}(Acont.Adisc, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end
 
 end
 
 
+"""
+trafo_ω_args
+
+Compute internal frequencies from external ωs.
+Also compute the index transformation matrices:
+External indices have the ranges OneTo.(length.(ωs))
+
+
+Internal indices have the ranges OneTo.(length.(ωs_new))
+
+
+"""
+function trafo_ω_args(ωs::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where{D}
+    function grids_are_fine(grids)
+        Δgrids = [diff(g) for g in grids]
+        #ΔΔgrids = [diff(Δg) for Δg in Δgrids]
+        is_equidistant_symmetric = [(grids[i][1] == -grids[i][end]) && (maximum(abs.(diff(Δgrids[i]))) < 1.e-13) for i in eachindex(ωs)]
+        all_spacings_identical = maximum(abs.(diff([Δgrids[i][1] for i in eachindex(ωs)]))) < 1.e-13
+        #println("is_equidistant_symmetric: ", is_equidistant_symmetric)
+        #println("all_spacings_identical: ", all_spacings_identical)
+        #println("ΔΔgrids", [maximum(abs.(ΔΔgrids[i])) < 1.e-13 for i in eachindex(ωs)])
+        #println("[(grids[i][1] == -grids[i][end]) for i in eachindex(ωs)]: ", [(grids[i][1] + grids[i][end]) for i in eachindex(ωs)])
+        return all(is_equidistant_symmetric) && all_spacings_identical
+    end
+
+    # check if all grids are equally spaced and symmetric around 0:
+    if !grids_are_fine(ωs)
+        throw(ArgumentError("PartialCorrelator_reg requires equidistant symmetric grid."))
+    end
+
+    Δω = diff(ωs[1])[1]
+    ωs_max = [ωs[i][end] for i in eachindex(ωs)]
+    ωs_int_max = abs.(ωconv) * ωs_max
+    ωs_int = ntuple(i -> collect(LinRange(-ωs_int_max[i], ωs_int_max[i], 1 + trunc(Int, real(2. * ωs_int_max[i] / Δω) + 0.1   ))), D)
+    # check spacing of ωs_int:
+    #println("ntuple(i -> collect(trunc(Int, abs(2. * ωs_new_max[i] / Δω + 0.1))), D): ", ntuple(i -> 1 + trunc(Int, abs(2. * ωs_new_max[i] / Δω + 0.1)), D))
+    #println("[ωs_new[i][2] - ωs_new[i][1] - Δω for i in eachindex(ωs)]: ", [ωs_new[i][2] - ωs_new[i][1] - Δω for i in eachindex(ωs)])
+    @assert all( [ωs_int[i][2] - ωs_int[i][1] ≈ Δω for i in eachindex(ωs)])
+
+    Nωs_ext = length.(ωs)
+    ωconvMat = trunc.(Int, ωconv)
+    ωconvOff = ntuple(i -> sum([ωconvMat[i,j] == -1 ? Nωs_ext[j] : -ωconvMat[i,j] for j in 1:D]) + 1, D)
+
+    return ωs_int, ωconvMat, ωconvOff
+end
+
 function get_regular_1DKernel(ωs::Vector{ComplexF64}, ωdisc::Vector{Float64})
 
-    println("is there a zero in the ωdisc?: ", any(ωdisc.≈0.))
+    #println("is there a zero in the ωdisc?: ", any(ωdisc.≈0.))
     Kernel = 1. ./ (ωs .- ωdisc')
 
     is_divergent = .!isfinite.(Kernel)
@@ -44,3 +92,89 @@ function get_regular_1DKernel(ωs::Vector{ComplexF64}, ωdisc::Vector{Float64})
 
     return Kernel
 end
+
+
+function Base.:getindex(
+    Gp :: PartialCorrelator_reg{D},
+    w   :: Vararg{Union{Int, Colon}, D} # , UnitRange
+    )   :: Union{ComplexF64, AbstractArray{ComplexF64}} where {D}
+    return evaluate_without_ωconversion(Gp, w...)
+end
+
+
+function (Gp :: PartialCorrelator_reg{D})(w   :: Vararg{Int, D} )   ::ComplexF64 where {D}
+    return evaluate_with_ωconversion(Gp, w...)
+end
+
+function evaluate_with_ωconversion(
+    Gp :: PartialCorrelator_reg{D},
+    w   :: Vararg{Union{Int, Colon}, D} # , UnitRange
+    )   :: Union{ComplexF64, AbstractArray{ComplexF64}} where {D}
+    return evaluate_without_ωconversion(Gp, (Gp.ωconvMat * SA[w...] + Gp.ωconvOff)...)
+end
+
+
+function evaluate_without_ωconversion(Gp::PartialCorrelator_reg{D}, idx::Vararg{Int,D})  ::ComplexF64 where {D}
+    res = Gp.Adisc
+    sz_Adisc = size(res)
+    for i in 1:D
+        #println("i: ", i)
+        #res = view(psf.Kernels[i], idx[i]:idx[i], :) * reshape(res, (psf.sz[i], prod(psf.sz[i+1:D])))
+        res = view(Gp.Kernels[i], idx[i]:idx[i], :) * reshape(res, (sz_Adisc[i], prod(sz_Adisc[i+1:D])))    # version for Kernels[idx_ext, idx_int]
+        #j = D - i + 1
+        #res = reshape(res, (prod(psf.sz[1:j-1]), psf.sz[j])) * view(psf.Kernels[j], idx[j], :)
+        #res = reshape(res, (prod(sz_Adisc[1:j-1]), sz_Adisc[j])) * view(Gp.Kernels[j], idx[j], :)    # version for Kernels[idx_int, idx_ext]
+    end
+    #println("length(res): ", length(res))
+    return res[1]
+end
+
+function evaluate_without_ωconversion(
+    Gp :: PartialCorrelator_reg{D},
+    w   :: Vararg{Union{Int, Colon}, D} # , UnitRange
+    )   :: Union{ComplexF64, AbstractArray{ComplexF64}} where {D}
+
+    function check_bounds_int(d)
+        if !(1<=w[d]<=size(Gp.Kernels[d], 1))
+            throw(BoundsError(Gp, w))
+        end
+        return nothing
+    end
+    function check_bounds_ur(d)
+        if !(1<=firstindex(w[d])<lastindex(w[d])<=size(Gp.Kernels[d], 1))
+            throw(BoundsError(Gp, w))
+        end
+        return nothing
+    end
+
+    kernels_new = [Gp.Kernels[i] for i in 1:D]# [qtt.tt.T[i][:,qw[i],:] for i in 1:DR]
+    # bounds check
+    #@assert all(1 .<= w .<= 2^R)
+
+    #qw = Array{Union{UnitRange,Colon}}(undef, DR)
+    for d in 1:D
+        if typeof(w[d]) == Int
+            @boundscheck check_bounds_int(d)
+                
+            kernels_new[d] = kernels_new[d][w[d]:w[d],:]    # maybe replace this by a view => no copying needed
+            
+        elseif typeof(w[d]) == UnitRange
+            @boundscheck check_bounds_ur(d)
+
+            kernels_new[d] = kernels_new[d][w[d],:]
+            
+        end
+     end
+    
+    result = convolute_with_broadening_kernel_mp(kernels_new, Gp.Adisc)
+
+    return result
+end
+
+
+
+
+
+    
+
+

@@ -7,6 +7,7 @@ using Printf
 using Dates
 using QuanticsTCI
 using FFTW
+using StaticArrays
 
 include("utils/utils.jl")
 include("utils/TCI_utils.jl")

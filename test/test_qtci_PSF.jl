@@ -1,9 +1,6 @@
 @testset "QTCI PSF" begin
 
-    function get_ωcont(ωmax, Nωcont_pos)
-        ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
-        return ωcont
-    end
+ 
 
 
     filename = joinpath(dirname(@__FILE__), "test_PSF_2D.h5")

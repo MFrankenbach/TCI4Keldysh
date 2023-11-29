@@ -1,20 +1,3 @@
-function get_Adisc_δpeak_mp(idx_ω′s, Nωs_pos, D)
-    
-        
-    ωdisc_min = 1.e-6
-    ωdisc_max = 1.e4
-    ωdisc = exp.(range(log(ωdisc_min); stop=log(ωdisc_max), length=Nωs_pos))
-    ωdisc = [reverse(-ωdisc); 0.; ωdisc]
-    Adisc = zeros((ones(Int, D).*(Nωs_pos*2+1))...)
-    Adisc[(Nωs_pos + 1 .+ idx_ω′s)...] = 1.
-    
-    return ωdisc, Adisc
-end;
-
-function get_ωcont(ωmax, Nωcont_pos)
-    ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
-    return ωcont
-end
 
 @testset "broadening of multipoint functions" begin
     
@@ -30,7 +13,9 @@ end
 
     Nωs_pos = 100
     Nωcont_pos = 500
-    ωcont, Δωcont, _ = get_ωcont(1.5, Nωcont_pos, 1)
+    ωcont = get_ωcont(1.5, Nωcont_pos)
+    Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
+
 
 
     ### compare with broadened Dirac-δ peak:        2p
@@ -48,7 +33,8 @@ end
     
     ### compare with broadened Dirac-δ peak:        3p
     Nωcont_pos = 50
-    ωcont, Δωcont, _ = get_ωcont(1.5, Nωcont_pos, 1)
+    ωcont = get_ωcont(1.5, Nωcont_pos)
+    Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
 
     Nωs_pos = 30
     idx_ω′s1 = [10, 12]
@@ -63,7 +49,9 @@ end
     @test sum(Adisc3) - sum(Acont_new  .* Δωcont .* Δωcont') ≈ 0 atol=1.e-3
 
     Nωcont_pos = 10
-    ωcont, Δωcont, _ = get_ωcont(1.5, Nωcont_pos, 1)
+    ωcont = get_ωcont(1.5, Nωcont_pos)
+    Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
+
 
     Nωs_pos = 10
     idx_ω′s1 = [2, 3, 4]
@@ -83,7 +71,7 @@ end;
 
 
 @testset "on-the-fly broadened Acont" begin
-    f = h5open("../data/3pPSF_example.h5", "r")
+    f = h5open(joinpath(dirname(@__FILE__), "../data/3pPSF_example.h5"), "r")
     Adisc = read(f, "Adisc")
     ωdisc = read(f, "ωdisc")
     D = read(f, "D")

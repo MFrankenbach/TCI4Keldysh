@@ -11,14 +11,6 @@ function lorentzian(ω, ω′; σ=1.)
 end
 
 
-
-function get_ωcont(ωmax, Nωcont_pos, D)
-    ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
-    Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
-    Acont = zeros(Nωcont_pos*2+1,D)
-    return ωcont, Δωcont, Acont
-end
-
 @testset "linear broadening of Dirac-δ peaks: " begin
 
     function get_Adisc_δpeak(idx_ω′, Nωs_pos, D)
@@ -52,7 +44,10 @@ end
         _, Adisc2 = get_Adisc_δpeak(idx_ω′2, Nωs_pos, D)
         α = 0.3
         Adisc3 = α * Adisc1 + (1. - α) * Adisc2
-        ωcont, Δωcont, Acont = get_ωcont(100., 1000, D)
+        Nωcont_pos = 1000
+        ωcont = get_ωcont(100., Nωcont_pos)
+        Δωcont = TCI4Keldysh.get_ω_binwidths(ωcont)
+        Acont = zeros(Nωcont_pos*2+1,D)
     end
     
     TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc1, σ, ωcont, Δωcont, Acont, tol, Lfun)

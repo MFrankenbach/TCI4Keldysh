@@ -120,6 +120,7 @@ NOTE ON PERFORMANCE / CONVERGENCE:
  - bottlenecks: construction of L (uncomment @time to see details)
  - convergence: for slowly decaying ys ∝ 1/x one needs a huge frequency range for xs_in
                 analyze convergence in frequency range and mesh density with maxdev_in_hilbertTrafo_sinc(...) and maxdev_in_hilbertTrafo_rat(...)
+                for high-frequency tails in spectrum: try out linear least squares fit to obtain coeffs for 1/ω and 1/ω²
 """
 function my_hilbert_trafo(
     xs_out::Vector{Float64},    # real output frequencies xs_out[o]
