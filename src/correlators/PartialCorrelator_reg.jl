@@ -6,11 +6,13 @@ partial correlator ̃Gₚ(ω₁, ω₂, ...) = ∫dε₁dε₂ ̃K(ω₁-ε₁) 
 """
 struct PartialCorrelator_reg{D}
     Adisc   ::  Array{Float64,D}                # discrete PSF data; best: compactified with compactAdisc(...)
+    ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
     Kernels ::  NTuple{D,Matrix{ComplexF64}}    # regular kernels
     ωs_ext  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
     ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
     ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices
     ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of indices
+    precomp ::  Array{ComplexF64,D}             # precomputed values
 
     ####################
     ### Constructors ###
@@ -21,7 +23,8 @@ struct PartialCorrelator_reg{D}
         _, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
         # Then pray that Adisc has no contributions for which the kernels diverge:
         Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], ωdiscs[i]) ,D)
-        return new{D}(Adisc, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
+        precomp = Array{ComplexF64,D}(undef, length.(ωs_ext)...)
+        return new{D}(Adisc, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff, precomp)
     end
     function PartialCorrelator_reg(Acont::BroadenedPSF{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
         ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
@@ -50,13 +53,8 @@ Internal indices have the ranges OneTo.(length.(ωs_new))
 function trafo_ω_args(ωs::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where{D}
     function grids_are_fine(grids)
         Δgrids = [diff(g) for g in grids]
-        #ΔΔgrids = [diff(Δg) for Δg in Δgrids]
-        is_equidistant_symmetric = [(grids[i][1] == -grids[i][end]) && (maximum(abs.(diff(Δgrids[i]))) < 1.e-13) for i in eachindex(ωs)]
-        all_spacings_identical = maximum(abs.(diff([Δgrids[i][1] for i in eachindex(ωs)]))) < 1.e-13
-        #println("is_equidistant_symmetric: ", is_equidistant_symmetric)
-        #println("all_spacings_identical: ", all_spacings_identical)
-        #println("ΔΔgrids", [maximum(abs.(ΔΔgrids[i])) < 1.e-13 for i in eachindex(ωs)])
-        #println("[(grids[i][1] == -grids[i][end]) for i in eachindex(ωs)]: ", [(grids[i][1] + grids[i][end]) for i in eachindex(ωs)])
+        is_equidistant_symmetric = [(grids[i][1] == -grids[i][end]) && (maximum(abs.(diff(Δgrids[i]))) < 1.e-10) for i in eachindex(ωs)]
+        all_spacings_identical = D > 1 ? maximum(abs.(diff([Δgrids[i][1] for i in eachindex(ωs)]))) < 1.e-10 : true
         return all(is_equidistant_symmetric) && all_spacings_identical
     end
 
@@ -70,8 +68,6 @@ function trafo_ω_args(ωs::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) w
     ωs_int_max = abs.(ωconv) * ωs_max
     ωs_int = ntuple(i -> collect(LinRange(-ωs_int_max[i], ωs_int_max[i], 1 + trunc(Int, real(2. * ωs_int_max[i] / Δω) + 0.1   ))), D)
     # check spacing of ωs_int:
-    #println("ntuple(i -> collect(trunc(Int, abs(2. * ωs_new_max[i] / Δω + 0.1))), D): ", ntuple(i -> 1 + trunc(Int, abs(2. * ωs_new_max[i] / Δω + 0.1)), D))
-    #println("[ωs_new[i][2] - ωs_new[i][1] - Δω for i in eachindex(ωs)]: ", [ωs_new[i][2] - ωs_new[i][1] - Δω for i in eachindex(ωs)])
     @assert all( [ωs_int[i][2] - ωs_int[i][1] ≈ Δω for i in eachindex(ωs)])
 
     Nωs_ext = length.(ωs)
@@ -83,7 +79,6 @@ end
 
 function get_regular_1DKernel(ωs::Vector{ComplexF64}, ωdisc::Vector{Float64})
 
-    #println("is there a zero in the ωdisc?: ", any(ωdisc.≈0.))
     Kernel = 1. ./ (ωs .- ωdisc')
 
     is_divergent = .!isfinite.(Kernel)
@@ -107,10 +102,56 @@ function (Gp :: PartialCorrelator_reg{D})(w   :: Vararg{Int, D} )   ::ComplexF64
 end
 
 function evaluate_with_ωconversion(
-    Gp :: PartialCorrelator_reg{D},
+    Gp  :: PartialCorrelator_reg{D},
     w   :: Vararg{Union{Int, Colon}, D} # , UnitRange
     )   :: Union{ComplexF64, AbstractArray{ComplexF64}} where {D}
     return evaluate_without_ωconversion(Gp, (Gp.ωconvMat * SA[w...] + Gp.ωconvOff)...)
+end
+
+
+function precompute_all_values(
+    Gp :: PartialCorrelator_reg{D},
+) ::Array{ComplexF64,D} where{D}
+    
+    data_unrotated = contract_Kernels_w_Adisc_mp(Gp.Kernels, Gp.Adisc)  # contributions from regular kernel
+    
+    ## check for ω=0 entries in ωs_int:
+    for d in 1:D
+        is_zero_ωs_int = abs.(Gp.ωs_int[d]) .< 1.e-10
+        is_zero_ωdisc = abs.(Gp.ωdiscs[d]) .< 1.e-10
+        if any(is_zero_ωs_int) && any(is_zero_ωdisc)  ## currently only support single bosonic frequency
+            #println("Has anomalous contribution: ")
+            Adisc_ano = dropdims(Gp.Adisc[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
+            #println("size of Adisc_ano: ", size(Adisc_ano))
+            # compute anomalous contribution:
+            Kernels_ano = [Gp.Kernels[1:d-1]..., Gp.Kernels[d+1:D]...]
+            # add β/2 contribution?
+            β = 2. * π / abs(Gp.ωs_int[1][2]-Gp.ωs_int[1][1])
+            #println("β: ", β)
+            values_ano = β* contract_Kernels_w_Adisc_mp(Kernels_ano, Adisc_ano)
+            for dd in 1:D-1
+                Kernels_tmp = [Kernels_ano...]
+                #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
+                Kernels_tmp[dd] = Kernels_tmp[dd].^2
+                #println("maxima after: ", maximum(abs.(Kernels_tmp[dd])))
+                values_ano .+= contract_Kernels_w_Adisc_mp(Kernels_tmp, Adisc_ano)
+            end
+            values_ano .*= -0.5
+    
+            #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
+            #println("size of view: ", size(myview))
+            #println("size of values_ano = ", size(values_ano))
+            view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...) .+= values_ano
+        end
+    end
+
+    strides_internal = [stride(data_unrotated, i) for i in 1:D]'
+    strides4rot = ((strides_internal * Gp.ωconvMat)...,)
+    offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
+    sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)...,), strides4rot, offset4rot)
+
+
+    return sv[[Colon() for _ in 1:D]...]
 end
 
 

@@ -42,7 +42,7 @@ function getAcont_mp(
 
 
     D, _, Adisc, Kernels, ωcont = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; kwargs...)
-    Acont = convolute_with_broadening_kernel_mp(Kernels, Adisc)
+    Acont = contract_Kernels_w_Adisc_mp(Kernels, Adisc)
 
     return ωcont, Acont
 end
@@ -86,8 +86,12 @@ function prepare_broadening_mp(
     return D, ωdiscs, Adisc, Kernels, ωcont
 end
 
+"""
+Contracts kernels with Adisc
 
-function convolute_with_broadening_kernel_mp(Kernels, Adisc)
+For 3p correlators we e.g. get K[i,a] K[j,b] Adisc[a,b]
+"""
+function contract_Kernels_w_Adisc_mp(Kernels, Adisc)
     sz = [size(Adisc)...]
     D = ndims(Adisc)
 
@@ -130,6 +134,7 @@ end
 
 struct BroadenedPSF{D}                  ### D = number of frequency dimensions
     Adisc   ::Array{Float64,D}          ### discrete spectral data; best: compactified with compactAdisc(...)
+    ωdiscs  ::Vector{Vector{Float64}}   ### discrete frequencies for all D dimensions
     Kernels ::NTuple{D,Matrix{Float64}} ### broadening kernels
     ωcont   ::Vector{Float64}           ### continous frequencies for all D dimensions
     sz      ::NTuple{D,Int}             ### size of Adisc
@@ -149,9 +154,9 @@ struct BroadenedPSF{D}                  ### D = number of frequency dimensions
         ; 
         kwargs...
     ) where{D}
-        _, _, Adisc, Kernels, ωcont = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; kwargs...)
+        _, ωdiscs, Adisc, Kernels, ωcont = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; kwargs...)
         sz = size(Adisc)
-        return new{D}(Adisc, Kernels, ωcont, sz)
+        return new{D}(Adisc, ωdiscs, Kernels, ωcont, sz)
     end
 end
 
@@ -208,7 +213,7 @@ function Base.:getindex(
         end
      end
     
-    result = convolute_with_broadening_kernel_mp(kernels_new, psf.Adisc)
+    result = contract_Kernels_w_Adisc_mp(kernels_new, psf.Adisc)
 
     return result
 end

@@ -189,3 +189,29 @@ function my_hilbert_trafo(
 
     return result
 end
+
+
+function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
+    f = matopen(joinpath(path, "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"), "r")
+    try 
+        keys(f)
+    catch
+        keys(f)
+    end
+    Adisc = read(f, "Adisc")[flavor_idx]
+    Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
+
+    return Adisc 
+end
+
+
+function load_ωdisc(path::String, Ops::Vector{String})
+    f = matopen(joinpath(path, "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"), "r")
+    try 
+        keys(f)
+    catch
+        keys(f)
+    end
+    ωdisc  = read(f, "odisc")[:]
+    return ωdisc 
+end

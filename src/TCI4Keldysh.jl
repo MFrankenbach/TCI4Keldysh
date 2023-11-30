@@ -8,6 +8,9 @@ using Dates
 using QuanticsTCI
 using FFTW
 using StaticArrays
+using Combinatorics
+using MAT
+using StridedViews
 
 include("utils/utils.jl")
 include("utils/TCI_utils.jl")
@@ -17,6 +20,7 @@ include("broadening/broaden_logGauss.jl")
 include("broadening/broaden_lin.jl")
 include("broadening/broaden_Gauss.jl")
 include("correlators/PartialCorrelator_reg.jl")
+include("correlators/FullCorrelator_reg.jl")
 
 
 end # module TCI4Keldysh
