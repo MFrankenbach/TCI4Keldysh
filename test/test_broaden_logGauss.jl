@@ -5,7 +5,7 @@ end
 
 function logGaussian_CLG_fct(ω, ω′; σ=1.)
    #return exp(-((log(ω) - logm)/σ)^2 - σ^2/4.) / (sqrt(pi)*σ*ω)
-    return exp(-((log(ω) - log(ω′)         )/σ)^2) / (sqrt(pi)*σ*ω′)
+    return exp(-((log(ω) - log(ω′)         )/σ)^2 - σ^2/4) / (sqrt(pi)*σ*ω′)
 end
 
 
@@ -29,7 +29,7 @@ end
         D = 2
         sigmab = ones(D).*σ
         tol = 1.e-14
-        estep = 100
+        estep = 2048
         emin = 1e-5; emax = 1e5;
         Hfun = "SLG" 
         is2sum=false
@@ -45,19 +45,21 @@ end
     
     ωcont1, Δωcont1, Acont1 = TCI4Keldysh.getAcont_logBroaden(ωdisc, Adisc1, sigmab, tol, Hfun, emin, emax, estep, is2sum)
     @test (x -> logGaussian_SLG_fct.(x, ωdisc[idx_ω′1]; σ=σ)).(ωcont1) ≈ Acont1[:,1] rtol=1e-14
-    
+    @test sum((x -> logGaussian_SLG_fct.(x, ωdisc[idx_ω′1]; σ=σ)).(ωcont1) .* Δωcont1) ≈ 1 rtol=1e-6
+
     ### compare with sum of broadened Dirac-δ peaks:
 
     ωcont2, Δωcont2, Acont2 = TCI4Keldysh.getAcont_logBroaden(ωdisc, Adisc3, sigmab, tol, Hfun, emin, emax, estep, is2sum)
     @test (x -> α * logGaussian_SLG_fct(x, ωdisc[idx_ω′1]; σ=σ) + (1. - α) * logGaussian_SLG_fct(x, ωdisc[idx_ω′2]; σ=σ)).(ωcont2) ≈ Acont2[:,1] rtol=1e-14
-
+    @test sum(Acont2[:,1] .* Δωcont2) ≈ 1 rtol=1e-6
+    
     # same with CLG: 
     Hfun = "CLG" 
     ωcont3, Δωcont3, Acont3 = TCI4Keldysh.getAcont_logBroaden(ωdisc, Adisc1, sigmab, tol, Hfun, emin, emax, estep, is2sum)
     @test (x -> logGaussian_CLG_fct.(x, ωdisc[idx_ω′1]; σ=σ)).(ωcont3) ≈ Acont3[:,1] rtol=1e-14
     ωcont4, Δωcont4, Acont4 = TCI4Keldysh.getAcont_logBroaden(ωdisc, Adisc3, sigmab, tol, Hfun, emin, emax, estep, is2sum)
     @test (x -> α * logGaussian_CLG_fct(x, ωdisc[idx_ω′1]; σ=σ) + (1. - α) * logGaussian_CLG_fct(x, ωdisc[idx_ω′2]; σ=σ)).(ωcont4) ≈ Acont4[:,1] rtol=1e-14
-
+    @test sum(Acont3[:,1] .* Δωcont3) ≈ 1 rtol=1e-6
+    
+    
 end
-
-

@@ -1,12 +1,15 @@
 """
-logGaussian broadening of Adisc(w') with
+logGaussian broadening of Adisc(w') --> Acont(w) = ∫dw' L(w,w')Adisc(w') with
     a)  Centered logarithmic Gaussian ("CLG") (sign(w) == sign(w'))
-        L(w,w') = exp(-(log(w'/w)/sigmab)^2) * exp(-sigmab^2/4) /(sqrt(pi)*sigmab*abs(w'))
-        Here sigmab = sigmak*alphaz, where sigmak is input and alphaz is option.
+        L(w,w') = exp(-(log(w'/w)/sigmab)^2) /(sqrt(pi)*sigmab*abs(w'))
+        CONSERVES: MODE
+
 OR
     b)  Symmetric logarithmic Gaussian ("SLG") (sign(w) == sign(w'))  (* Default)
-        L(w,w') = exp(-(log(w'/w)/sigmab - sigmab/4)^2)         /(sqrt(pi)*sigmab*abs(w'))
-        Here sigmab = sigmak*alphaz, where sigmak is input and alphaz is option.
+        L(w,w') = exp(-(log(w'/w)/sigmab - sigmab/4)^2)         /(sqrt(pi)*sigmab*abs(w'))        
+        CONSERVES: MEAN
+
+Here sigmab = sigmak*alphaz, where sigmak is input and alphaz is option.
 
 <Returns>
 ωcont   ::Vector{Float64}   centers of frequency bins (pos. ωs on logarithmic grid)
@@ -46,10 +49,10 @@ function getAcont_logBroaden(
         # secondary linear broadening, which can lead to wrong results.
         
         Atmp = (tol * sqrt(pi)) * (ωdisc .* sigmab' ./ abs.(Adisc))
-        #if isCLG
-        #    # Atmp = bsxfun(@times, Atmp, exp((sigmab.^2) / 4))
-        #    Atmp = Atmp .* exp.((sigmab.^2) / 4)
-        #end
+        if isCLG
+            # Atmp = bsxfun(@times, Atmp, exp((sigmab.^2) / 4))
+            Atmp = Atmp .* exp.((sigmab'.^2) / 4)
+        end
         okA = Atmp .> 1 # mask to get higher frequencies
         Atmp[okA] .= 1
         
@@ -59,7 +62,7 @@ function getAcont_logBroaden(
 
         # xtmp = bsxfun(@minus, log(ωdisc), widthx)
         xtmp = log.(ωdisc) .- widthx
-        if !isCLG
+        if Hfun == "SLG"
             # xtmp = bsxfun(@minus, xtmp, (sigmab.^2) / 4)
             xtmp = xtmp .- ((sigmab.^2) / 4)'
         end
@@ -88,7 +91,7 @@ function getAcont_logBroaden(
         ids = zeros(Int, length(ωdisc), 1) .+ (1:length(sigmab))'
 
         logωdiscmat = log.(ωdisc)      ## matrix of (shifted) discrete logarithmic frequencies == centers of frequency bins
-        if !isCLG
+        if Hfun == "SLG"
             logωdiscmat = logωdiscmat .- ((sigmab.^2) / 4)'
         else     # "CLG"
             logωdiscmat = logωdiscmat .+ zeros(1, length(sigmab))
@@ -111,9 +114,9 @@ function getAcont_logBroaden(
             okt = abs.(logωcont .- logωdiscmat[ito]) .<= widthx[ito] # mask to get frequencies ωcont within bin
             if any(okt)
                 Acont_tmp = -((logωdiscmat[ito] .- logωcont[okt]) ./ smat[ito]) .^ 2
-                #if isCLG
-                #    Acont_tmp .-= (smat[ito] .^ 2 / 4)
-                #end
+                if isCLG
+                    Acont_tmp .-= (smat[ito] .^ 2 / 4)
+                end
                 Acont_tmp = exp.(Acont_tmp) * (Adisc[ito] / sqrt(pi) / smat[ito] / odisc_val)
 
                 Acont[okt, ids[ito]] .+= Acont_tmp #.* Δωcont[okt]  # height -> weight

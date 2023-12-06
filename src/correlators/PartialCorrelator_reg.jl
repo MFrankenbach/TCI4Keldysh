@@ -207,7 +207,7 @@ function evaluate_without_ωconversion(
         end
      end
     
-    result = convolute_with_broadening_kernel_mp(kernels_new, Gp.Adisc)
+    result = contract_Kernels_w_Adisc_mp(kernels_new, Gp.Adisc)
 
     return result
 end
