@@ -132,6 +132,51 @@ function contract_Kernels_w_Adisc_mp(Kernels, Adisc)
     return Acont
 end
 
+
+"""
+Contracts retarded kernels with Adisc and deduces all fully-retarded kernels
+
+For 3p correlators we e.g. get K^{R/A}[i,a] K^{R/A}[j,b] Adisc[a,b]
+
+We need
+for 2p:     K^[1](ω₁,ω₂)        =       K^R(ω₁)
+            K^[2](ω₁,ω₂)        =       K^A(ω₁)                 = c.c.of first line
+for 3p:     K^[1](ω₁,ω₂,ω₃)     =       K^R(ω₁)K^R(ω₂)         \\=2p result x K^R(ω₂)
+            K^[2](ω₁,ω₂,ω₃)     =       K^A(ω₁)K^R(ω₂)         /
+            K^[3](ω₁,ω₂,ω₃)     =       K^A(ω₁)K^A(ω₂)          = c.c.of first line
+for 4p:     K^[1](ω₁,ω₂,ω₃,ω₄)  =       K^R(ω₁)K^R(ω₂)K^R(ω₃)  \\
+            K^[2](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^R(ω₂)K^R(ω₃)  |=3p result x K^R(ω₃)
+            K^[3](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^R(ω₃)  /
+            K^[3](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^A(ω₃)   = c.c.of first line
+"""
+function contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc)
+    sz = [size(Adisc)...]
+    D = ndims(Adisc)
+    
+    ##########################################################
+    ### EFFICIENCY IN TERMS OF   CPU TIME: 😄     RAM: 🙈  ###
+    ##########################################################
+    Acont = copy(Adisc)  # Initialize
+    for it1 in 1:D
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tit1 = ", it1)
+        Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1] * it1))
+        Acont = Kernels[it1] * Acont
+        sz[it1] = size(Kernels[it1])[1]
+        Acont = reshape(Acont, ((sz[it1], prod(sz) ÷ sz[it1], it1)))
+        Acont = cat(Acont, conj.(Acont[:,:,1]), dims=3)
+
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tconvolution [done]")
+        #Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
+        if D>1
+            Acont = permutedims(Acont, (collect(2:D)..., 1, D+1))
+        end
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tpermutation [done]")
+        #GC.gc()
+    end
+
+    return Acont
+end
+
 struct BroadenedPSF{D}                  ### D = number of frequency dimensions
     Adisc   ::Array{Float64,D}          ### discrete spectral data; best: compactified with compactAdisc(...)
     ωdiscs  ::Vector{Vector{Float64}}   ### discrete frequencies for all D dimensions

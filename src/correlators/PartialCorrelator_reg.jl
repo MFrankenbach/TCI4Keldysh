@@ -5,6 +5,7 @@ PartialCorrelator_reg
 partial correlator ̃Gₚ(ω₁, ω₂, ...) = ∫dε₁dε₂ ̃K(ω₁-ε₁) ̃K( ω₂- ε₂)... Sₚ(ε₁,ε₂,...)
 """
 struct PartialCorrelator_reg{D}
+    formalism:: String                          # "MF" or "KF"
     Adisc   ::  Array{Float64,D}                # discrete PSF data; best: compactified with compactAdisc(...)
     ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
     Kernels ::  NTuple{D,Matrix{ComplexF64}}    # regular kernels
@@ -17,22 +18,40 @@ struct PartialCorrelator_reg{D}
     ####################
     ### Constructors ###
     ####################
-    function PartialCorrelator_reg(Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
+    function PartialCorrelator_reg(formalism::String, Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
+        if !(formalism == "MF" || formalism == "KF")
+            throw(ArgumentError("formalism must be MF when unbroadened Adisc is input."))
+        end
+
         ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
         # Delete rows/columns that contain only zeros
         _, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
         # Then pray that Adisc has no contributions for which the kernels diverge:
         Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], ωdiscs[i]) ,D)
         precomp = Array{ComplexF64,D}(undef, length.(ωs_ext)...)
-        return new{D}(Adisc, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff, precomp)
+        return new{D}(formalism, Adisc, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff, precomp)
     end
-    function PartialCorrelator_reg(Acont::BroadenedPSF{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
+    function PartialCorrelator_reg(formalism::String, Acont::BroadenedPSF{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
+        if !(formalism == "MF" || formalism == "KF")
+            throw(ArgumentError("formalism must be MF or KF."))
+        end
         ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
+        println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
         δωcont = get_ω_binwidths(Acont.ωcont)
-        # 1.: rediscretization of broadening kernel
-        # 2.: contraction with regular kernel
-        Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (δωcont .* Acont.Kernels[i]), D)
-        return new{D}(Acont.Adisc, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
+        if formalism == "MF"
+            # 1.: rediscretization of broadening kernel
+            # 2.: contraction with regular kernel
+            Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (δωcont .* Acont.Kernels[i]), D)
+        else
+            # check that grid is equidistant:
+            if maximum(abs.(diff(δωcont) )) > 1e-10
+                throw(ArgumentError("ωcont must be an equidistant grid."))
+            end
+            # compute retarded 1D kernels
+            Kernels = ntuple(i -> -im * hilbert_fft(Acont.Kernels[i]), D)
+        end
+        precomp = Array{ComplexF64,D}(undef, length.(ωs_ext)...)
+        return new{D}(formalism, Acont.Adisc, Acont.ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff, precomp)
     end
 
 end
@@ -168,6 +187,27 @@ function evaluate_without_ωconversion(Gp::PartialCorrelator_reg{D}, idx::Vararg
     end
     #println("length(res): ", length(res))
     return res[1]
+end
+
+function evaluate_with_ωconversion_KF(Gp::PartialCorrelator_reg{D}, idx::Vararg{Int,D})  ::Vector{ComplexF64} where{D}
+    return evaluate_without_ωconversion_KF(Gp, (Gp.ωconvMat * SA[idx...] + Gp.ωconvOff)...)
+end
+
+function evaluate_without_ωconversion_KF(Gp::PartialCorrelator_reg{D}, idx::Vararg{Int,D})  ::Vector{ComplexF64} where {D}
+    res = Gp.Adisc
+    sz_Adisc = size(res)
+    for i in 1:D
+        #println("i: ", i)
+        #res = view(psf.Kernels[i], idx[i]:idx[i], :) * reshape(res, (psf.sz[i], prod(psf.sz[i+1:D])))
+        res = view(Gp.Kernels[i], idx[i]:idx[i], :) * reshape(res, (sz_Adisc[i], prod(sz_Adisc[i+1:D])*i))    # version for Kernels[idx_ext, idx_int]
+        res = reshape(res, (prod(sz_Adisc[i+1:D]), i))
+        res = cat(res, conj.(res[:,1]), dims=2)
+        #j = D - i + 1
+        #res = reshape(res, (prod(psf.sz[1:j-1]), psf.sz[j])) * view(psf.Kernels[j], idx[j], :)
+        #res = reshape(res, (prod(sz_Adisc[1:j-1]), sz_Adisc[j])) * view(Gp.Kernels[j], idx[j], :)    # version for Kernels[idx_int, idx_ext]
+    end
+    #println("length(res): ", length(res))
+    return reshape(res, D+1)
 end
 
 function evaluate_without_ωconversion(

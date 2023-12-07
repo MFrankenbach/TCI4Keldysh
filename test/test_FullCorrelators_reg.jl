@@ -19,8 +19,9 @@
     Adiscs = [Adisc, Adisc]
     ωs_ext = (ω_fer, )
     ωsconvMat = reshape([1 ; -1], (2,1))
+    isBos = [false, false] .== true
 
-    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc, [false, false] .== true, ωs_ext, ωsconvMat; name=["Hubbard atom propagator"])
+    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom propagator"])
     G_data = G.(collect(1:length(ω_fer)))
     G_expec=  (ω -> 1 / (ω - u^2 / ω)).(ω_fer)
     @test maximum(abs.(G_data - G_expec)) < 1.e-13
@@ -41,7 +42,7 @@
     ωs_ext = (ω_bos, ω_fer)
     ωsconvMat = [-1 -1; 0 1; 1 0]
     isBos = [false, false, true] .== true
-    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc, isBos, ωs_ext, ωsconvMat; name=["Hubbard atom 3pt correlator"])
+    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom 3pt correlator"])
     data_axes = ntuple(i -> reshape(collect(axes(ωs_ext[i])[1]), (ones(Int,i-1)..., length(ωs_ext[i]))), D)
 
     #@time G_data = G.(data_axes...);    # this data is generated via on-the-fly computation of correlator values (WITHOUT anomalous terms!)
