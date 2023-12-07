@@ -46,11 +46,12 @@
     R = 6
     Nωcont_pos = 2^R # 512#
     ωcont = get_ωcont(D*0.5, Nωcont_pos)
+    ωconts=ntuple(i->ωcont, ndims(Adisc))
 
     # Directly obtained broadened data
-    ωcont, Acont = TCI4Keldysh.getAcont_mp(ωdisc, Adisc, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+    ωcont, Acont = TCI4Keldysh.getAcont_mp(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
     # get functor which can evaluate broadened data pointwisely
-    broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+    broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
 
     # QTCI broadenedPsf:
     qmesh = collect(1:size(Acont)[1]-1)

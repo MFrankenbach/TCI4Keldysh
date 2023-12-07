@@ -94,9 +94,9 @@ struct FullCorrelator_KF{D}
     name    ::Vector{String}                    # list of operators to distinguish the objects
     Gps     ::Vector{PartialCorrelator_reg}     # list of partial correlators
     Gp_to_G ::Vector{Float64}                   # prefactors for Gp's (currently this coefficient is applied to Adisc => no need to apply it during evaluation.)
-    GR_to_GK::Matrix{Float64}                   # Matrix of size (D+1, 2^{D+1}) mapping fully-retarded Gp to Keldysh Gp
+    GR_to_GK::Array{Float64,3}                  # Matrix of size (D+1, 2^{D+1}) mapping fully-retarded Gp to Keldysh Gp
 
-    ωs_ext  ::NTuple{D,Vector{ComplexF64}}      # external complex frequencies in the chosen parametrization
+    ωs_ext  ::NTuple{D,Vector{Float64}}      # external complex frequencies in the chosen parametrization
     ωconvMat::Matrix{Int}                       # matrix of size (D+1, D) encoding conversion of external frequencies to the frequencies of the D+1 legs
                                                 # columns must add up to zero
     isBos   ::BitVector                         # BitVector indicating which legs are bosonic
@@ -106,7 +106,7 @@ struct FullCorrelator_KF{D}
         Ops::Vector{String}
         ; 
         flavor_idx::Int, 
-        ωs_ext::NTuple{D,Vector{ComplexF64}}, 
+        ωs_ext::NTuple{D,Vector{Float64}}, 
         ωconvMat::Matrix{Int}, 
         name::String="", 
         sigmak  ::Vector{Float64},              # Sensitivity of logarithmic position of spectral
@@ -124,16 +124,25 @@ struct FullCorrelator_KF{D}
         end
         ##########################################################################
         
+        print("Loading stuff: ")
+        @time begin
         perms = permutations(collect(1:D+1))
         isBos = (o -> o[1] == 'Q').(Ops)
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
-        Aconts = [BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; broadening_kwargs...) for (i,p) in enumerate(perms)]
+        end
+        print("Creating Broadened PSFs: ")
+        function get_Acont_p(i, p)
+            ωs_int, _, _ = trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=ωs_int, broadening_kwargs...)
+        end
+        @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
+
         return FullCorrelator_KF(Aconts; isBos, ωs_ext, ωconvMat, name=[Ops; name])
     end
 
 
-    function FullCorrelator_KF(Aconts::Vector{BroadenedPSF{D}}; isBos::BitVector, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
+    function FullCorrelator_KF(Aconts::Vector{BroadenedPSF{D}}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if size(ωconvMat) != (D+1, D)
@@ -149,24 +158,30 @@ struct FullCorrelator_KF{D}
             throw(ArgumentError("isBos must contain an even number of 'false' (fermions)."))
         end
         ##########################################################################
-        function get_GR_to_GK(D) ::Matrix{Float64}
-            GR_to_GK = zeros(D+1, (ones(Int, D+1).*2)...)
-            for idxs in Base.Iterators.product(collect.(axes(GR_to_GK)[2:end])...)
-                GR_to_GK[:, idxs...] .= (-1).^(1 .+ cumsum(idxs.-1)) .* (idxs.-1)
+        function get_GR_to_GK(D) ::Array{Float64,3}
+            perms = permutations(collect(1:D+1))
+            GR_to_GK = zeros(D+1, (ones(Int, D+1).*2)..., factorial(D+1))
+            for (ip, p) in enumerate(perms)
+                for idxs in Base.Iterators.product(collect.(axes(GR_to_GK)[2:end-1])...)
+                    pidxs = idxs[p]
+                    GR_to_GK[:, idxs..., ip] .= (-1).^(1 .+ cumsum(pidxs.-1)) .* (pidxs.-1)
+                end
             end
-            GR_to_GK = reshape(GR_to_GK, (D+1, 2^(D+1)))
+            GR_to_GK = reshape(GR_to_GK, (D+1, 2^(D+1), factorial(D+1)))
             GR_to_GK .*= 2^(-D/2+0.5)
             return GR_to_GK
         end
 
+        print("All the rest: ")
+        @time begin
         perms = permutations(collect(1:D+1))
         Gp_to_G = get_Gp_to_G(D, isBos)
         for (i,sp) in enumerate(Aconts)
             sp.Adisc .*= Gp_to_G[i]
         end
-        Gps = [PartialCorrelator_reg("KF", Aconts[i], ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
+        Gps = [PartialCorrelator_reg("KF", Aconts[i], ntuple(i->ωs_ext[i] .+0im, D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
         GR_to_GK = get_GR_to_GK(D)
-        
+        end
         return new{D}(name, Gps, Gp_to_G, GR_to_GK, ωs_ext, ωconvMat, isBos)
     end
 end
@@ -175,9 +190,22 @@ end
 function evaluate(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}) where{D}
     #eval_gps(gp) = evaluate_with_ωconversion_KF(gp, idx...)
     #Gp_values = eval_gps.(G.Gps)
-    result = evaluate_with_ωconversion_KF(G.Gps[1], idx...)' * G.GR_to_GK# .* G.Gp_to_G[1]
+    result = evaluate_with_ωconversion_KF(G.Gps[1], idx...)' * view(G.GR_to_GK, :, :, 1)# .* G.Gp_to_G[1]
     for i in 2:length(G.Gps)
-        result .+= evaluate_with_ωconversion_KF(G.Gps[i], idx...)' * G.GR_to_GK# .* G.Gp_to_G[i]
+        println("i: ", i)
+        result .+= evaluate_with_ωconversion_KF(G.Gps[i], idx...)' * view(G.GR_to_GK, :, :, i)# .* G.Gp_to_G[i]
+    end
+    return result
+    #return mapreduce(gp -> evaluate_with_ωconversion_KF(gp, idx...)' * G.GR_to_GK, +, G.Gps)
+end
+
+
+function evaluate(G::FullCorrelator_KF{D}, iK::Int,  idx::Vararg{Int,D}) where{D}
+    #eval_gps(gp) = evaluate_with_ωconversion_KF(gp, idx...)
+    #Gp_values = eval_gps.(G.Gps)
+    result = evaluate_with_ωconversion_KF(G.Gps[1], idx...)' * G.GR_to_GK[:, iK, 1]# .* G.Gp_to_G[1]
+    for i in 2:length(G.Gps)
+        result += evaluate_with_ωconversion_KF(G.Gps[i], idx...)' * G.GR_to_GK[:, iK, i]# .* G.Gp_to_G[i]
     end
     return result
     #return mapreduce(gp -> evaluate_with_ωconversion_KF(gp, idx...)' * G.GR_to_GK, +, G.Gps)

@@ -36,19 +36,19 @@ struct PartialCorrelator_reg{D}
             throw(ArgumentError("formalism must be MF or KF."))
         end
         ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
-        println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
-        δωcont = get_ω_binwidths(Acont.ωcont)
+        #println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
+        δωcont = get_ω_binwidths(Acont.ωconts[1])
         if formalism == "MF"
             # 1.: rediscretization of broadening kernel
             # 2.: contraction with regular kernel
-            Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (δωcont .* Acont.Kernels[i]), D)
+            Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (get_ω_binwidths(Acont.ωconts[i]) .* Acont.Kernels[i]), D)
         else
             # check that grid is equidistant:
             if maximum(abs.(diff(δωcont) )) > 1e-10
                 throw(ArgumentError("ωcont must be an equidistant grid."))
             end
             # compute retarded 1D kernels
-            Kernels = ntuple(i -> -im * hilbert_fft(Acont.Kernels[i]), D)
+            Kernels = ntuple(i -> im * π * conj.(hilbert_fft(Acont.Kernels[i]; dims=1)), D)
         end
         precomp = Array{ComplexF64,D}(undef, length.(ωs_ext)...)
         return new{D}(formalism, Acont.Adisc, Acont.ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff, precomp)
@@ -69,7 +69,7 @@ Internal indices have the ranges OneTo.(length.(ωs_new))
 
 
 """
-function trafo_ω_args(ωs::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where{D}
+function trafo_ω_args(ωs::NTuple{D,Vector{T}}, ωconv::Matrix{Int}) where{D,T}
     function grids_are_fine(grids)
         Δgrids = [diff(g) for g in grids]
         is_equidistant_symmetric = [(grids[i][1] == -grids[i][end]) && (maximum(abs.(diff(Δgrids[i]))) < 1.e-10) for i in eachindex(ωs)]

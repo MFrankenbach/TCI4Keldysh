@@ -62,7 +62,7 @@ x = randn(10,10)
 y = hilbert(x)
 ```
 """
-function hilbert_fft(x::AbstractArray{Float64,d}) where {d}
+function hilbert_fft(x::AbstractArray{Float64,d}; dims::Int=1) where {d}
     if d > 2
         throw(ArgumentError("Currently only Vector and Matrix are supported for signal array ys."))
     end
@@ -77,11 +77,11 @@ function hilbert_fft(x::AbstractArray{Float64,d}) where {d}
     #elseif(n>0 && n>size(x_,1))
     #    x_ = cat(1,x_,zeros(n-size(x_,1),size(x_,2)))
     #else
-        n = size(x_,1)
+        n = size(x_,dims)
     #end
 
-    xf = fft(x_,1)
-    h = zeros(Int64,n)      # represents the step function in time --> product in time corresponds to convolution with retarded kernel in frequency space
+    xf = fft(x_,dims)
+    h = reshape(zeros(Int64,n), (ones(Int, dims-1)..., n))      # represents the step function in time --> product in time corresponds to convolution with retarded kernel in frequency space
     if n>0 && n % 2 == 0
         #even, nonempty
         h[1:div(n,2)+1] .= 1
@@ -91,7 +91,7 @@ function hilbert_fft(x::AbstractArray{Float64,d}) where {d}
         h[1] = 1
         h[2:div(n + 1,2)] .= 2
     end
-    x_ = ifft(xf .* h[:,ones(Int64,size(xf,2))],1)
+    x_ = ifft(xf .* h, dims)
 
     # restore to original shape if necessary
     #size(x,1)==1 ? x_ = permutedims(x_,[2 1]) : nothing

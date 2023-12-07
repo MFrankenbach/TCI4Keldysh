@@ -70,6 +70,3 @@
 
 end
 
-@testset "PartialCorrelator_reg for formalism==KF" begin
-
-end

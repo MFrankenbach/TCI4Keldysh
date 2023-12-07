@@ -61,8 +61,9 @@ function prepare_broadening_mp(
     γ       ::Float64           # Parameter for secondary linear broadening kernel. (\gamma
                                 # in Lee2016.)
     ; 
+    ωconts  ::NTuple{D,Vector{Float64}},
     kwargs...
-)
+) where{D}
     # Check if sigmak is a single number
     if length(sigmak) != 1
         error("ERR: Logarithmic broadening width parameter 'sigmak' should be a single number.")
@@ -71,18 +72,20 @@ function prepare_broadening_mp(
     Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
 
     # dimensions that need to be broadened
-    D = ndims(Adisc)
     if !(1 <= D <=3)
         throw(ArgumentError("Only 1-/2-/3-dimensional Adisc supported."))
     end
     ωdiscs = ntuple(x -> ωdisc, D)
     #sz = [prod(size(x)) for x in ωdiscs]
+    ωcont_lengths = length.(ωconts)
+    ωcont_largest = ωconts[argmax(ωcont_lengths)]
     # Broadening kernels
-    ωcont, Kernel = getAcont(ωdisc, Matrix{Float64}(LinearAlgebra.I, (ones(Int, 2).*length(ωdisc))...), sigmak .+ zeros(length(ωdisc)), γ; kwargs...)
+    ωcont, Kernel = getAcont(ωdisc, Matrix{Float64}(LinearAlgebra.I, (ones(Int, 2).*length(ωdisc))...), sigmak .+ zeros(length(ωdisc)), γ; ωcont=ωcont_largest, kwargs...)
     
     # Delete rows/columns that contain only zeros
     AdiscIsZero_oks, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
-    Kernels = ntuple(i -> Kernel[:,.!AdiscIsZero_oks[i]], D)
+    ishifts = ntuple(i -> div(length(ωcont_largest) - length(ωconts[i]), 2), D)
+    Kernels = ntuple(i -> Kernel[1+ishifts[i]:end-ishifts[i], .!AdiscIsZero_oks[i]], D)
     return D, ωdiscs, Adisc, Kernels, ωcont
 end
 
@@ -181,7 +184,7 @@ struct BroadenedPSF{D}                  ### D = number of frequency dimensions
     Adisc   ::Array{Float64,D}          ### discrete spectral data; best: compactified with compactAdisc(...)
     ωdiscs  ::Vector{Vector{Float64}}   ### discrete frequencies for all D dimensions
     Kernels ::NTuple{D,Matrix{Float64}} ### broadening kernels
-    ωcont   ::Vector{Float64}           ### continous frequencies for all D dimensions
+    ωconts  ::NTuple{D,Vector{Float64}} ### continous frequencies for all D dimensions
     sz      ::NTuple{D,Int}             ### size of Adisc
 
     function BroadenedPSF(
@@ -197,11 +200,12 @@ struct BroadenedPSF{D}                  ### D = number of frequency dimensions
         γ       ::Float64           # Parameter for secondary linear broadening kernel. (\gamma
                                     # in Lee2016.)
         ; 
+        ωconts  ::NTuple{D,Vector{Float64}},
         kwargs...
     ) where{D}
-        _, ωdiscs, Adisc, Kernels, ωcont = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; kwargs...)
+        _, ωdiscs, Adisc, Kernels, _ = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; ωconts, kwargs...)
         sz = size(Adisc)
-        return new{D}(Adisc, ωdiscs, Kernels, ωcont, sz)
+        return new{D}(Adisc, ωdiscs, Kernels, ωconts, sz)
     end
 end
 

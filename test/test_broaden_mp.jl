@@ -27,7 +27,7 @@
     α = 0.3
     Adisc3 = α * Adisc1 + (1. - α) * Adisc2
 
-    ωcont_new, Acont_new = TCI4Keldysh.getAcont_mp(ωdisc, Adisc3, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum)
+    ωcont_new, Acont_new = TCI4Keldysh.getAcont_mp(ωdisc, Adisc3, sigmab, g; ωconts=ntuple(i->ωcont, ndims(Adisc3)), emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum)
     @test sum(Adisc3) - sum(Acont_new  .* Δωcont) ≈ 0 atol=1.e-3
     
     
@@ -45,7 +45,7 @@
     α = 0.3
     Adisc3 = α * Adisc1 + (1. - α) * Adisc2
     
-    ωcont_new, Acont_new = TCI4Keldysh.getAcont_mp(ωdisc, Adisc3, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum)
+    ωcont_new, Acont_new = TCI4Keldysh.getAcont_mp(ωdisc, Adisc3, sigmab, g; ωconts=ntuple(i->ωcont, ndims(Adisc3)), emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum)
     @test sum(Adisc3) - sum(Acont_new  .* Δωcont .* Δωcont') ≈ 0 atol=1.e-3
 
     Nωcont_pos = 10
@@ -62,7 +62,7 @@
     α = 0.3
     Adisc3 = α * Adisc1 + (1. - α) * Adisc2
     
-    ωcont_new, Acont_new = TCI4Keldysh.getAcont_mp(ωdisc, Adisc3, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum)
+    ωcont_new, Acont_new = TCI4Keldysh.getAcont_mp(ωdisc, Adisc3, sigmab, g; ωconts=ntuple(i->ωcont, ndims(Adisc3)), emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum)
     @test sum(Adisc3) - sum(Acont_new  .* Δωcont .* Δωcont' .* reshape(Δωcont, (1,1,Nωcont_pos*2+1))) ≈ 0 atol=1.e-3
 
 end;
@@ -97,11 +97,12 @@ end;
 
     Nωcont_pos = 256
     ωcont = get_ωcont(D*0.5, Nωcont_pos)
+    ωconts=ntuple(i->ωcont, ndims(Adisc))
 
     #    println("parameters: \n\tT = ", T, "\n\tU = ", U, "\n\tΔ = ", Δ)
 
-    @time ωcont, Acont = TCI4Keldysh.getAcont_mp(ωdisc, Adisc, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
-    broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωcont, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+    @time ωcont, Acont = TCI4Keldysh.getAcont_mp(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+    broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
 
     D = ndims(Adisc)
     idxs = collect(1:length(ωcont));
