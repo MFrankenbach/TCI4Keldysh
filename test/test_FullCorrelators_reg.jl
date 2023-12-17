@@ -1,4 +1,6 @@
-@testset "calc. Matsubara Correlators from PSFs: " begin
+
+
+#@testset "calc. Matsubara Correlators from PSFs: " begin
 
     ### Hubbard atom propagator:
     T = 3.
@@ -7,12 +9,12 @@
     ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * im * π * T
     ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
     Nωdisc = 100
-    ωdisc_shift = 50
+    ωdisc_shift = 1#50
 
+    u = 0.5
+    ωdisc, Adisc = get_Adisc_δpeak_mp([ωdisc_shift], Nωdisc, 1; ωdisc_min=u)
 
-    ωdisc, Adisc = get_Adisc_δpeak_mp([ωdisc_shift], Nωdisc, 1)
-
-    u = ωdisc[Nωdisc + 1 + ωdisc_shift]
+    #u = ωdisc[Nωdisc + 1 + ωdisc_shift]
     Zinv = 1. / (exp(u/T) + 1) / 2.
     expβu = exp(u/T)
     Adisc = Zinv * (expβu * Adisc + reverse(Adisc))
@@ -30,7 +32,7 @@
 
     ### 3-point correlator corresponding to <d_↑^† d_↓ (d_↓^† d_↑)>: 
     D = 2
-    ωdisc = get_Adisc_δpeak_mp([0,0], Nωdisc, 2)[1]
+    ωdisc = get_Adisc_δpeak_mp([0,0], Nωdisc, 2; ωdisc_min=u)[1]
     Adiscs = [
         get_Adisc_δpeak_mp([ ωdisc_shift,           0], Nωdisc, 2)[2] * Zinv * expβu
         ,get_Adisc_δpeak_mp([-ωdisc_shift,-ωdisc_shift], Nωdisc, 2)[2] * Zinv         * (-1)

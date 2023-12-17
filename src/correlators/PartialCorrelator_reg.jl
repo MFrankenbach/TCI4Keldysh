@@ -48,7 +48,7 @@ struct PartialCorrelator_reg{D}
                 throw(ArgumentError("ωcont must be an equidistant grid."))
             end
             # compute retarded 1D kernels
-            Kernels = ntuple(i -> im * π * conj.(hilbert_fft(Acont.Kernels[i]; dims=1)), D)
+            Kernels = ntuple(i -> -im * π * hilbert_fft(Acont.Kernels[i]; dims=1), D)
         end
         precomp = Array{ComplexF64,D}(undef, length.(ωs_ext)...)
         return new{D}(formalism, Acont.Adisc, Acont.ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff, precomp)

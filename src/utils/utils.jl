@@ -61,6 +61,12 @@ If `x` is a matrix, then `hilbert` operates along columns.
 x = randn(10,10)
 y = hilbert(x)
 ```
+
+NOTE ON CONVERGENCE:
+ - convergence: for slowly decaying Fourier transform of the signal ys ∝ 1/x one one is limited by the Nyquist theorem
+                idea 1:     for long-term tails in Fourier transform: try out linear least squares fit to obtain coeffs for 1, 1/ω and 1/ω²
+                            then insert/add the analytically known result
+
 """
 function hilbert_fft(x::AbstractArray{Float64,d}; dims::Int=1) where {d}
     if d > 2
@@ -110,11 +116,11 @@ We assume that the signal ys is piecewise linear.
 If ys is multidimensional, the transform is computed along the direction dims=1.
 
 The Hilbert transform is:
-h(x_out) = P.V. ∫ dx y(x) / (x_out - x)
+h(x_out) = 1/π P.V. ∫ dx y(x) / (x_out - x)
 where P.V. stands for a principal value integral.
 
-NOTE ON CONVENTIONS:    Unlike the standard definition of Hilbert transforms we don't divide the result 
-                        by a global factor of π.
+NOTE ON CONVENTIONS:    Analogously to the hilbert_fft(...) we return the original signal 'ys' 
+                        with the Hilbert transform in the imaginary part.
 
 NOTE ON PERFORMANCE / CONVERGENCE:
  - bottlenecks: construction of L (uncomment @time to see details)
@@ -185,9 +191,10 @@ function my_hilbert_trafo(
     #println("shapes of terms:\t", size(term1), "\t", size(term2), "\t", size(term3))
 
     result = term1' .- term2 .- term3
+    result ./= π
     #result = - (ys[1,:] - ys[end,:]) .- ΔL * ys[1:end-1,:] - (ΔL .* (xs_out .- xs_in[1:end-1]')) * a
 
-    return result
+    return ys .+ im .* result
 end
 
 
@@ -214,4 +221,81 @@ function load_ωdisc(path::String, Ops::Vector{String})
     end
     ωdisc  = read(f, "odisc")[:]
     return ωdisc 
+end
+
+
+
+function symmetry_expand(path::String, Ops::Vector{String})
+    if !(length(Ops)==4)
+        throw(ArgumentError("Ops must contain 4 strings."))
+    end
+
+    #using TCI4Keldysh
+    #using MAT
+    #path = "./data/PSF_nz=2_conn_zavg/"
+    #Ops = ["F1", "F1dag", "F3", "F3dag"]
+    #Ops = ["F1", "F1dag", "F3dag", "Q3"]
+    ops_dagged = length.(Ops) .>= 5
+    olabels = zeros(Int, 4)
+    if all([o[1] == 'F' for o in Ops[.!ops_dagged]])
+        olabels[.!ops_dagged] .= 1
+    else
+        olabels[.!ops_dagged] .= 1:2
+    end
+    if all([o[1] == 'F' for o in Ops[ops_dagged]])
+        olabels[ops_dagged] .= 3
+    else
+        olabels[ops_dagged] .= 3:4
+    end
+        
+    exchange_annih_ops = !any(olabels[.!ops_dagged] .== 2)
+    exchange_creat_ops = !any(olabels[  ops_dagged] .== 4)
+    
+    function deduce_Adisc(path, Ops::Vector{String}, perm::Vector{Int}; combination::Matrix{Int})
+        Adiscs = [TCI4Keldysh.load_Adisc(path, Ops, i) for i in 1:2]
+        ωdisc = TCI4Keldysh.load_ωdisc(path, Ops)
+        Adiscs_new = [combination[i,1] * Adiscs[1] + combination[i,2] * Adiscs[2] for i in 1:2]
+        
+        filename_new = joinpath(path, "PSF_(("*mapreduce(*,*,Ops[perm], ["," for i in 1:length(Ops)])[1:end-1]*")).mat")
+        try
+            f = matopen(filename_new)
+
+            write(f, "Adisc", Adiscs_new)
+            write(f, "odisc", ωdisc)
+            close(f)
+        catch
+            f = matopen(filename_new, "w")
+
+            write(f, "Adisc", Adiscs_new)
+            write(f, "odisc", ωdisc)
+            close(f)
+        end
+    
+    end
+    
+    
+    if exchange_annih_ops
+        perm = collect(1:4)
+        to_perm = perm[.!ops_dagged]
+        perm[to_perm[1]], perm[to_perm[2]] = perm[to_perm[2]], perm[to_perm[1]]
+        deduce_Adisc(path, Ops, perm, combination=[1 0; -1 1])
+    end
+    perm
+    
+    if exchange_creat_ops
+        perm = collect(1:4)
+        to_perm = perm[ops_dagged]
+        perm[to_perm[1]], perm[to_perm[2]] = perm[to_perm[2]], perm[to_perm[1]]
+        deduce_Adisc(path, Ops, perm, combination=[1 0; -1 1])
+    end
+    
+    if exchange_annih_ops && exchange_creat_ops
+        perm = collect(1:4)
+        to_perm = perm[ops_dagged]
+        perm[to_perm[1]], perm[to_perm[2]] = perm[to_perm[2]], perm[to_perm[1]]
+        to_perm = perm[.!ops_dagged]
+        perm[to_perm[1]], perm[to_perm[2]] = perm[to_perm[2]], perm[to_perm[1]]
+        deduce_Adisc(path, Ops, perm, combination=[1 0; 0 1])
+    end
+    return nothing
 end
