@@ -93,13 +93,18 @@ GRtmp_data = gRtmp.(collect(axes(ωcont)[1]))
 
 
 ## evaluate MF correlator:
-#GM = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag", "F3", "F3dag"]; flavor_idx=1, ωs_ext=(ωcont.* im,ωcont.* im,ωcont.* im,), ωconvMat=[0 1 0;
-#                                                                                                            -1 -1 0; 
-#                                                                                                             0 0 -1;
-#                                                                                                             1 0 1], name="SIAM 4pG");
-#GM_dat = TCI4Keldysh.precompute_all_values(GM)
-#GM = TCI4Keldysh.FullCorrelator_MF(PSFpath, Ops; flavor_idx=1, ωs_ext=(ωcont.* im,), ωconvMat=reshape([1 ; -1], (2, 1)), name="SIAM G")
-#GMtmp_data = GM.(collect(axes(ωcont)[1]))
+N_MF = 10
+T = 3.
+ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * im * π * T
+ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
+
+GM = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag", "F3", "F3dag"]; flavor_idx=1, ωs_ext=(ω_bos,ω_fer,ω_fer), 
+ωconvMat=[ 0  1  0;
+          -1 -1  0; 
+           0  0 -1;
+           1  0  1], name="SIAM 4pG");
+GM_dat = TCI4Keldysh.precompute_all_values(GM)
+TCI4Keldysh.maxabs(imag.(GM_dat)) #/ TCI4Keldysh.maxabs(GM_dat)
 
 
 filename_broadened = "data/precomputedAcont_estep"*string(estep)*"_Nw"*string(Nωcont_pos)
