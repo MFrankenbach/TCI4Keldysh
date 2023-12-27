@@ -18,7 +18,7 @@ struct FullCorrelator_MF{D}
         ###################################################################
         
         perms = permutations(collect(1:D+1))
-        isBos = (o -> o[1] == 'Q').(Ops)
+        isBos = (o -> length(o) == 3).(Ops)
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
 

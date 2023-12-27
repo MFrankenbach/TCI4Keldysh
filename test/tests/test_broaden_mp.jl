@@ -71,7 +71,7 @@ end;
 
 
 @testset "on-the-fly broadened Acont" begin
-    f = h5open(joinpath(dirname(@__FILE__), "../data/3pPSF_example.h5"), "r")
+    f = h5open(joinpath(dirname(@__FILE__), "../../data/3pPSF_example.h5"), "r")
     Adisc = read(f, "Adisc")
     ωdisc = read(f, "ωdisc")
     D = read(f, "D")

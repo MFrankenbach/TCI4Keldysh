@@ -3,7 +3,7 @@
  
 
 
-    filename = joinpath(dirname(@__FILE__), "test_PSF_2D.h5")
+    filename = joinpath(dirname(@__FILE__), "data_PSF_2D.h5")
     f = h5open(filename, "r")
     Adisc = read(f, "Adisc")
     ωdisc = read(f, "ωdisc")

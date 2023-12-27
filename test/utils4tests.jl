@@ -15,3 +15,20 @@ function get_ωcont(ωmax, Nωcont_pos)
     ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
     return ωcont
 end
+
+function HA_exact_corr_F1_F1dag(ω; u::Float64)
+    return  1 / (ω - u^2/ω)
+end
+
+
+function HA_exact_corr_Q1_F1dag(ω; u::Float64)
+    return  u / (ω - u)
+end
+function HA_exact_corr_Q1_Q1dag(ω; u::Float64)
+    return 2 * u^2 / (ω - u)
+end
+
+
+function HA_exact_selfenergy(ω; u::Float64)
+    return  u + u^2 / ω
+end

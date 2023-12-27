@@ -11,6 +11,7 @@ using StaticArrays
 using Combinatorics
 using MAT
 using StridedViews
+using Interpolations
 
 include("utils/utils.jl")
 include("utils/TCI_utils.jl")
@@ -21,6 +22,7 @@ include("broadening/broaden_lin.jl")
 include("broadening/broaden_Gauss.jl")
 include("correlators/PartialCorrelator_reg.jl")
 include("correlators/FullCorrelator_reg.jl")
+include("improved_estimators/calc_SE.jl")
 
 
 end # module TCI4Keldysh

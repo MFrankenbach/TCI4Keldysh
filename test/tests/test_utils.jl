@@ -5,8 +5,8 @@
         xs = collect(LinRange(-x_in_max, x_in_max, N_in))
         xs_out = collect(LinRange(-x_in_max, x_in_max, 1000))
         ys = sin.(xs) ./ xs
-        ht = TCI4Keldysh.my_hilbert_trafo(xs_out, xs, ys)
-        expected = (x -> (1. - cos(x)) / x).(xs_out)  * π
+        ht = imag.(TCI4Keldysh.my_hilbert_trafo(xs_out, xs, ys))
+        expected = (x -> (1. - cos(x)) / x).(xs_out)#  * π
 
         return maximum(abs.(ht - expected))
 
@@ -17,8 +17,8 @@
         xs_out = collect(LinRange(-x_in_max, x_in_max, 1000))
         ϵ = 2.
         ys = (x -> 1. / ((x-ϵ)^2 + 1.)).(xs)
-        ht = TCI4Keldysh.my_hilbert_trafo(xs_out, xs, ys)
-        expected = (x -> (x - ϵ) / ((x-ϵ)^2 + 1.)).(xs_out)  * π
+        ht = imag.(TCI4Keldysh.my_hilbert_trafo(xs_out, xs, ys))
+        expected = (x -> (x - ϵ) / ((x-ϵ)^2 + 1.)).(xs_out)#  * π
 
         return maximum(abs.(ht - expected))
 

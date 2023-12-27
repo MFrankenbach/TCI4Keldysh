@@ -194,7 +194,10 @@ function my_hilbert_trafo(
     result ./= π
     #result = - (ys[1,:] - ys[end,:]) .- ΔL * ys[1:end-1,:] - (ΔL .* (xs_out .- xs_in[1:end-1]')) * a
 
-    return ys .+ im .* result
+    interp_linear = linear_interpolation(xs_in, ys)
+    ys_interp = interp_linear.(xs_out)
+
+    return ys_interp .+ im .* result
 end
 
 

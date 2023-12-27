@@ -25,7 +25,7 @@
 
     G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom propagator"])
     G_data = G.(collect(1:length(ω_fer)))
-    G_expec=  (ω -> 1 / (ω - u^2 / ω)).(ω_fer)
+    G_expec=  HA_exact_corr_F1_F1dag.(ω_fer; u=u)
     @test maximum(abs.(G_data - G_expec)) < 1.e-13
 
 
