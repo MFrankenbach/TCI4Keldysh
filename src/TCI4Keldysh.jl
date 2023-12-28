@@ -23,6 +23,7 @@ include("broadening/broaden_Gauss.jl")
 include("correlators/PartialCorrelator_reg.jl")
 include("correlators/FullCorrelator_reg.jl")
 include("improved_estimators/calc_SE.jl")
+include("improved_estimators/symmetric_estimators_2D3D.jl")
 
 
 end # module TCI4Keldysh
