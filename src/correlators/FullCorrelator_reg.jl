@@ -27,6 +27,9 @@ struct FullCorrelator_MF{D}
 
 
     function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; isBos::BitVector, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
+        if DEBUG()
+            println("Constructing FullCorrelator_MF.")
+        end
         ##########################################################################
         ############################## check inputs ##############################
         if size(ωconvMat) != (D+1, D)

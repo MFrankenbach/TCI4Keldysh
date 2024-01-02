@@ -227,7 +227,10 @@ function load_ωdisc(path::String, Ops::Vector{String})
 end
 
 
+"""
 
+Deduce missing S[O₁,O₂,O₃,O₄] by use of symmetries => relate to exchange of the 2 creation (annihilation) operators
+"""
 function symmetry_expand(path::String, Ops::Vector{String})
     if !(length(Ops)==4)
         throw(ArgumentError("Ops must contain 4 strings."))
@@ -281,7 +284,7 @@ function symmetry_expand(path::String, Ops::Vector{String})
         perm = collect(1:4)
         to_perm = perm[.!ops_dagged]
         perm[to_perm[1]], perm[to_perm[2]] = perm[to_perm[2]], perm[to_perm[1]]
-        deduce_Adisc(path, Ops, perm, combination=[1 0; -1 1])
+        deduce_Adisc(path, Ops, perm, combination=[1 0; 1 -1])
     end
     perm
     
@@ -289,7 +292,7 @@ function symmetry_expand(path::String, Ops::Vector{String})
         perm = collect(1:4)
         to_perm = perm[ops_dagged]
         perm[to_perm[1]], perm[to_perm[2]] = perm[to_perm[2]], perm[to_perm[1]]
-        deduce_Adisc(path, Ops, perm, combination=[1 0; -1 1])
+        deduce_Adisc(path, Ops, perm, combination=[1 0; 1 -1])
     end
     
     if exchange_annih_ops && exchange_creat_ops

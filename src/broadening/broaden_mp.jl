@@ -203,7 +203,7 @@ struct BroadenedPSF{D}                  ### D = number of frequency dimensions
         ωconts  ::NTuple{D,Vector{Float64}},
         kwargs...
     ) where{D}
-        _, ωdiscs, Adisc, Kernels, _ = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; ωconts, kwargs...)
+        @TIME _, ωdiscs, Adisc, Kernels, _ = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; ωconts, kwargs...) "Prepare broadening."
         sz = size(Adisc)
         return new{D}(Adisc, ωdiscs, Kernels, ωconts, sz)
     end

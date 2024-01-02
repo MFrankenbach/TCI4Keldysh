@@ -13,6 +13,21 @@ using MAT
 using StridedViews
 using Interpolations
 
+# macro to unlock debug mode
+DEBUG() = false
+
+macro DEBUG(expr, msgs)
+    esc(:(if $(@__MODULE__).DEBUG() @assert($expr, $msgs...) end))
+end
+
+
+# macro to unlock timing of function evaluations
+TIME() = false
+
+macro TIME(expr, msgs)
+    esc(:(if $(@__MODULE__).TIME() print($msgs..., "\t"); @time($expr) else $expr end))
+end
+
 include("utils/utils.jl")
 include("utils/TCI_utils.jl")
 include("broadening/broaden_1D.jl")
