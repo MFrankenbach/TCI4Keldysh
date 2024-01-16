@@ -28,6 +28,7 @@ macro TIME(expr, msgs)
     esc(:(if $(@__MODULE__).TIME() print($msgs..., "\t"); @time($expr) else $expr end))
 end
 
+include("types.jl")
 include("utils/utils.jl")
 include("utils/TCI_utils.jl")
 include("broadening/broaden_1D.jl")

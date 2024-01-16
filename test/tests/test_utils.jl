@@ -59,3 +59,41 @@
 
 
 end
+
+@testset "utils for Tucker decompositions" begin
+    filename = joinpath(dirname(@__FILE__), "data_PSF_2D.h5")
+    f = h5open(filename, "r")
+    Adisc = read(f, "Adisc")
+    ωdisc = read(f, "ωdisc")
+    close(f)
+
+
+    D = 1.
+    Nωcont_pos = 2^6
+    ωcont = get_ωcont(D*0.5, Nωcont_pos)
+    ωconts=ntuple(i->ωcont, ndims(Adisc))
+
+    σ = 1.
+    sigmab = [σ]
+    g = 2.
+    tol = 1.e-14
+    estep = 160
+    emin = 1e-6; emax = 1e2;
+    Lfun = "FD" 
+    is2sum = false
+    verbose = false
+
+    broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+    original_data = broadenedPsf[:,:]
+
+    TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf)
+    newdata = broadenedPsf[:,:]
+    atol = 1e-6
+    broadenedPsf_new = TCI4Keldysh.svd_trunc_Adisc(broadenedPsf; atol)
+    truncdata = broadenedPsf_new[:,:]
+
+    @test TCI4Keldysh.maxabs(newdata - original_data) < 1e-12
+    @test TCI4Keldysh.maxabs(truncdata - original_data) < atol
+
+    
+end

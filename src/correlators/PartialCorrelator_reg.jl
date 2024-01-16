@@ -4,7 +4,7 @@ PartialCorrelator_reg
 
 partial correlator ̃Gₚ(ω₁, ω₂, ...) = ∫dε₁dε₂ ̃K(ω₁-ε₁) ̃K( ω₂- ε₂)... Sₚ(ε₁,ε₂,...)
 """
-struct PartialCorrelator_reg{D}
+struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     formalism:: String                          # "MF" or "KF"
     Adisc   ::  Array{Float64,D}                # discrete PSF data; best: compactified with compactAdisc(...)
     ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
@@ -13,7 +13,6 @@ struct PartialCorrelator_reg{D}
     ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
     ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices
     ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of indices
-    precomp ::  Array{ComplexF64,D}             # precomputed values
 
     ####################
     ### Constructors ###
@@ -22,36 +21,41 @@ struct PartialCorrelator_reg{D}
         if !(formalism == "MF" || formalism == "KF")
             throw(ArgumentError("formalism must be MF when unbroadened Adisc is input."))
         end
+        if DEBUG()
+            println("Constructing PartialCorrelator_reg (WITHOUT broadening).")
+        end
 
         ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
         # Delete rows/columns that contain only zeros
         _, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
         # Then pray that Adisc has no contributions for which the kernels diverge:
-        Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], ωdiscs[i]) ,D)
-        precomp = Array{ComplexF64,D}(undef, length.(ωs_ext)...)
-        return new{D}(formalism, Adisc, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff, precomp)
+        @TIME Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], ωdiscs[i]) ,D) "Precomputing 1D kernels (for MF)."
+        return new{D}(formalism, Adisc, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end
     function PartialCorrelator_reg(formalism::String, Acont::BroadenedPSF{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
         if !(formalism == "MF" || formalism == "KF")
             throw(ArgumentError("formalism must be MF or KF."))
         end
+        if DEBUG()
+            println("Constructing PartialCorrelator_reg (WITH broadening).")
+        end
+
         ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
         #println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
         δωcont = get_ω_binwidths(Acont.ωconts[1])
         if formalism == "MF"
             # 1.: rediscretization of broadening kernel
             # 2.: contraction with regular kernel
-            Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (get_ω_binwidths(Acont.ωconts[i]) .* Acont.Kernels[i]), D)
+            @TIME Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (get_ω_binwidths(Acont.ωconts[i]) .* Acont.Kernels[i]), D) "Constructing 1D Kernels (for MF)."
         else
             # check that grid is equidistant:
             if maximum(abs.(diff(δωcont) )) > 1e-10
                 throw(ArgumentError("ωcont must be an equidistant grid."))
             end
             # compute retarded 1D kernels
-            Kernels = ntuple(i -> -im * π * hilbert_fft(Acont.Kernels[i]; dims=1), D)
+            @TIME Kernels = ntuple(i -> -im * π * hilbert_fft(Acont.Kernels[i]; dims=1), D) "Hilbert trafo (for KF)."
         end
-        precomp = Array{ComplexF64,D}(undef, length.(ωs_ext)...)
-        return new{D}(formalism, Acont.Adisc, Acont.ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff, precomp)
+        return new{D}(formalism, Acont.Adisc, Acont.ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end
 
 end

@@ -1,3 +1,7 @@
+function allconcrete(x::T) where T 
+    return all(isconcretetype, fieldtypes(T))
+end
+
 function maxabs(arr::AbstractArray)
     return maximum(abs.(arr))
 end
@@ -304,4 +308,44 @@ function symmetry_expand(path::String, Ops::Vector{String})
         deduce_Adisc(path, Ops, perm, combination=[1 0; 0 1])
     end
     return nothing
+end
+
+
+function shift_singular_values_to_center!(broadenedPsf::AbstractTuckerDecomp{D}) where{D}
+    tmpKernels = Vector{Matrix{Float64}}(undef, 0)
+    for d in 1:D
+        # shift all singular values to central tensor
+        U, S, V = svd(broadenedPsf.Kernels[d])
+        push!(tmpKernels, Diagonal(S)*V')
+        broadenedPsf.Kernels[d][:] = U[:]
+    end
+    Adisc_new = TCI4Keldysh.contract_Kernels_w_Adisc_mp(tmpKernels, broadenedPsf.Adisc)
+    broadenedPsf.Adisc[:] = Adisc_new[:]
+    
+    return nothing
+end
+
+function svd_trunc_Adisc(broadenedPsf::AbstractTuckerDecomp{D}; atol::Float64) where{D}
+    Adisc_tmp = broadenedPsf.Adisc
+    Kernels_new = [broadenedPsf.Kernels...]
+
+    for it1 in 1:D
+
+        sizetmp = [size(Adisc_tmp)...]
+        U, S, V = svd(reshape(Adisc_tmp, (sizetmp[1], prod(sizetmp[2:end]))))
+        oktmp = S.>atol
+        sizetmp[1] = sum(oktmp)
+        Kernels_new[it1] = (broadenedPsf.Kernels[it1] * U)[:,oktmp]
+        Adisc_tmp = reshape((Diagonal(S[oktmp]) * V[:,oktmp]'), (sizetmp...))
+
+        if D>1
+            Adisc_tmp = permutedims(Adisc_tmp, (collect(2:D)..., 1))
+        end
+
+    end
+
+    broadenedPsf_new = TCI4Keldysh.BroadenedPSF(
+        Adisc_tmp,  broadenedPsf.ωdiscs, (Kernels_new...,), broadenedPsf.ωconts, size(Adisc_tmp)
+    )
+    return broadenedPsf_new
 end

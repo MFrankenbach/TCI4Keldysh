@@ -180,12 +180,23 @@ function contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc)
     return Acont
 end
 
-struct BroadenedPSF{D}                  ### D = number of frequency dimensions
+struct BroadenedPSF{D} <: AbstractTuckerDecomp{D}                 ### D = number of frequency dimensions
     Adisc   ::Array{Float64,D}          ### discrete spectral data; best: compactified with compactAdisc(...)
     ωdiscs  ::Vector{Vector{Float64}}   ### discrete frequencies for all D dimensions
     Kernels ::NTuple{D,Matrix{Float64}} ### broadening kernels
     ωconts  ::NTuple{D,Vector{Float64}} ### continous frequencies for all D dimensions
     sz      ::NTuple{D,Int}             ### size of Adisc
+
+
+    function BroadenedPSF(
+        Adisc   ::Array{Float64,D}          ,
+        ωdiscs  ::Vector{Vector{Float64}}   ,
+        Kernels ::NTuple{D,Matrix{Float64}} ,
+        ωconts  ::NTuple{D,Vector{Float64}} ,
+        sz      ::NTuple{D,Int}             
+    ) where{D}
+        return new{D}(Adisc, ωdiscs, Kernels, ωconts, sz)
+    end
 
     function BroadenedPSF(
         ωdisc   ::Vector{Float64},  # Logarithimic frequency bins. 
@@ -223,6 +234,20 @@ function (psf::BroadenedPSF{D})(idx::Vararg{Int,D})  ::Float64 where {D}
     return res[1]
 end
 
+function (psf::BroadenedPSF{1})(idx::Vararg{Int,1})  ::Float64# where {D}
+    #return mapreduce(*,+,view(psf.Kernels[1], idx[1], :),psf.Adisc)
+    return dot(view(psf.Kernels[1], idx[1], :),psf.Adisc)
+end
+
+function (psf::BroadenedPSF{2})(idx::Vararg{Int,2})  ::Float64# where {D}
+    return dot(view(psf.Kernels[1], idx[1], :),psf.Adisc,view(psf.Kernels[2], idx[2], :))
+end
+
+function (psf::BroadenedPSF{3})(idx::Vararg{Int,3})  ::Float64 #where {D}
+    N = size(psf.Kernels[3])[2]
+    temp = [dot(view(psf.Kernels[1], idx[1], :),view(psf.Adisc, :,:,i),view(psf.Kernels[2], idx[2], :)) for i in 1:N]
+    return dot(temp,view(psf.Kernels[3], idx[3], :))
+end
 
 
 function Base.:getindex(
