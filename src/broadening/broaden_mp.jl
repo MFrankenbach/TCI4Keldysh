@@ -236,17 +236,21 @@ end
 
 function (psf::BroadenedPSF{1})(idx::Vararg{Int,1})  ::Float64# where {D}
     #return mapreduce(*,+,view(psf.Kernels[1], idx[1], :),psf.Adisc)
-    return dot(view(psf.Kernels[1], idx[1], :),psf.Adisc)
+    #return dot(view(psf.Kernels[1], idx[1], :),psf.Adisc)
+    return LinearAlgebra.BLAS.dot(view(psf.Kernels[1], idx[1], :),psf.Adisc)
 end
 
 function (psf::BroadenedPSF{2})(idx::Vararg{Int,2})  ::Float64# where {D}
-    return dot(view(psf.Kernels[1], idx[1], :),psf.Adisc,view(psf.Kernels[2], idx[2], :))
+    return LinearAlgebra.BLAS.dot(view(psf.Kernels[1], idx[1], :), LinearAlgebra.BLAS.gemv('N',psf.Adisc,view(psf.Kernels[2], idx[2], :)))
+    #return dot(view(psf.Kernels[1], idx[1], :),psf.Adisc,view(psf.Kernels[2], idx[2], :))
 end
 
 function (psf::BroadenedPSF{3})(idx::Vararg{Int,3})  ::Float64 #where {D}
     N = size(psf.Kernels[3])[2]
-    temp = [dot(view(psf.Kernels[1], idx[1], :),view(psf.Adisc, :,:,i),view(psf.Kernels[2], idx[2], :)) for i in 1:N]
-    return dot(temp,view(psf.Kernels[3], idx[3], :))
+    #temp = [dot(view(psf.Kernels[1], idx[1], :),view(psf.Adisc, :,:,i),view(psf.Kernels[2], idx[2], :)) for i in 1:N]
+    #return dot(temp,view(psf.Kernels[3], idx[3], :))
+    temp = [LinearAlgebra.BLAS.dot(view(psf.Kernels[1], idx[1], :), LinearAlgebra.BLAS.gemv('N',view(psf.Adisc, :,:,i),view(psf.Kernels[2], idx[2], :))) for i in 1:N]
+    return LinearAlgebra.BLAS.dot(temp,view(psf.Kernels[3], idx[3], :))
 end
 
 

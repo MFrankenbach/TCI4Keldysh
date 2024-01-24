@@ -1,6 +1,7 @@
 module TCI4Keldysh
 
 using LinearAlgebra
+using LinearAlgebra.BLAS
 using Match
 using Printf
 #using Tullio
