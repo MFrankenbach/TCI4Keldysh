@@ -231,6 +231,17 @@ function load_ωdisc(path::String, Ops::Vector{String})
 end
 
 
+function parse_filename_to_Ops(fn)
+    return split(fn[7:end-6], ",")
+end
+
+function parse_Ops_to_filename(ops)
+    temp = prod([o*"," for o in ops])
+    return "PSF_(("*temp[1:end-1]*")).mat"
+end
+
+
+
 """
 
 Deduce missing S[O₁,O₂,O₃,O₄] by use of symmetries => relate to exchange of the 2 creation (annihilation) operators
@@ -239,50 +250,45 @@ function symmetry_expand(path::String, Ops::Vector{String})
     if !(length(Ops)==4)
         throw(ArgumentError("Ops must contain 4 strings."))
     end
-
-    #using TCI4Keldysh
-    #using MAT
-    #path = "./data/PSF_nz=2_conn_zavg/"
-    #Ops = ["F1", "F1dag", "F3", "F3dag"]
-    #Ops = ["F1", "F1dag", "F3dag", "Q3"]
-    ops_dagged = length.(Ops) .>= 5
-    olabels = zeros(Int, 4)
-    if all([o[1] == 'F' for o in Ops[.!ops_dagged]])
-        olabels[.!ops_dagged] .= 1
-    else
-        olabels[.!ops_dagged] .= 1:2
-    end
-    if all([o[1] == 'F' for o in Ops[ops_dagged]])
-        olabels[ops_dagged] .= 3
-    else
-        olabels[ops_dagged] .= 3:4
-    end
-        
-    exchange_annih_ops = !any(olabels[.!ops_dagged] .== 2)
-    exchange_creat_ops = !any(olabels[  ops_dagged] .== 4)
+    filelist = readdir(path)
     
     function deduce_Adisc(path, Ops::Vector{String}, perm::Vector{Int}; combination::Matrix{Int})
+
         Adiscs = [TCI4Keldysh.load_Adisc(path, Ops, i) for i in 1:2]
         ωdisc = TCI4Keldysh.load_ωdisc(path, Ops)
-        Adiscs_new = [combination[i,1] * Adiscs[1] + combination[i,2] * Adiscs[2] for i in 1:2]
         
-        filename_new = joinpath(path, "PSF_(("*mapreduce(*,*,Ops[perm], ["," for i in 1:length(Ops)])[1:end-1]*")).mat")
-        try
-            f = matopen(filename_new)
+        filename = parse_Ops_to_filename(Ops[perm])
+        fullfilename = joinpath(path, filename)
+        if any(filename .==filelist) # don't overwrite existing files
+            @VERBOSE filename*" exists!\n"
+        else
+            @VERBOSE "Creating "* filename* ".\n"
 
-            write(f, "Adisc", Adiscs_new)
-            write(f, "odisc", ωdisc)
-            close(f)
-        catch
-            f = matopen(filename_new, "w")
 
-            write(f, "Adisc", Adiscs_new)
-            write(f, "odisc", ωdisc)
-            close(f)
+            Adiscs_new = [combination[i,1] * Adiscs[1] + combination[i,2] * Adiscs[2] for i in 1:2]
+        
+            try
+                f = matopen(fullfilename)
+
+                write(f, "Adisc", Adiscs_new)
+                write(f, "odisc", ωdisc)
+                close(f)
+            catch
+                f = matopen(fullfilename, "w")
+
+                write(f, "Adisc", Adiscs_new)
+                write(f, "odisc", ωdisc)
+                close(f)
+            end
         end
     
     end
     
+    ops_dagged = length.(Ops) .>= 5 # BitVector for dag-ed Strings in Ops
+    
+    # operators can be exchanged if both are F(Q) operators
+    exchange_annih_ops = Ops[.!ops_dagged][1][1] == Ops[.!ops_dagged][2][1]
+    exchange_creat_ops = Ops[  ops_dagged][1][1] == Ops[  ops_dagged][2][1]
     
     if exchange_annih_ops
         perm = collect(1:4)
@@ -290,7 +296,6 @@ function symmetry_expand(path::String, Ops::Vector{String})
         perm[to_perm[1]], perm[to_perm[2]] = perm[to_perm[2]], perm[to_perm[1]]
         deduce_Adisc(path, Ops, perm, combination=[1 0; 1 -1])
     end
-    perm
     
     if exchange_creat_ops
         perm = collect(1:4)
@@ -322,6 +327,23 @@ function shift_singular_values_to_center!(broadenedPsf::AbstractTuckerDecomp{D})
     Adisc_new = TCI4Keldysh.contract_Kernels_w_Adisc_mp(tmpKernels, broadenedPsf.Adisc)
     broadenedPsf.Adisc[:] = Adisc_new[:]
     
+    return nothing
+end
+
+
+function shift_singular_values_to_center_DIRTY!(broadenedPsf::AbstractTuckerDecomp{D}) where{D}
+    tiny = 1.e-13
+
+    # modify Adisc and Kernels by multiplying / dividing by |ωdisc|
+    for d in 1:D
+        ωdisc = broadenedPsf.ωdiscs[d]
+        modifier_Kernel = [.-ωdisc[ωdisc.<-tiny]; ones(sum(abs.(ωdisc).< tiny)); ωdisc[ωdisc.> tiny]]
+        broadenedPsf.Kernels[d] .= broadenedPsf.Kernels[d] .* modifier_Kernel'
+        
+        modifier_Adisc = 1 ./ modifier_Kernel
+        broadenedPsf.Adisc .= broadenedPsf.Adisc .* reshape(modifier_Adisc, (ones(Int, d-1)..., length(modifier_Adisc)))
+    end
+
     return nothing
 end
 

@@ -95,5 +95,12 @@ end
     @test TCI4Keldysh.maxabs(newdata - original_data) < 1e-12
     @test TCI4Keldysh.maxabs(truncdata - original_data) < atol
 
+    broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+    TCI4Keldysh.shift_singular_values_to_center_DIRTY!(broadenedPsf)
+
+    newdata_DIRTY = broadenedPsf[:,:]
+    
+    @test TCI4Keldysh.maxabs(newdata_DIRTY - original_data) < 1e-12
+    
     
 end

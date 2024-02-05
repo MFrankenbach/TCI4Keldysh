@@ -29,6 +29,13 @@ macro TIME(expr, msgs)
     esc(:(if $(@__MODULE__).TIME() print($msgs..., "\t"); @time($expr) else $expr end))
 end
 
+# macro to unlock timing of function evaluations
+VERBOSE() = false
+
+macro VERBOSE(msgs)
+    esc(:(if $(@__MODULE__).VERBOSE() print($msgs...) end))
+end
+
 include("types.jl")
 include("utils/utils.jl")
 include("utils/TCI_utils.jl")
