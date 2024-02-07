@@ -2,6 +2,7 @@ using TCI4Keldysh
 using HDF5
 using Plots
 using OffsetArrays
+using MAT
 
 # NRG convention for fermionic legs:
 # 1         1'
@@ -157,7 +158,7 @@ file_PA = h5open(PA_filename, "r")
 Σ_PA = read(file_PA, "selflist")[:] / Δ_PA
 
 
-PSFpath = "data/PSF_nz=2_conn_zavg/"
+PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
 #PSFpath = "data/PSF_nz=2_conn_zavg_u=1.00/"
 
 N_MF = div(length(Σ_PA), 2)
@@ -222,7 +223,6 @@ G_QQ_aux_data=TCI4Keldysh.precompute_all_values(G_QQ_aux)
 #@test Σ_calc_aIE ≈ Σ_HA
 #@test Σ_calc_sIE ≈ Σ_HA
 
-using Plots
 plot([Σ_PA, imag.(Σ_calc_aIE/Δ), imag.(Σ_calc_sIE/Δ)], label=["PA" "aIE" "sIE"])
 
 G0_inv_aIE = 1 ./ G_data + Σ_calc_aIE
@@ -249,6 +249,38 @@ K1t_data = [-TCI4Keldysh.precompute_all_values(K1t[i]) for i in 1:2]
 plot([K1a_PA, real.(K1a_data[2]/Δ)], labels=["PA" "NRG"], title="K1a", xlim=[2040,2070])
 plot([K1p_PA, real.(K1p_data[2]/Δ)], labels=["PA" "NRG"], title="K1p", xlim=[2040,2070])
 plot([K1t_PA, real.(K1t_data[2]/Δ)], labels=["PA" "NRG"], title="K1t", xlim=[2040,2070])
+
+function loadGgrid(filename)
+
+    file_JS = matopen(filename)
+    try
+        keys(file_JS)
+    catch
+        keys(file_JS)
+    end
+    return read(file_JS, "CFdat")["Ggrid"]
+end
+K1t_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U2_1.mat")
+#K1p_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U2_2.mat")
+#K1a_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U2_3.mat")
+
+
+file_JS = matopen("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U2_1.mat")
+try
+    keys(file_JS)
+catch
+    keys(file_JS)
+end
+read(file_JS, "CF")["PSF"]
+
+
+plot([real.(K1t_JS[2][1,1,:]), -real.(K1t_data[2][N_MF+1-101:N_MF+1+101])], labels=["JS" "AG"], xlim=[95,105])
+#plot([real.(K1p_JS[2][1,1,:]),  real.(K1p_data[2][N_MF+1-101:N_MF+1+101])], labels=["JS" "AG"], xlim=[95,105])
+#plot([real.(K1a_JS[2][1,1,:]), -real.(K1a_data[2][N_MF+1-101:N_MF+1+101])], labels=["JS" "AG"], xlim=[95,105])
+
+maximum(abs.(K1t_JS[2][1,1,:]+real.(K1t_data[2][N_MF+1-101:N_MF+1+101])))
+#maximum(abs.(K1p_JS[2][1,1,:]+real.(K1p_data[2][N_MF+1-101:N_MF+1+101])))
+#maximum(abs.(K1a_JS[2][1,1,:]+real.(K1a_data[2][N_MF+1-101:N_MF+1+101])))
 
 
 
@@ -299,7 +331,7 @@ N_K2_bos, N_K2_fer = div.(size(K2a_PA), 2)
 
 #K2′a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q14", "3", "1dag"), Σ_calc_aIE   ; ωs_ext, ωconvMat=ωconvMat_K2′a, flavor_idx=i) for i in 1:2]
 #K2′p_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q13", "1dag", "3dag"), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2′p, flavor_idx=i) for i in 1:2]
-#K2′t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q12", "3", "3dag"), Σ_calc_aIE   ; ωs_ext, ωconvMat=ωconvMat_K2′t, flavor_idx=i) for i in 1:2]
+K2′t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q12", "3", "3dag"), Σ_calc_aIE   ; ωs_ext, ωconvMat=ωconvMat_K2′t, flavor_idx=i) for i in 1:2]
 
 K2a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q23", "1", "3dag"), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2a, flavor_idx=i) for i in 1:2]
 K2p_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q24", "1", "3"   ), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2p, flavor_idx=i) for i in 1:2]
@@ -316,6 +348,29 @@ begin
     close(file)
 
 end
+
+K2t_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U3_6.mat")
+
+dat_JS = -real.(K2t_JS[2][:,1,:])'
+dat_AG = real.(K2t_data[2])[N_K2_bos+1-101:N_K2_bos+1+101, N_K2_fer-100:N_K2_fer+101]
+heatmap(dat_JS)
+heatmap(dat_AG)
+
+plot([dat_JS[102,:], dat_AG[102,:]], label=["JS" "AG"], xlim=[95,125])
+maximum(abs.(dat_JS - dat_AG))
+
+
+
+K2′t_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U3_1.mat")
+
+dat_JS = -real.(K2′t_JS[2][1,:,:])'
+dat_AG = real.(K2′t_data[2])[N_K2_bos+1-101:N_K2_bos+1+101, N_K2_fer-100:N_K2_fer+101]
+heatmap(dat_JS)
+heatmap(dat_AG)
+
+plot([dat_JS[102,:], dat_AG[102,:]], label=["JS" "AG"], xlim=[95,125])
+maximum(abs.(dat_JS - dat_AG))
+
 
 
 K1D = K1t_data[1] + K1t_data[2]
@@ -364,7 +419,7 @@ N_K2_bos, N_K2_fer = 100, 100
 ω_fer = (collect(-N_K2_fer:N_K2_fer-1) * (2.) .+ 1.) * im * π * T
 ωs_ext=(ω_bos, ω_fer, ω_fer)
 
-Γcore_data = [TCI4Keldysh.compute_Γcore_symmetric_estimator(PSFpath*"4pt/", Σ_calc_aIE; ωs_ext, ωconvMat_t, flavor_idx=i) for i in 1:2]
+Γcore_data = [TCI4Keldysh.compute_Γcore_symmetric_estimator(PSFpath*"4pt/", Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_t, flavor_idx=i) for i in 1:2]
 
 
     
@@ -395,6 +450,22 @@ end
 #    write(file_PA, "wfer", ω_fer)
 #    close(file_PA)
 #end
+
+
+Core_t_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U4.mat")
+
+dat_JS = -real.(Core_t_JS[2][2:end-1,2:end-1,102])
+
+file = h5open(output_filename, "r")
+core_AG = read(file, "core")
+close(file)
+#core_AG = cat(Γcore_data..., dims=4)
+dat_AG = -real.(core_AG[101,:,:,2])
+
+heatmap(dat_AG)
+heatmap(dat_JS)
+
+plot([dat_JS[:,101], dat_AG[:,101]], label=["JS" "AG"])
 
 
 using MAT
