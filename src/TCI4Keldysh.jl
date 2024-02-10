@@ -7,6 +7,7 @@ using Printf
 #using Tullio
 using Dates
 using QuanticsTCI
+using QuanticsGrids
 using FFTW
 using StaticArrays
 using Combinatorics

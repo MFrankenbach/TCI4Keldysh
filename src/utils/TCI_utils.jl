@@ -58,7 +58,7 @@ function Base.:getindex(
             @boundscheck check_bounds(d)
                 
             
-            qw = index_to_quantics(w[d]..., R)
+            qw = QuanticsGrids.index_to_quantics((w[d]...); numdigits=R, base=2)
             for i in 1:R
                 Ts_new[d + (i-1)*D] = Ts_new[d + (i-1)*D][:,qw[i]:qw[i],:]
             end

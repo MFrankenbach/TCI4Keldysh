@@ -265,16 +265,7 @@ K1t_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U2_1.mat")
 #K1a_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U2_3.mat")
 
 
-file_JS = matopen("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U2_1.mat")
-try
-    keys(file_JS)
-catch
-    keys(file_JS)
-end
-read(file_JS, "CF")["PSF"]
-
-
-plot([real.(K1t_JS[2][1,1,:]), -real.(K1t_data[2][N_MF+1-101:N_MF+1+101])], labels=["JS" "AG"], xlim=[95,105])
+plot([real.(K1t_JS[2][1,1,:]), -real.(K1t_data[2][N_MF+1-101:N_MF+1+101])], labels=["JS" "AG"], xlim=[95,125], title="K1t(ω)", xlabel="i_ω")
 #plot([real.(K1p_JS[2][1,1,:]),  real.(K1p_data[2][N_MF+1-101:N_MF+1+101])], labels=["JS" "AG"], xlim=[95,105])
 #plot([real.(K1a_JS[2][1,1,:]), -real.(K1a_data[2][N_MF+1-101:N_MF+1+101])], labels=["JS" "AG"], xlim=[95,105])
 
@@ -356,7 +347,7 @@ dat_AG = real.(K2t_data[2])[N_K2_bos+1-101:N_K2_bos+1+101, N_K2_fer-100:N_K2_fer
 heatmap(dat_JS)
 heatmap(dat_AG)
 
-plot([dat_JS[102,:], dat_AG[102,:]], label=["JS" "AG"], xlim=[95,125])
+plot([dat_JS[102,:], dat_AG[102,:]], label=["JS" "AG"], xlim=[85,145], title="K2t(ω=0, ν)", xlabel="i_ν")
 maximum(abs.(dat_JS - dat_AG))
 
 
@@ -368,7 +359,7 @@ dat_AG = real.(K2′t_data[2])[N_K2_bos+1-101:N_K2_bos+1+101, N_K2_fer-100:N_K2_
 heatmap(dat_JS)
 heatmap(dat_AG)
 
-plot([dat_JS[102,:], dat_AG[102,:]], label=["JS" "AG"], xlim=[95,125])
+plot([dat_JS[102,:], dat_AG[102,:]], label=["JS" "AG"], xlim=[95,165], title="K2′t(ω=0, ν′)", xlabel="i_ν′")
 maximum(abs.(dat_JS - dat_AG))
 
 
@@ -463,9 +454,9 @@ close(file)
 dat_AG = -real.(core_AG[101,:,:,2])
 
 heatmap(dat_AG)
-heatmap(dat_JS)
+heatmap(dat_JS, title="Γ_core^JS(ω=0, ν, ν′)", xlabel="i_ν", ylabel="i_ν′")
 
-plot([dat_JS[:,101], dat_AG[:,101]], label=["JS" "AG"])
+plot([dat_JS[:,101], dat_AG[:,101]], label=["JS" "AG"], xlim=[85,165], title="Γcore(ω=0, ν, ν′=πT)", xlabel="i_ν")
 
 
 using MAT
