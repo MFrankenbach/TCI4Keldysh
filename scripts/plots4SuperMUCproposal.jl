@@ -30,11 +30,11 @@ GC.gc()
 
 ceil(Int64, log2(201)/2)
 # Quantics-interpolate:
-function my_qinterpolate(Ggrid; tolerance=1e-8)
+function my_qinterpolate(Ggrid::Array{T,N}; tolerance=1e-8) where{T,N}
     @assert all(size(Ggrid) .== size(Ggrid,1)) # assert that all are equal (otherwise change this implementation)
     R = ceil(Int64, log2(size(Ggrid, 1)))
     println("R = ", R)
-    qmesh = collect(1:2^R)
+    
     Ggrid_padded = zeros(eltype(Ggrid), (2^R .* ones(Int, ndims(Ggrid)))...)
     Nωs_pos = div(size(Ggrid, 1), 2)
     ran = 2^(R-1)-Nωs_pos:2^(R-1)+Nωs_pos
@@ -46,6 +46,7 @@ function my_qinterpolate(Ggrid; tolerance=1e-8)
     qtt, ranks, errors = quanticscrossinterpolate(
         Ggrid_padded,
         tolerance=tolerance
+        ; maxiter=400
     )  
     return qtt, ranks, errors
 end
@@ -75,8 +76,10 @@ hm = heatmap!(ax1, [ogrid[i][:]/Δ for i in 1:2]..., plotdata, colormap=:balance
 Colorbar(fig[1, 2], hm)
 
 
-qtt, ranks, errors = my_qinterpolate(plotdata; tolerance=1e-8)
-qttdata = qtt[:,:]
+qtt, ranks, errors = my_qinterpolate(Ggrid; tolerance=1e-8)
+qtt2d, ranks2d, errors2d = my_qinterpolate(plotdata; tolerance=1e-6)
+qttdata = qtt[:,:, 128]
+qttdata = qtt2d[:,:]
 shift = div(size(qttdata, 1) - size(plotdata, 1), 2)
 qttdata = qttdata[1+shift:end-shift-1, 1+shift:end-shift-1]
 
@@ -87,7 +90,7 @@ ylabel = "ν′/Δ")
 dif = log10.(abs.(qttdata - plotdata))
 #infs = isinf.(diff)
 #diff[infs] = 
-#maxmax=maximum(abs.(diff))
+maxmax=maximum(dif)
 #any(isinf.(diff))
 
 hm = heatmap!(ax2, [ogrid[i][:]/Δ for i in 1:2]..., dif, colormap=Reverse(:ice), colorscale=Makie.pseudolog10)
@@ -98,7 +101,7 @@ ax3 = Axis(fig[1, 5],
     xlabel = L"\ell",
     ylabel = L"D_\ell")
 ldims = TCI.linkdims(qtt.tt)
-D = ndims(plotdata)
+D = length(qtt.grid.origin)
 R = 8
 2^R
 worst_case = 2 .^ min.(1:D*R-1, D*R-1:-1:1)
@@ -112,4 +115,4 @@ l2 = lines!(ax3, worst_case, yscale=log, color="grey")
 
 fig 
 
-#save("scripts/plots/QTCI_SIAM_fullvertex_upup_u=1.50_tol=1e-8.pdf", fig )
+save("scripts/plots/QTCI_3D_SIAM_fullvertex_upup_u=1.50_tol=1e-8.pdf", fig )
