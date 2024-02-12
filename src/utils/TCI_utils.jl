@@ -125,6 +125,23 @@ function TDtoQTCI(tc::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", toleran
     # truncate to powers of 2
     fattensor = fattensor[qttRanges...]
 
+    qtt = fatTensortoQTCI(fattensor; method, tolerance, unfoldingscheme)
+
+    return qtt
+
+end
+
+function fatTensortoQTCI(fattensor::Array{T,D} ; method="svd", tolerance=1e-8,
+    unfoldingscheme::UnfoldingSchemes.UnfoldingScheme=UnfoldingSchemes.interleaved,
+    kwargs...
+    ) where{T, D}
+
+    dims_ext = size(fattensor)
+    Rs = trunc.(Int, log2.(dims_ext))
+    R = Rs[1]
+    @assert all(R .== Rs)       # all R must be identical
+    @assert dims_ext[1] == 2^R  # size of fattensor must be power of 2
+
     if method=="svd"
         localdimensions = 2*ones(Int, D*R)
         fattensor = reshape(fattensor, ((localdimensions...)))
@@ -133,7 +150,7 @@ function TDtoQTCI(tc::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", toleran
         p = invperm(append!([reverse(collect(i:D:D*R)) for i in 1:D]...))
 
         fattensor = permutedims(fattensor, p)
-        qtt_dat = Vector{Array{eltype(tc.Kernels[1]),3}}(undef, R*D)
+        qtt_dat = Vector{Array{T}}(undef, R*D)
 
         # convert fat tensor into mps via SVD:
         sz_left = 1
@@ -150,13 +167,13 @@ function TDtoQTCI(tc::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", toleran
         qtt_dat[end] *= fattensor[1]
         @assert length(fattensor) == 1
 
-        tt = TCI.TensorCI2{eltype(tc.Kernels[1])}(localdimensions)
+        tt = TCI.TensorCI2{T}(localdimensions)
         for d in 1:(D*R)
             tt.T[d] = qtt_dat[d]
         end
 
         grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
-        qtt = QuanticsTCI.QuanticsTensorCI2{eltype(tc.Kernels[1])}(tt, grid)
+        qtt = QuanticsTCI.QuanticsTensorCI2{T}(tt, grid)
 
 
     elseif method == "qtci"
@@ -164,7 +181,8 @@ function TDtoQTCI(tc::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", toleran
         qtt, ranks, errors = quanticscrossinterpolate(
             fattensor;
             tolerance,
-            unfoldingscheme
+            unfoldingscheme,
+            kwargs...
             #; maxiter=400
         )  
 
@@ -173,6 +191,4 @@ function TDtoQTCI(tc::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", toleran
     end
 
     return qtt
-
 end
-
