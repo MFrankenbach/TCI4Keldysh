@@ -1,4 +1,4 @@
-function qtt_to_fattensor(Ts::Vector{Array{Float64, 3}} )
+function qtt_to_fattensor(Ts::Vector{Array{T, 3}} ) where{T}
     # fatten: turn tensor train into fat tensor:
     DR = length(Ts)
     shapes = [size(Ts[i]) for i in 1:DR]
@@ -69,3 +69,110 @@ function Base.:getindex(
 
     return result
 end
+
+
+
+
+"""
+    Convert TensorCI2 object to MPS (from ITensor library)
+"""
+function TCItoMPS(tci::TCI.TensorCI2{T}, sites = nothing)::MPS where {T}
+    tensors = TCI.tensortrain(tci)
+    ranks = TCI.rank(tci)
+    N = length(tensors)
+    localdims = [size(t, 2) for t in tensors]
+
+    if sites === nothing
+        sites = [Index(localdims[n], "n=$n") for n = 1:N]
+    else
+        all(localdims .== dim.(sites)) ||
+            error("ranks are not consistent with dimension of sites")
+    end
+
+    linkdims = [[size(t, 1) for t in tensors]..., 1]
+    links = [Index(linkdims[l+1], "link,l=$l") for l = 0:N]
+
+    tensors_ = [ITensor(deepcopy(tensors[n]), links[n], sites[n], links[n+1]) for n = 1:N]
+    tensors_[1] *= onehot(links[1] => 1)
+    tensors_[end] *= onehot(links[end] => 1)
+
+    return MPS(tensors_)
+end
+
+"""
+Convert Tucker decomposition to fat tensor
+"""
+function TDtoFatTensor(tc::TCI4Keldysh.AbstractTuckerDecomp{D}) where{D}
+    fattensor = tc[ntuple(i -> Colon(), D)...]
+    return fattensor
+end
+
+"""
+Convert tucker decomposition to QuanticsTensorCI2
+"""
+function TDtoQTCI(tc::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", tolerance=1e-8,
+    unfoldingscheme::UnfoldingSchemes.UnfoldingScheme=UnfoldingSchemes.interleaved
+    ) where{D}
+
+    dims_ext = size.(tc.Kernels, 1)
+    Rs = trunc.(Int, log2.(dims_ext))
+    R = Rs[1]
+    @assert all(R .== Rs)
+    qttRanges = ntuple(i -> 1:2^R, D)
+
+
+    fattensor = TDtoFatTensor(tc)
+    # truncate to powers of 2
+    fattensor = fattensor[qttRanges...]
+
+    if method=="svd"
+        localdimensions = 2*ones(Int, D*R)
+        fattensor = reshape(fattensor, ((localdimensions...)))
+
+        #p = reverse(append!([reverse(collect(i:R:D*R)) for i in 1:R]...))
+        p = invperm(append!([reverse(collect(i:D:D*R)) for i in 1:D]...))
+
+        fattensor = permutedims(fattensor, p)
+        qtt_dat = Vector{Array{eltype(tc.Kernels[1]),3}}(undef, R*D)
+
+        # convert fat tensor into mps via SVD:
+        sz_left = 1
+        for i in 1:(R*D)
+            fattensor = reshape(fattensor, (sz_left*2, div(length(fattensor), sz_left*2)))
+            U,S,V = svd(fattensor)
+            in_tol = S .>= tolerance
+            U = U[:,in_tol]
+            qtt_dat[i] = reshape(U, (div(size(U,1),2),2,size(U,2)))
+            fattensor = Diagonal(S[in_tol]) * V[:,in_tol]'
+
+            sz_left = size(fattensor,1)
+        end
+        qtt_dat[end] *= fattensor[1]
+        @assert length(fattensor) == 1
+
+        tt = TCI.TensorCI2{eltype(tc.Kernels[1])}(localdimensions)
+        for d in 1:(D*R)
+            tt.T[d] = qtt_dat[d]
+        end
+
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
+        qtt = QuanticsTCI.QuanticsTensorCI2{eltype(tc.Kernels[1])}(tt, grid)
+
+
+    elseif method == "qtci"
+
+        qtt, ranks, errors = quanticscrossinterpolate(
+            fattensor;
+            tolerance,
+            unfoldingscheme
+            #; maxiter=400
+        )  
+
+    else
+        throw(RuntimeError("method unknown."))
+    end
+
+    return qtt
+
+end
+

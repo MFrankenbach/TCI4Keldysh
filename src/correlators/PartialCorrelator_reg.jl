@@ -138,33 +138,36 @@ function precompute_all_values(
     
     data_unrotated = contract_Kernels_w_Adisc_mp(Gp.Kernels, Gp.Adisc)  # contributions from regular kernel
     
-    ## check for ω=0 entries in ωs_int:
-    for d in 1:D
-        is_zero_ωs_int = abs.(Gp.ωs_int[d]) .< 1.e-10
-        is_zero_ωdisc = abs.(Gp.ωdiscs[d]) .< 1.e-10
-        if any(is_zero_ωs_int) && any(is_zero_ωdisc)  ## currently only support single bosonic frequency
-            #println("Has anomalous contribution: ")
-            Adisc_ano = dropdims(Gp.Adisc[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
-            #println("size of Adisc_ano: ", size(Adisc_ano))
-            # compute anomalous contribution:
-            Kernels_ano = [Gp.Kernels[1:d-1]..., Gp.Kernels[d+1:D]...]
-            # add β/2 contribution?
-            β = 2. * π / abs(Gp.ωs_int[1][2]-Gp.ωs_int[1][1])
-            #println("β: ", β)
-            values_ano = β* contract_Kernels_w_Adisc_mp(Kernels_ano, Adisc_ano)
-            for dd in 1:D-1
-                Kernels_tmp = [Kernels_ano...]
-                #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
-                Kernels_tmp[dd] = Kernels_tmp[dd].^2
-                #println("maxima after: ", maximum(abs.(Kernels_tmp[dd])))
-                values_ano .+= contract_Kernels_w_Adisc_mp(Kernels_tmp, Adisc_ano)
+    # compute anomalous contribution for Matsubara formalism
+    if Gp.formalism == "MF"
+        ## check for ω=0 entries in ωs_int:
+        for d in 1:D
+            is_zero_ωs_int = abs.(Gp.ωs_int[d]) .< 1.e-10
+            is_zero_ωdisc = abs.(Gp.ωdiscs[d]) .< 1.e-10
+            if any(is_zero_ωs_int) && any(is_zero_ωdisc)  ## currently only support single bosonic frequency
+                #println("Has anomalous contribution: ")
+                Adisc_ano = dropdims(Gp.Adisc[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
+                #println("size of Adisc_ano: ", size(Adisc_ano))
+                # compute anomalous contribution:
+                Kernels_ano = [Gp.Kernels[1:d-1]..., Gp.Kernels[d+1:D]...]
+                # add β/2 contribution?
+                β = 2. * π / abs(Gp.ωs_int[1][2]-Gp.ωs_int[1][1])
+                #println("β: ", β)
+                values_ano = β* contract_Kernels_w_Adisc_mp(Kernels_ano, Adisc_ano)
+                for dd in 1:D-1
+                    Kernels_tmp = [Kernels_ano...]
+                    #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
+                    Kernels_tmp[dd] = Kernels_tmp[dd].^2
+                    #println("maxima after: ", maximum(abs.(Kernels_tmp[dd])))
+                    values_ano .+= contract_Kernels_w_Adisc_mp(Kernels_tmp, Adisc_ano)
+                end
+                values_ano .*= -0.5
+        
+                #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
+                #println("size of view: ", size(myview))
+                #println("size of values_ano = ", size(values_ano))
+                view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...) .+= values_ano
             end
-            values_ano .*= -0.5
-    
-            #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
-            #println("size of view: ", size(myview))
-            #println("size of values_ano = ", size(values_ano))
-            view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...) .+= values_ano
         end
     end
 

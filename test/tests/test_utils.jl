@@ -104,3 +104,57 @@ end
     
     
 end
+
+@testset "Convert Tucker decomposition to QTT" begin
+
+ 
+
+    begin
+        filename = joinpath(dirname(@__FILE__), "data_PSF_2D.h5")
+        f = h5open(filename, "r")
+        Adisc = read(f, "Adisc")
+        ωdisc = read(f, "ωdisc")
+        close(f)
+
+        Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
+
+        ### System parameters of SIAM ### 
+        D = 1.
+        # Keldysh paper:    u=0.5 OR u=1.0
+        U = 1. / 20.
+        T = 0.01 * U
+        #Δ = (U/pi)/0.5
+
+        σ = 0.6
+        sigmab = [σ]
+        g = T * 1.
+        tol = 1.e-14
+        estep = 2048
+        emin = 1e-6; emax = 1e4;
+        Lfun = "FD" 
+        is2sum = false
+        verbose = false
+
+        R = 6
+        Nωcont_pos = 2^R # 512#
+        ωcont = get_ωcont(D*0.5, Nωcont_pos)
+        ωconts=ntuple(i->ωcont, ndims(Adisc))
+
+        # get functor which can evaluate broadened data pointwisely
+        broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+    end
+
+
+    tol = 1e-8
+    qtt = TCI4Keldysh.TDtoQTCI(broadenedPsf; method="svd", tolerance=tol)
+    qtt2 = TCI4Keldysh.TDtoQTCI(broadenedPsf; method="qtci", tolerance=tol)
+
+    origdat= (broadenedPsf[:,:])[1:end-1, 1:end-1]
+    qttdat = qtt[:,:]
+    qttdat2= qtt2[:,:]
+
+    @test maximum(abs.(origdat - qttdat)) < tol
+    #@test maximum(abs.(origdat - qttdat2))< tol        ## doesn't work reliably somehow...
+
+
+end

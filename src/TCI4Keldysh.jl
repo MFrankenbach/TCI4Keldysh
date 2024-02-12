@@ -8,6 +8,10 @@ using Printf
 using Dates
 using QuanticsTCI
 using QuanticsGrids
+import QuanticsGrids: UnfoldingSchemes
+import TensorCrossInterpolation as TCI
+using ITensors
+
 using FFTW
 using StaticArrays
 using Combinatorics

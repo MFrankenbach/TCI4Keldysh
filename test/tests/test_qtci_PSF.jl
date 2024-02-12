@@ -55,7 +55,7 @@
 
     # QTCI broadenedPsf:
     qmesh = collect(1:size(Acont)[1]-1)
-    qtt, ranks, errors = quanticscrossinterpolate(Float64, broadenedPsf, [qmesh for _ in 1:2]; tolerance=1e-8)
+    qtt, ranks, errors = quanticscrossinterpolate(Float64, broadenedPsf, ntuple(i -> length(qmesh), 2); tolerance=1e-8)
     #[any(isnan.(qtt.tt.T[i])) for i in 1:2*R]      # check for NaN's
 
     qttdata = qtt.(qmesh, qmesh')
