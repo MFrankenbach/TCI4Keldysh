@@ -85,7 +85,7 @@ function prepare_broadening_mp(
     # Delete rows/columns that contain only zeros
     AdiscIsZero_oks, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
     ishifts = ntuple(i -> div(length(ωcont_largest) - length(ωconts[i]), 2), D)
-    Kernels = ntuple(i -> Kernel[1+ishifts[i]:end-ishifts[i], .!AdiscIsZero_oks[i]], D)
+    Kernels = [Kernel[1+ishifts[i]:end-ishifts[i], .!AdiscIsZero_oks[i]] for i in 1:D]
     return D, ωdiscs, Adisc, Kernels, ωcont
 end
 
@@ -183,7 +183,7 @@ end
 struct BroadenedPSF{D} <: AbstractTuckerDecomp{D}                 ### D = number of frequency dimensions
     Adisc   ::Array{Float64,D}          ### discrete spectral data; best: compactified with compactAdisc(...)
     ωdiscs  ::Vector{Vector{Float64}}   ### discrete frequencies for all D dimensions
-    Kernels ::NTuple{D,Matrix{Float64}} ### broadening kernels
+    Kernels ::Vector{Matrix{Float64}}   ### broadening kernels
     ωconts  ::NTuple{D,Vector{Float64}} ### continous frequencies for all D dimensions
     sz      ::NTuple{D,Int}             ### size of Adisc
 

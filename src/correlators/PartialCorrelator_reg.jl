@@ -8,7 +8,7 @@ struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     formalism:: String                          # "MF" or "KF"
     Adisc   ::  Array{Float64,D}                # discrete PSF data; best: compactified with compactAdisc(...)
     ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
-    Kernels ::  NTuple{D,Matrix{ComplexF64}}    # regular kernels
+    Kernels ::  Vector{Matrix{ComplexF64}}      # regular kernels
     ωs_ext  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
     ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
     ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices
@@ -29,7 +29,7 @@ struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
         # Delete rows/columns that contain only zeros
         _, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
         # Then pray that Adisc has no contributions for which the kernels diverge:
-        @TIME Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], ωdiscs[i]) ,D) "Precomputing 1D kernels (for MF)."
+        @TIME Kernels = [get_regular_1DKernel(ωs_int[i], ωdiscs[i]) for i in 1:D] "Precomputing 1D kernels (for MF)."
         return new{D}(formalism, Adisc, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end
     function PartialCorrelator_reg(formalism::String, Acont::BroadenedPSF{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
@@ -46,14 +46,14 @@ struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
         if formalism == "MF"
             # 1.: rediscretization of broadening kernel
             # 2.: contraction with regular kernel
-            @TIME Kernels = ntuple(i -> get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (get_ω_binwidths(Acont.ωconts[i]) .* Acont.Kernels[i]), D) "Constructing 1D Kernels (for MF)."
+            @TIME Kernels = [get_regular_1DKernel(ωs_int[i], Acont.ωcont) * (get_ω_binwidths(Acont.ωconts[i]) .* Acont.Kernels[i]) for i in 1:D] "Constructing 1D Kernels (for MF)."
         else
             # check that grid is equidistant:
             if maximum(abs.(diff(δωcont) )) > 1e-10
                 throw(ArgumentError("ωcont must be an equidistant grid."))
             end
             # compute retarded 1D kernels
-            @TIME Kernels = ntuple(i -> -im * π * hilbert_fft(Acont.Kernels[i]; dims=1), D) "Hilbert trafo (for KF)."
+            @TIME Kernels = [-im * π * hilbert_fft(Acont.Kernels[i]; dims=1) for i in 1:D] "Hilbert trafo (for KF)."
         end
         return new{D}(formalism, Acont.Adisc, Acont.ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end

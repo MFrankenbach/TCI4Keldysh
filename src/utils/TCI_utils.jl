@@ -71,12 +71,23 @@ function Base.:getindex(
 end
 
 
+function getsitesforqtt(qtt::QuanticsTCI.QuanticsTensorCI2; tags=("bla", "blu"))
+    D = length(qtt.grid.origin)
+    R = qtt.grid.R
+    @assert length(tags) == D "number of tags inconsitent with QTCI dimensions."
+
+    localdims = [size(t, 2) for t in TCI.tensortrain(qtt.tt)]
+    #sites = [Index(localdims[D*(d-1)+r], "Qubit, $(tags[d])=$(R-r+1)") for r in 1:R for d in 1:D]
+    sites = [Index(localdims[D*(d-1)+r], "Qubit, $(tags[d])=$r") for r in 1:R for d in 1:D]
+    return sites
+
+end
 
 
 """
     Convert TensorCI2 object to MPS (from ITensor library)
 """
-function TCItoMPS(tci::TCI.TensorCI2{T}, sites = nothing)::MPS where {T}
+function TCItoMPS(tci::TCI.TensorCI2{T}; sites = nothing)::MPS where {T}
     tensors = TCI.tensortrain(tci)
     ranks = TCI.rank(tci)
     N = length(tensors)
@@ -107,12 +118,59 @@ function TDtoFatTensor(tc::TCI4Keldysh.AbstractTuckerDecomp{D}) where{D}
     return fattensor
 end
 
+# DOESN'T SEEM TO WORK
+#function MPStoQTCI(mps::ITensors.MPS)
+#    DR = length(mps)
+#    R = parse(Int, split(string(siteind(mps, 1).tags)[2:end-1], "=")[2])
+#    D = div(DR, R)
+#    T = eltype(mps[1])
+#    localdimensions = dim.(siteinds(mps))
+#    lnkdims = [1; linkdims(mps); 1]
+#    tt = TCI.TensorCI2{T}(localdimensions)
+#    for d in 1:(DR)
+#        tt.T[d] = reshape(mps[d].tensor, (lnkdims[d], localdimensions[d], lnkdims[d+1]))
+#    end
+#
+#    grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=QuanticsGrids.UnfoldingSchemes.interleaved)
+#    qtt = QuanticsTCI.QuanticsTensorCI2{T}(tt, grid)
+#
+#    return qtt
+#end
+
+
+
 """
 Convert tucker decomposition to QuanticsTensorCI2
 """
-function TDtoQTCI(tc::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", tolerance=1e-8,
+function TDtoQTCI(tc_in::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", tolerance=1e-8,
     unfoldingscheme::UnfoldingSchemes.UnfoldingScheme=UnfoldingSchemes.interleaved
     ) where{D}
+
+    function truncateTD!(tc)
+        dims_ext = size.(tc.Kernels, 1)
+        
+        if !allequal(dims_ext)
+
+            @VERBOSE "Truncating dimensions of Tucker decomposition to common size.\n"
+
+            Rs = trunc.(Int, log2.(dims_ext))
+            R = min(Rs...)
+            N = 2^R
+            println("N = ", N)
+            
+            for d in eachindex(tc.Kernels)
+                idx_zero = div.(dims_ext[d], 2) + 1
+                idx_min = idx_zero - 2^(R-1)
+                idx_max = idx_min + N -1
+                tc.Kernels[d] = tc.Kernels[d][idx_min:idx_max,:]
+                @VERBOSE "Truncating dim $d of length=$(dims_ext[d]) to range=$idx_min:$idx_max\n"
+            end
+        end    
+        return nothing
+    end
+
+    tc = deepcopy(tc_in)
+    truncateTD!(tc)
 
     dims_ext = size.(tc.Kernels, 1)
     Rs = trunc.(Int, log2.(dims_ext))
@@ -191,4 +249,50 @@ function fatTensortoQTCI(fattensor::Array{T,D} ; method="svd", tolerance=1e-8,
     end
 
     return qtt
+end
+
+
+function MPS_to_fatTensor(mps::MPS; tags)
+    D = length(tags)
+    sites = siteinds(mps)
+    nbit = div(length(sites), D)
+    sites_reshuffled = [reverse([sites[findfirst(x -> hastags(x, "$(tags[d])=$n"), sites)] for n in 1:nbit]) for d in 1:D]
+    arr = Array(reduce(*, mps), vcat(sites_reshuffled...))
+    arr = reshape(arr, ntuple(i -> 2^nbit, D))
+    return arr
+end
+
+
+function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
+
+    D = length(isferm_ωnew) # number of frequencies
+    R = div(length(mps), D)
+    tags = collect(tags)
+    N = 2^R
+    halfN = 2^(R - 1)
+
+    # consistency checks
+    @assert all(size(ωconvMat) .== (D, D))
+    @assert all(sum(abs.(ωconvMat), dims=2) .<= 2)  # check that the matrix represents a supported 'affinetransform'
+
+    
+
+    isferm_ωold = mod.(ωconvMat * isferm_ωnew, 2)
+    begin # parse matrix into dictionary with coefficients for affinetransform
+        iωs = [partialsortperm(abs.(ωconvMat[i,:]), 1:2, rev=true)  for i in 1:D] # 
+        coeffs_dic = [Dict([tags[iωs[i][j]] => ωconvMat[i,iωs[i][j]] for j in 1:2]...) for i in 1:D]
+    end
+    #println("coeffs_dic = ", coeffs_dic)
+    shift = halfN * (sum(abs.(ωconvMat), dims=2)[:] .- 1) + div.(ωconvMat * isferm_ωnew - isferm_ωold, 2)
+    #println("shift = ", shift)
+    
+    bc = ones(Int, D) # boundary condition periodic
+    mps_rot = Quantics.affinetransform(
+        mps,
+        tags,
+        coeffs_dic,
+        shift,
+        bc
+    )
+    return mps_rot
 end
