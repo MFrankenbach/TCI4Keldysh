@@ -75,10 +75,9 @@ function getsitesforqtt(qtt::QuanticsTCI.QuanticsTensorCI2; tags=("bla", "blu"))
     D = length(qtt.grid.origin)
     R = qtt.grid.R
     @assert length(tags) == D "number of tags inconsitent with QTCI dimensions."
-
+    
     localdims = [size(t, 2) for t in TCI.tensortrain(qtt.tt)]
-    #sites = [Index(localdims[D*(d-1)+r], "Qubit, $(tags[d])=$(R-r+1)") for r in 1:R for d in 1:D]
-    sites = [Index(localdims[D*(d-1)+r], "Qubit, $(tags[d])=$r") for r in 1:R for d in 1:D]
+    sites = [Index(localdims[R*(d-1)+r], "Qubit, $(tags[d])=$r") for r in 1:R for d in 1:D]
     return sites
 
 end
@@ -295,4 +294,44 @@ function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ω
         bc
     )
     return mps_rot
+end
+
+
+
+function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
+
+    function convert_to_affineTrafos(m::Matrix{Int}) ::Vector{Matrix{Int}}
+        D = size(m, 1)
+        is_leq2 = sum(abs.(m), dims=2)[:] .<= 2
+        isaffine = all(is_leq2)
+    
+        if isaffine
+            return [m]
+        else
+            irow3 = argmin(is_leq2) # row with 3 non-zero entries
+            other = mod(irow3+1, D) + 1
+    
+            # eliminate problematic row 
+            jother = argmax(abs.(m[other,:]))
+            T = collect(Diagonal(ones(Int, D)))
+            T[irow3,other] = -m[irow3,jother]*m[other,jother]
+            msnew = [
+            round.(Int, inv(T)),
+            T*m
+            ]
+    
+            @assert all(msnew[1]*msnew[2] .== m)
+    
+            return msnew
+        end
+    end
+    
+    
+
+    ωconvMat_list = convert_to_affineTrafos(ωconvMat)
+    for m in ωconvMat_list
+        mps = affine_freq_transform(mps; tags, ωconvMat=m, isferm_ωnew)
+        isferm_ωnew = mod.(m * isferm_ωnew, 2)
+    end
+    return mps
 end
