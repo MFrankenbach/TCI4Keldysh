@@ -191,7 +191,7 @@ struct BroadenedPSF{D} <: AbstractTuckerDecomp{D}                 ### D = number
     function BroadenedPSF(
         Adisc   ::Array{Float64,D}          ,
         ωdiscs  ::Vector{Vector{Float64}}   ,
-        Kernels ::NTuple{D,Matrix{Float64}} ,
+        Kernels ::Vector{Matrix{Float64}} ,
         ωconts  ::NTuple{D,Vector{Float64}} ,
         sz      ::NTuple{D,Int}             
     ) where{D}

@@ -329,9 +329,15 @@ function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Ve
     
 
     ωconvMat_list = convert_to_affineTrafos(ωconvMat)
-    for m in ωconvMat_list
-        mps = affine_freq_transform(mps; tags, ωconvMat=m, isferm_ωnew)
-        isferm_ωnew = mod.(m * isferm_ωnew, 2)
+    
+    if length(ωconvMat_list) > 1
+        isferm_ωnew_list = [mod.(ωconvMat_list[2] * isferm_ωnew, 2), isferm_ωnew]
+    else
+        isferm_ωnew_list = [isferm_ωnew]
+    end
+
+    for i in eachindex(ωconvMat_list)
+        mps = affine_freq_transform(mps; tags, ωconvMat=ωconvMat_list[i], isferm_ωnew=isferm_ωnew_list[i])
     end
     return mps
 end

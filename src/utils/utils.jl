@@ -367,7 +367,7 @@ function svd_trunc_Adisc(broadenedPsf::AbstractTuckerDecomp{D}; atol::Float64) w
     end
 
     broadenedPsf_new = TCI4Keldysh.BroadenedPSF(
-        Adisc_tmp,  broadenedPsf.ωdiscs, (Kernels_new...,), broadenedPsf.ωconts, size(Adisc_tmp)
+        Adisc_tmp,  broadenedPsf.ωdiscs, Kernels_new, broadenedPsf.ωconts, size(Adisc_tmp)
     )
     return broadenedPsf_new
 end
