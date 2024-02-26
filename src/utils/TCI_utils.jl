@@ -341,3 +341,71 @@ function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Ve
     end
     return mps
 end
+
+
+
+
+function zeropad_QTCI2(qtt_in::QuanticsTCI.QuanticsTensorCI2; N::Int, nonzeroinds_left=nothing)
+    #qtt_in = qtt_SVDed2
+    #nonzeroinds_left = nothing
+    #N = 2
+    R_old = qtt_in.grid.R
+    D = div(length(qtt_in.tt), R_old)
+    if nonzeroinds_left === nothing
+        nonzeroinds_left = ones(Int, N*D)
+    else
+        println("Ping! N=$N, D=$D")
+        println(length(nonzeroinds_left))
+        if length(nonzeroinds_left) != N*D
+            throw(ArgumentError("keyword argument 'nonzeroinds_left' needs to be a $(N*D) length Vector{Int64}."))
+        end
+    end
+    R_new = R_old + N * D
+    
+    #tensors_new = qtt_in.tt.sitetensors
+    #tensors_new = [[deepcopy(trivialtensor) for _ in 1:N*D]; tensors]
+    
+    T = eltype(qtt_in.tt.sitetensors[1])
+    localdims_new = [2*ones(Int, N*D); qtt_in.tt.localdims]
+    tt_new = TCI.TensorCI2{T}(localdims_new)
+    for i in eachindex(tt_new.sitetensors)
+        if i <= N*D
+        trivialtensor = zeros(Int, 2)
+        trivialtensor[nonzeroinds_left[i]] = 1
+        trivialtensor = reshape(trivialtensor, (1,2,1))
+        tt_new.sitetensors[i] = trivialtensor
+        else
+            tt_new.sitetensors[i] = qtt_in.tt.sitetensors[i-N*D]
+
+        end
+    end
+    
+
+    function modify_IJsets!(isets, jsets, isets_old, jsets_old)
+        for i in eachindex(isets)
+            if i <= N*D
+                isets[i] = [nonzeroinds_left[1:i-1]] 
+                jsets[i] = [[nonzeroinds_left[1:i-1]; ones(Int, R_old)]] # here the Jsets can be chosen arbitrarily, right?
+            else
+                isets[i] = [[nonzeroinds_left; iset] for iset in isets_old[i-N*D]]
+
+                jsets[i] = jsets_old[i-N*D]
+            end
+        end
+        return nothing
+    end
+    modify_IJsets!(tt_new.Iset, tt_new.Jset, qtt_in.tt.Iset, qtt_in.tt.Jset)
+    for i in eachindex(qtt_in.tt.Iset_history)
+        push!(tt_new.Iset_history, qtt_in.tt.Iset_history[i])
+        push!(tt_new.Jset_history, qtt_in.tt.Jset_history[i])
+        modify_IJsets!(tt_new.Iset_history[i], tt_new.Jset_history[i], qtt_in.tt.Iset_history[i], qtt_in.tt.Jset_history[i])
+    end
+    #tt_new.Iset
+    #tt_new.Jset
+    grid_new = QuanticsGrids.InherentDiscreteGrid{D}(R_new; unfoldingscheme=QuanticsGrids.UnfoldingSchemes.interleaved)
+    @assert all(TCI.linkdims(tt_new) .== length.(tt_new.Iset)[2:end])
+    @assert all(TCI.linkdims(tt_new) .== length.(tt_new.Jset)[1:end-1])
+
+    return QuanticsTCI.QuanticsTensorCI2{T}(tt_new, grid_new)
+ 
+end
