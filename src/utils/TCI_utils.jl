@@ -45,10 +45,10 @@ function Base.:getindex(
         return nothing
     end
 
-    DR = length(qtt.tt.T)
+    DR = length(qtt.tt.sitetensors)
     R = div(DR, D)
 
-    Ts_new = [qtt.tt.T[i] for i in 1:DR]# [qtt.tt.T[i][:,qw[i],:] for i in 1:DR]
+    Ts_new = [qtt.tt.sitetensors[i] for i in 1:DR]# [qtt.tt.T[i][:,qw[i],:] for i in 1:DR]
     # bounds check
     #@assert all(1 .<= w .<= 2^R)
 
