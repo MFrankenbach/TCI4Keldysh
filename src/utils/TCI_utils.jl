@@ -108,6 +108,12 @@ function TCItoMPS(tci::TCI.TensorCI2{T}; sites = nothing)::MPS where {T}
 
     return MPS(tensors_)
 end
+function QTCItoMPS(qtci::QuanticsTCI.QuanticsTensorCI2{T}, tags::NTuple{D,String})::MPS where {T, D}
+    D_ = length(qtci.grid.origin)
+    D_ == D || throw(ArgumentError("tags must be $D_-Tuple of Strings."))
+    sites = getsitesforqtt(qtci; tags)
+    return TCItoMPS(qtci.tt; sites)
+end
 
 """
 Convert Tucker decomposition to fat tensor
@@ -193,6 +199,8 @@ function fatTensortoQTCI(fattensor::Array{T,D} ; method="svd", tolerance=1e-8,
     kwargs...
     ) where{T, D}
 
+    #println("length=$(length(fattensor))")
+
     dims_ext = size(fattensor)
     Rs = trunc.(Int, log2.(dims_ext))
     R = Rs[1]
@@ -203,21 +211,27 @@ function fatTensortoQTCI(fattensor::Array{T,D} ; method="svd", tolerance=1e-8,
         localdimensions = 2*ones(Int, D*R)
         fattensor = reshape(fattensor, ((localdimensions...)))
 
+        #println("length=$(length(fattensor))")
+
         #p = reverse(append!([reverse(collect(i:R:D*R)) for i in 1:R]...))
         p = invperm(append!([reverse(collect(i:D:D*R)) for i in 1:D]...))
 
         fattensor = permutedims(fattensor, p)
+
+        #println("size=$(size(fattensor))")
         qtt_dat = Vector{Array{T}}(undef, R*D)
 
         # convert fat tensor into mps via SVD:
         sz_left = 1
         for i in 1:(R*D)
+            #println("i=$i, sz_left=$sz_left, size=$(size(fattensor))")
             fattensor = reshape(fattensor, (sz_left*2, div(length(fattensor), sz_left*2)))
             U,S,V = svd(fattensor)
             in_tol = S .>= tolerance
             U = U[:,in_tol]
             qtt_dat[i] = reshape(U, (div(size(U,1),2),2,size(U,2)))
             fattensor = Diagonal(S[in_tol]) * V[:,in_tol]'
+            #println("S=", S)
 
             sz_left = size(fattensor,1)
         end
@@ -226,7 +240,7 @@ function fatTensortoQTCI(fattensor::Array{T,D} ; method="svd", tolerance=1e-8,
 
         tt = TCI.TensorCI2{T}(localdimensions)
         for d in 1:(D*R)
-            tt.T[d] = qtt_dat[d]
+            tt.sitetensors[d] = qtt_dat[d]
         end
 
         grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
@@ -354,13 +368,13 @@ function zeropad_QTCI2(qtt_in::QuanticsTCI.QuanticsTensorCI2; N::Int, nonzeroind
     if nonzeroinds_left === nothing
         nonzeroinds_left = ones(Int, N*D)
     else
-        println("Ping! N=$N, D=$D")
-        println(length(nonzeroinds_left))
+        #println("Ping! N=$N, D=$D")
+        #println(length(nonzeroinds_left))
         if length(nonzeroinds_left) != N*D
             throw(ArgumentError("keyword argument 'nonzeroinds_left' needs to be a $(N*D) length Vector{Int64}."))
         end
     end
-    R_new = R_old + N * D
+    R_new = R_old + N
     
     #tensors_new = qtt_in.tt.sitetensors
     #tensors_new = [[deepcopy(trivialtensor) for _ in 1:N*D]; tensors]
@@ -408,4 +422,317 @@ function zeropad_QTCI2(qtt_in::QuanticsTCI.QuanticsTensorCI2; N::Int, nonzeroind
 
     return QuanticsTCI.QuanticsTensorCI2{T}(tt_new, grid_new)
  
+end
+
+
+"""
+Replace sitesold with sitesnew in M
+"""
+function _replaceinds!(M::MPS, sitesold::Vector{<:Index}, sitesnew::Vector{<:Index})
+    length(sitesold) == length(sitesnew) ||
+        error("sitesold and sitesnew must have the same length")
+
+    for n = 1:length(sitesold)
+        for i in findsites(M, sitesold[n])
+            replaceinds!(M[i], sitesold[n] => sitesnew[n])
+        end
+    end
+end
+
+
+function _adoptinds_by_tags!(M::MPS, M_ref::MPS, tag::String, tag_ref::String, R::Int)
+    sites_1 = siteinds(M)
+    sitesx_1 = [sites_1[findfirst(x -> hastags(x, "$tag=$n"), sites_1)] for n in 1:R]
+    sites_2 = siteinds(M_ref)
+    sitesx_2 = [sites_2[findfirst(x -> hastags(x, "$tag_ref=$n"), sites_2)] for n in 1:R]
+    _replaceinds!(M, sitesx_1, sitesx_2)
+    return nothing
+end
+
+function add_dummy_dim(mps::MPS; pos::Int, tag::String="Qubit, dummy", delta_dim=nothing, D_old::Int)
+    #mps = mps_Kernel1
+    #pos = 3
+    #tag = "dummy"
+    #delta_dim = nothing
+    #delta_dim = 2
+    #D_old = 2 # should be deducable from tags; but for now just give it as argument
+    mps_in = deepcopy(mps)
+    R = div(length(mps_in), D_old)#6
+
+    #mps_in.data[1]
+    #mps_in.data[2]
+    #tensors = mps_in.data[1] * mps_in.data[2]
+    if !(delta_dim === nothing)
+        qdelta_dim = Quantics.tobin(delta_dim, R) .+ 1
+    end
+    T = Float64
+    linkdims_old = [1; linkdims(mps_in); 1]
+    dummy_sitetensors = [ begin
+                            L = linkdims_old[pos+(i-1)*D_old]; # linkdim
+                            ident = reshape(collect(Diagonal(ones(T, L, L))), (L, 1, L));
+                                if delta_dim === nothing
+                                    localstructure = ones(T, 2)
+                                else
+                                    localstructure = zeros(T, 2)
+                                    localstructure[qdelta_dim[i]] = 1
+                                end
+                            dummy_sitetensor = ident .* reshape(localstructure, (1,2))
+                            if pos == 1 && i == 1
+                                dummy_sitetensor = dropdims(dummy_sitetensor; dims=1)
+                                indices = (Index(2, tag*"=$i"), Index(L, "dummylink=$i"))
+                            elseif pos == D_old+1 && i == R
+                                dummy_sitetensor = dropdims(dummy_sitetensor; dims=3)
+                                indices = (Index(L, "dummylink=$(i-1)"), Index(2, tag*"=$i"))
+                            else
+                                indices = (Index(L, "dummylink=$(i-1)"), Index(2, tag*"=$i"), Index(L, "dummylink=$i"))
+
+                            end
+                            ITensor(dummy_sitetensor, indices...)
+                            end
+                        for i in 1:R]
+
+    sitetensors_new = deepcopy(mps_in.data[1:pos-1]) # Vector{ITensor}(undef, 0)
+    linkdims_new = linkdims_old[2:pos]
+    for i in 1:R
+        #println(i)
+        #println("push mps range $(pos+D_old*(i-1)):$(min(R*D_old, pos+D_old*(i)-1))")
+        push!(sitetensors_new, dummy_sitetensors[i], mps_in.data[pos+D_old*(i-1):min(R*D_old, pos+D_old*(i)-1)]...)
+        push!(linkdims_new, linkdims_old[pos+D_old*(i-1)], linkdims_old[1+pos+D_old*(i-1):1+min(R*D_old-1, pos+D_old*(i)-1)]...)
+        #insert!(sitetensors_new, dummy_sitetensors[i], pos + D_old*(i-1))
+        #insert!(linkdims_new, linkdims_old[pos + D_old*(i-1)], pos + D_old*(i-1))
+    end
+    #linkdims_new
+    #linkdims_old
+    # correct "dummy" legs
+    if pos == 1
+        t = sitetensors_new[pos+1]
+        dat = Array(t, inds(t)...)
+        sitetensors_new[pos+1] = ITensor(dat, Index(1, "dummylink=1"), inds(t)...)
+    elseif pos == D_old+1
+        t = sitetensors_new[end-1]
+        dat = Array(t, inds(t)...)
+        sitetensors_new[end-1] = ITensor(dat, inds(t)..., Index(1, "dummylink=$(R-1)"))
+    end
+
+    linkids_new = [Index(l, "link, l=$i") for (i,l) in enumerate(linkdims_new)]
+    for i in eachindex(linkdims_new)
+        #tagr = tags(inds(sitetensors_new[i])[end])
+        #settags!(sitetensors_new[i], "link, l=$i"; tags=tagr)
+        #tagl = tags(inds(sitetensors_new[i+1])[1])
+        #settags!(sitetensors_new[i+1], "link, l=$i"; tags=tagl)
+        #println("i=$i")
+        idxl = inds(sitetensors_new[i])[end]
+        replaceind!(sitetensors_new[i], idxl, linkids_new[i])
+        idxr = inds(sitetensors_new[i+1])[1]
+        replaceind!(sitetensors_new[i+1], idxr, linkids_new[i])
+    end
+    #tags(inds(sitetensors_new[1])[end])
+    inds.(sitetensors_new)
+    #inds(sitetensors_new[1])
+    mps_new = MPS(sitetensors_new)
+    #linkdims(mps_new)
+    #siteinds(mps_new)
+    #linkinds(mps_new)
+    return mps_new
+
+end
+
+
+
+
+
+"""
+pad array with zeros. larger array has size 2^R in every dimension (for some R)
+"""
+function zeropad_array(arr::Array{T,D}) where{T,D}
+    R_ = maximum(ceil.(Int, log2.(size(arr)))    )
+    res = zeros(T, (2^R_.*ones(Int, D))...)
+    view(res, Base.OneTo.(size(arr))...) .= arr
+    return res
+end
+
+function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-14, alg="tci2")
+    D = 2
+    #tolerance = 1e-14
+    #kwargs = Dict(:alg=>"densitymatrix")
+    kwargs = Dict(:alg=>alg, :tolerance=>tolerance)
+
+    
+
+    R = trunc(Int, log2(size(broadenedPsf.Kernels[1],1)))
+    residue = size(broadenedPsf.Kernels[1],1) - 2^R
+    @assert residue == 1 || residue == 0
+    R_Adisc = maximum(ceil.(Int, log2.(size(broadenedPsf.Adisc)))    )
+
+    TCI4Keldysh.@TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
+
+    qtt_Adisc, _, _ = quanticscrossinterpolate(
+            zeropad_array(broadenedPsf.Adisc),#[end-2^R_Adisc+1:end,end-2^R_Adisc+1:end],
+            tolerance=tolerance
+        )  
+    
+    #qtt_Adisc = TCI4Keldysh.fatTensortoQTCI(broadenedPsf.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end]; tolerance)
+    
+
+    # pad qtt:
+    nonzeroinds_left=ones(Int, (R-R_Adisc)*D)
+    qtt_Adisc_padded = TCI4Keldysh.zeropad_QTCI2(qtt_Adisc; N=R-R_Adisc, nonzeroinds_left)
+    all(qtt_Adisc_padded.tt.sitetensors[(R-R_Adisc)*D+1:end] .== qtt_Adisc.tt.sitetensors)
+    all(getindex.(argmax.(qtt_Adisc_padded.tt.sitetensors[1:(R-R_Adisc)*D]), 2) .== nonzeroinds_left)
+
+
+
+    # convert qtt for Tucker center
+    mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
+
+    #Kernels = [zeros(eltype(broadenedPsf.Kernels[1]), 2^R, 2^R) for i in 1:D]
+    #for i in 1:D
+    #    Kernels[i][:,1:2^6] .= broadenedPsf.Kernels[i][1:end-residue,end-2^6+1:end]
+    #end
+    Kernels = [zeropad_array(broadenedPsf.Kernels[i][1:end-residue,:]) for i in 1:D]
+    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(Kernels[i]; tolerance=-1.) for i in 1:D]
+    mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+
+    ### contract Kernel with Tucker center
+
+    # add dummy dimension
+    #TCI4Keldysh.@TIME begin
+    #    mps_Kernel1_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[1]; pos=3, D_old=2)
+    #    mps_Kernel2_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[2]; pos=1, D_old=2)
+    #    #mps_Kernel3_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[3]; pos=1, D_old=2)
+    #end "Adding dummy dimensions."
+    mps_Kernel1_exp = mps_Kernels[1]
+    mps_Kernel2_exp = mps_Kernels[2]
+
+    # adopt shared site indices from Tucker center
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "eps1",  "eps1", R)
+    #TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "dummy", "eps3", R)
+
+    TCI4Keldysh.@TIME ab = Quantics.automul(
+            mps_Kernel1_exp,
+            mps_Adisc_padded;
+            tag_row = "ω1",
+            tag_shared = "eps1",
+            tag_col = "eps2",
+            kwargs...#,
+            #tolerance=tolerance
+        ) "Contraction 1"
+    #ITensors.siteinds(ab)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "eps2",  "eps2", R)
+    #TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "dummy", "eps3", R)
+
+    #findallsiteinds_by_tag(siteinds(); tag="eps2")
+    TCI4Keldysh.@TIME res = Quantics.automul(
+        ab,
+        mps_Kernel2_exp;
+            tag_row = "ω1",
+            tag_shared = "eps2",
+            tag_col = "ω2",
+            kwargs...
+            #alg=alg,
+            #tolerance=tolerance
+        ) "Contraction 2"
+
+    #siteinds(res)
+    
+    # siteinds(res)
+    return res
+end
+
+
+
+
+function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}; tolerance::Float64=1e-14, alg="tci2")
+    D = 3
+    #tolerance = 1e-14
+    kwargs = Dict(:alg=>alg, :tolerance=>tolerance)
+
+
+    R = trunc(Int, log2(size(broadenedPsf.Kernels[1],1)))
+    residue = size(broadenedPsf.Kernels[1],1) - 2^R
+    @assert residue == 1 || residue == 0
+    R_Adisc = maximum(ceil.(Int, log2.(size(broadenedPsf.Adisc)))    )
+
+    @TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
+
+    qtt_Adisc, _, _ = quanticscrossinterpolate(
+        zeropad_array(broadenedPsf.Adisc),#broadenedPsf.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end],
+            tolerance=tolerance
+        )  
+    
+    #qtt_Adisc = TCI4Keldysh.fatTensortoQTCI(broadenedPsf.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end]; tolerance)
+    
+
+    # pad qtt:
+    nonzeroinds_left=ones(Int, (R-R_Adisc)*D)
+    qtt_Adisc_padded = TCI4Keldysh.zeropad_QTCI2(qtt_Adisc; N=R-R_Adisc, nonzeroinds_left)
+    all(qtt_Adisc_padded.tt.sitetensors[(R-R_Adisc)*D+1:end] .== qtt_Adisc.tt.sitetensors)
+    all(getindex.(argmax.(qtt_Adisc_padded.tt.sitetensors[1:(R-R_Adisc)*D]), 2) .== nonzeroinds_left)
+
+
+
+    # convert qtt for Tucker center
+    mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
+
+    #Kernels = [zeros(eltype(broadenedPsf.Kernels[1]), 2^R, 2^R) for i in 1:D]
+    #for i in 1:3
+    #    Kernels[i][:,1:2^R_Adisc] .= broadenedPsf.Kernels[i][1:end-1,end-2^6+1:end]
+    #end
+    Kernels = [zeropad_array(broadenedPsf.Kernels[i][1:end-residue,:]) for i in 1:D]
+    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(Kernels[i]; tolerance=-1.) for i in 1:D]
+    mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+
+    ### contract Kernel with Tucker center
+
+    # add dummy dimension
+    @TIME begin
+        mps_Kernel1_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[1]; pos=3, D_old=2)
+        mps_Kernel2_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[2]; pos=3, D_old=2)
+        mps_Kernel3_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[3]; pos=1, D_old=2)
+    end "Adding dummy dimensions."
+
+    # adopt shared site indices from Tucker center
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "eps1",  "eps1", R)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "dummy", "eps3", R)
+
+    @TIME ab = Quantics.automul(
+            mps_Kernel1_exp,
+            mps_Adisc_padded;
+            tag_row = "ω1",
+            tag_shared = "eps1",
+            tag_col = "eps2",
+            alg="tci2",
+            tolerance=1e-8
+        ) "Contraction 1"
+    #siteinds(ab)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "eps2",  "eps2", R)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "dummy", "eps3", R)
+
+    #findallsiteinds_by_tag(siteinds(); tag="eps2")
+    @TIME ab2 = Quantics.automul(
+        ab,
+        mps_Kernel2_exp;
+            tag_row = "ω1",
+            tag_shared = "eps2",
+            tag_col = "ω2",
+            alg="tci2",
+            tolerance=1e-8
+        ) "Contraction 2"
+
+    #siteinds(ab2)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel3_exp, ab2, "eps3",  "eps3", R)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel3_exp, ab2, "dummy", "ω1"  , R)
+
+    @TIME res = Quantics.automul(
+        ab2,
+        mps_Kernel3_exp;
+            tag_row = "ω2",
+            tag_shared = "eps3",
+            tag_col = "ω3",
+            alg="tci2",
+            tolerance=1e-8
+        ) "Contraction 3"
+
+    # siteinds(res)
+    return res
 end
