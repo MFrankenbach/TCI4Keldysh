@@ -1,4 +1,4 @@
-#@testset "TCI utils" begin
+@testset "TCI utils" begin
 
 
 begin
@@ -57,7 +57,7 @@ end
 
 qtt_orig, ranks_orig, errors_orig = quanticscrossinterpolate(
         broadenedPsf.Adisc[end-2^6+1:end,end-2^6+1:end],
-        tolerance=tolerance
+        tolerance=1e-8
     )  
 
 # test zero padding of qtt
