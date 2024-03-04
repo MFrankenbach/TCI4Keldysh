@@ -56,10 +56,10 @@ begin
     # set frequency conventions
     
     ωconvMat_t = [
-        0  1  0;
-        -1 -1  0;
-        1  0  1;
-        0  0 -1;
+        0 -1  0;
+        1  1  0;
+       -1  0 -1;
+        0  0  1;
     ]
     ωconvMat_p = [
         0 -1  0;
@@ -250,6 +250,10 @@ plot([K1a_PA, real.(K1a_data[2]/Δ)], labels=["PA" "NRG"], title="K1a", xlim=[20
 plot([K1p_PA, real.(K1p_data[2]/Δ)], labels=["PA" "NRG"], title="K1p", xlim=[2040,2070])
 plot([K1t_PA, real.(K1t_data[2]/Δ)], labels=["PA" "NRG"], title="K1t", xlim=[2040,2070])
 
+maximum(abs.(K1a_data[2]/Δ - K1a_PA)) / maximum(abs.(K1a_data[2]/Δ))
+maximum(abs.(K1p_data[2]/Δ - K1p_PA)) / maximum(abs.(K1p_data[2]/Δ))
+maximum(abs.(K1t_data[2]/Δ - K1t_PA)) / maximum(abs.(K1t_data[2]/Δ))
+
 function loadGgrid(filename)
 
     file_JS = matopen(filename)
@@ -398,9 +402,9 @@ plot([real.(ηM_check .- U), real.(K1M)[check_range]], labels=["check" "orig"], 
 #K2a_PA[N_K2_bos+1,:] / Δ_PA
 
 #fac_mod = 1#5
-plot([real.(K2a_data[2][N_K2_bos+1,:] / Δ), K2a_PA[N_K2_bos+1,:] / Δ_PA], labels=["NRG" "PA"])
-plot([real.(K2p_data[2][N_K2_bos+1,:] / Δ), K2p_PA[N_K2_bos+1,:] / Δ_PA], labels=["NRG" "PA"])
-plot([real.(K2t_data[2][N_K2_bos+1,:] / Δ), K2t_PA[N_K2_bos+1,:] / Δ_PA], labels=["NRG" "PA"])
+plot([real.(K2a_data[2][N_K2_bos+1,:] / Δ), K2a_PA[N_K2_bos+1,:] / Δ_PA], labels=["NRG" "PA"], title="K2a")
+plot([real.(K2p_data[2][N_K2_bos+1,:] / Δ), K2p_PA[N_K2_bos+1,:] / Δ_PA], labels=["NRG" "PA"], title="K2p")
+plot([real.(K2t_data[2][N_K2_bos+1,:] / Δ), K2t_PA[N_K2_bos+1,:] / Δ_PA], labels=["NRG" "PA"], title="K2t")
 
 
 
@@ -411,17 +415,17 @@ N_K2_bos, N_K2_fer = 100, 100
 ωs_ext=(ω_bos, ω_fer, ω_fer)
 
 Γcore_data = [TCI4Keldysh.compute_Γcore_symmetric_estimator(PSFpath*"4pt/", Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_t, flavor_idx=i) for i in 1:2]
-
+#Γcore_data = nothing
 
     
-begin
-    file = h5open(output_filename, "cw")
-    file["R"] = cat(Γcore_data..., dims=4)
-    file["R_w"] = ω_bos
-    file["R_v"] = ω_fer
-    close(file)
-
-end
+#begin
+#    file = h5open(output_filename, "cw")
+#    file["R"] = cat(Γcore_data..., dims=4)
+#    file["R_w"] = ω_bos
+#    file["R_v"] = ω_fer
+#    close(file)
+#
+#end
 
 begin
     file = h5open(output_filename, "cw")
@@ -445,21 +449,26 @@ end
 
 Core_t_JS = loadGgrid("data/SIAM_u=0.50/V_MF_ph_new/V_MF_U4.mat")
 
-dat_JS = -real.(Core_t_JS[2][2:end-1,2:end-1,102])
+iω = 0
+dat_JS = -real.(Core_t_JS[2][2:end-1,2:end-1,102+iω])
 
 file = h5open(output_filename, "r")
 core_AG = read(file, "core")
 close(file)
 #core_AG = cat(Γcore_data..., dims=4)
-dat_AG = -real.(core_AG[101,:,:,2])
+dat_AG = -real.(core_AG[101+iω,:,:,2])
 
 heatmap(dat_AG)
 heatmap(dat_JS, title="Γ_core^JS(ω=0, ν, ν′)", xlabel="i_ν", ylabel="i_ν′")
+diff = dat_JS - dat_AG
+heatmap(diff, title="diff Γ_core^JS(ω=0, ν, ν′)", xlabel="i_ν", ylabel="i_ν′")
+maximum(abs.(diff)) / maximum(abs.(dat_AG))
+argmax(abs.(diff))
 
-plot([dat_JS[:,101], dat_AG[:,101]], label=["JS" "AG"], xlim=[85,165], title="Γcore(ω=0, ν, ν′=πT)", xlabel="i_ν")
 
+plot([dat_JS[:,97], dat_AG[:,97], diff[:,97]], label=["JS" "AG" "diff"], xlim=[85,165], title="Γcore(ω=0, ν, ν′=πT)", xlabel="i_ν")
 
-using MAT
+    using MAT
 f = matopen("data/PSF_nz=2_conn_zavg/PSF_((Q1234)).mat")
 keys(f)
 Γ0 = read(f, "Adisc")
