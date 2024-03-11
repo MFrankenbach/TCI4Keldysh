@@ -52,6 +52,25 @@ using MAT
 # /        \
 # ν+ω      ν′+ω
 
+
+
+# MBEsolver frequency convention:
+# t- channel: same as in NRG
+# 
+# p- channel: difference to NRG: ω_p --> -ω_p
+# 
+# ν         ω-ν′        ω_p = ω_t + ν_t + ν′_t
+# \        /            ν_p = ν_t
+#  \______/             ν′_p= ν′_t
+#   |    |
+#   |____|
+#  /      \
+# /        \
+# ν′        ω-ν
+#
+# a-channel: same as in NRG
+
+
 begin
     # set frequency conventions
     
@@ -61,10 +80,16 @@ begin
        -1  0 -1;
         0  0  1;
     ]
-    ωconvMat_p = [
+    #ωconvMat_p = [   # NRG convention
+    #    0 -1  0;
+    #    -1  0 -1;
+    #    1  1  0;
+    #    0  0  1;
+    #]
+    ωconvMat_p = [    # MBEsolver convention
         0 -1  0;
-        -1  0 -1;
-        1  1  0;
+        1  0 -1;
+       -1  1  0;
         0  0  1;
     ]
     ωconvMat_a = [
