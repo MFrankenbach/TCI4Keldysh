@@ -1,3 +1,6 @@
+####
+# Try out how to convert 2D/3D Tucker decompositions to MPS by representing Adisc as MPS and perform contraction with Kernels via MPO contractions.
+#####
 using Revise
 using TCI4Keldysh
 TCI4Keldysh.TIME() = true
@@ -98,7 +101,7 @@ plot([broadened_oldschool[65,66,:], broadened_via_TT_world[65,66,:], diff[65,66,
 
 
 # check 2D version: 
-mps_broadenedPsf = TCI4Keldysh.TD_to_MPS_via_TTworld(broadenedPsf)
+mps_broadenedPsf = TCI4Keldysh.TD_to_MPS_via_TTworld(broadenedPsf; tolerance=1e-4)
 
 broadened_via_TT_world = TCI4Keldysh.MPS_to_fatTensor(mps_broadenedPsf; tags=("ω1", "ω2"))
 

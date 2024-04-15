@@ -140,3 +140,31 @@ fig
 
 
 save("scripts/plots/QTCI_3D_SIAM_fullvertex_upup_u=1.50_tol=1e-4.pdf", fig )
+
+
+
+
+### Plot some broadening Kernels:
+using Printf
+
+size(broadenedPsf.Kernels[1])
+size(ωdisc)
+broadenedPsf.ωdiscs[1]
+idxs = [45, 50, 55]
+
+fig = Figure(size = (400, 300));
+ax1 = Axis(fig[1, 1],
+    title="broadening kernels δ(ω,ω′)", 
+    xlabel="ω", 
+    limits=(1e-3,0.2, 0, 250)
+    )
+
+for i in idxs
+    lines!(ax1,ωcont, broadenedPsf.Kernels[1][:,i], label="ω′="*(@sprintf "%3.1e" broadenedPsf.ωdiscs[1][i]), xscale=log)
+end
+axislegend(ax1)
+
+fig
+save("scripts/plots/broadening_kernels.pdf", fig)
+
+@sprintf "%3.1e" ωdisc[45]

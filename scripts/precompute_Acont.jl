@@ -3,7 +3,9 @@ using MAT
 using TCI4Keldysh
 TCI4Keldysh.TIME() = true
 TCI4Keldysh.DEBUG() = true
+TCI4Keldysh.VERBOSE() = true
 
+using CairoMakie
 using BenchmarkTools
 #using Plots
 using HDF5
@@ -30,16 +32,16 @@ end
 
 
 # 2p function
-PSFpath = "data/PSF_nz=2_conn_zavg/2pt/"
+PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
 Ops = ["Q12", "Q34"  ]
 
 # 3p function
-PSFpath = "data/PSF_nz=2_conn_zavg/3pt/"
+#PSFpath = "data/PSF_nz=2_conn_zavg/"
 Ops = ["F1", "F1dag", "Q34"]
 #Ops = ["F1dag", "F1", "Q34"]
 
 # 4p function
-PSFpath = "data/PSF_nz=2_conn_zavg/4pt/"
+PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt/"
 Ops = ["F1", "F1dag", "F3", "F3dag"]
 
 
@@ -69,9 +71,9 @@ begin
     #       u = 1.0:    0.6     T*2     #
     #       u = 5*Δ:    0.6     T*0.5   #
     #####################################
-    σ = 0.6
+    σ = 0.3
     sigmab = [σ]
-    g = T * 1.
+    g = T * 0.5
     tol = 1.e-14
     estep = 512
     emin = 1e-6; emax = 1e4;
@@ -79,7 +81,9 @@ begin
     is2sum = false
     verbose = false
 
-    Nωcont_pos = 2^8 # 512#
+    Rpos = 6
+    R = Rpos+1
+    Nωcont_pos = 2^Rpos
     #ωcont = get_ωcont(D*0.5, Nωcont_pos)
     ωcont = get_ωcont(D*2., Nωcont_pos)
     ωconts=ntuple(i->ωcont, ndims(Adisc))
@@ -90,8 +94,146 @@ end;
 
 #@time ωcont, Acont = TCI4Keldysh.getAcont_mp(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
 broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+broadenedPsf_BCK = deepcopy(broadenedPsf)
+broadenedPsf_shift_DIRTY = deepcopy(broadenedPsf)
+broadenedPsf_shift_SVDed = deepcopy(broadenedPsf)
 
-original_data = broadenedPsf[:,:,:]
+### Q: How can we shift singular values to the center? (Important for truncating data.)
+TCI4Keldysh.shift_singular_values_to_center_DIRTY!(broadenedPsf_shift_DIRTY)
+TCI4Keldysh.shift_singular_values_to_center!(      broadenedPsf_shift_SVDed)
+
+function save_tucker(filename, dset_name, tucker; overwrite_dset=false)
+    f = h5open(filename, "cw")
+
+    if overwrite_dset
+        g = create_group(f, dset_name)
+    else
+        try 
+            g = open_group(f, dset_name)
+        catch
+            g = create_group(f, dset_name)
+        end
+    end
+
+    g["Adisc"] = tucker.Adisc
+
+    for ik in eachindex(tucker.Kernels)
+        g["Kernel_"*string(ik)] = tucker.Kernels[ik]
+    end
+
+    close(f)
+
+    return nothing
+end
+
+#save_tucker("data/tucker_comparison.h5", "original", broadenedPsf_BCK; overwrite_dset=false)
+#save_tucker("data/tucker_comparison.h5", "dirty", broadenedPsf_shift_DIRTY; overwrite_dset=false)
+#save_tucker("data/tucker_comparison.h5", "SVDed", broadenedPsf_shift_SVDed; overwrite_dset=false)
+#plot(broadenedPsf_shift_SVDed.Kernels[1][259:end,50], xscale=:log10)
+
+
+
+# look at singular values of original and modified kernel:
+U, S, V = svd(broadenedPsf.Kernels[1])
+Un, Sn, Vn = svd(broadenedPsf_shift_DIRTY.Kernels[1])
+# compare singular values of original kernel δ(ω,ωdisc) and of δ(ω,ωdisc)|ωdisc|:
+
+#plot([S, Sn], labels=["δ(ω,ωdisc)" "δ(ω,ωdisc)×|ωdisc|"],yaxis=:log10, title="singular values of broadening kernels", xlabel="i", ylabel="s_i", ylim=[1e-2,1e3]) # , xlim=[0,50]
+fig = Figure(size = (400, 300));
+ax1 = Axis(fig[1, 1],
+    title="singular values of broadening kernels", 
+    xlabel="i", 
+    ylabel="s_i",
+    yscale=log10,
+    limits=(0, 50, 1e-5, 1e4))
+
+l1 = lines!(ax1, S , yscale=log, label="δ(ω,ω′)")
+l2 = lines!(ax1, Sn, yscale=log, label="δ(ω,ω′)*|ω′|")
+
+axislegend(ax1)#, merge = merge, unique = unique)
+
+fig
+
+save("scripts/plots/singularvalues_QTCI4Adisc.pdf", fig)
+
+
+# QTCI 3D Adisc: (Q: Are the Adisc compressible?)
+using QuanticsTCI
+import TensorCrossInterpolation as TCI
+#R = 6
+qmesh = collect(1:2^6);
+tolerance = 1e-6;
+
+qtt_orig, ranks_orig, errors_orig = quanticscrossinterpolate(
+        broadenedPsf.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end],
+        tolerance=tolerance
+    )  
+qttdat = qtt_orig[:,:,:]
+TCI4Keldysh.maxabs(qttdat - broadenedPsf.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end])
+
+qtt_DIRTY, ranks_DIRTY, errors_DIRTY = quanticscrossinterpolate(
+        broadenedPsf_shift_DIRTY.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end],
+        tolerance=tolerance
+    )  
+qttdat_DIRTY = qtt_DIRTY[:,:,:]
+TCI4Keldysh.maxabs(qttdat_DIRTY - broadenedPsf_shift_DIRTY.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end])
+
+
+qtt_SVDed, ranks_SVDed, errors_SVDed = quanticscrossinterpolate(
+        broadenedPsf_shift_SVDed.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end],
+        tolerance=tolerance
+    )  
+qttdat_SVDed = qtt_SVDed[:,:,:]
+TCI4Keldysh.maxabs(qttdat_SVDed - broadenedPsf_shift_SVDed.Adisc[end-2^6+1:end,end-2^6+1:end,end-2^6+1:end])
+worst_case = 2 .^ min.(1:3*6-1, 3*6-1:-1:1)
+
+
+
+
+#plot([worst_case, TCI.linkdims.([qtt_orig.tt, qtt_DIRTY.tt, qtt_SVDed.tt])...], 
+# labels=["worst case" "orig" "dirty" "SVD"], 
+# title="link dimensions for tol="*string(tolerance), 
+# xlabel="link")
+
+fig = Figure(size = (600, 400));
+ax1 = Axis(fig[1, 1],
+    title="link dimensions for tol="*string(tolerance), 
+    xlabel="link", 
+    #yscale=log10,
+    #limits=(0, 50, 1e-5, 1e4)
+    )
+
+l1 = lines!(ax1, worst_case, color="gray")
+l2 = lines!(ax1, TCI.linkdims(qtt_orig.tt), label="original Adisc")
+l3 = lines!(ax1, TCI.linkdims(qtt_DIRTY.tt), label="Adisc weighted by |ω′|")
+l4 = lines!(ax1, TCI.linkdims(qtt_SVDed.tt), label="Adisc weighted by sᵢ from B")
+
+axislegend(ax1)#, merge = merge, unique = unique)
+
+fig
+save("scripts/plots/linksdims_QTCI4Adisc.pdf", fig)
+
+
+
+plot([ranks_orig, ranks_DIRTY, ranks_SVDed], labels=["orig" "dirty" "SVD"], yscale=:log10)
+worst_case = 2 .^ min.(1:3R-1, 3R-1:-1:1)
+plot([worst_case, TCI.linkdims.([qtt_orig.tt, qtt_DIRTY.tt, qtt_SVDed.tt])...], labels=["worst case" "orig" "dirty" "SVD"], title="link dimensions for tol="*string(tolerance), xlabel="link")
+
+savefig("data/linksdims_QTCI4Adisc.pdf")
+
+plot([qtt_orig.tt.pivoterrors, qtt_DIRTY.tt.pivoterrors,  qtt_SVDed.tt.pivoterrors], labels=["orig" "dirty" "SVD"], title="pivoterrors", yscale=:log10, ylabel="abs. error", xlabel="D_max")
+
+
+f_plotdata = h5open("data/plotdata_QTCI4Adisc.h5", "w")
+f_plotdata["linkdims_worstcase"] = worst_case
+f_plotdata["linkdims_origAdisc"] = TCI.linkdims(qtt_orig.tt)
+f_plotdata["linkdims_dirtyAdisc"] = TCI.linkdims(qtt_DIRTY.tt)
+f_plotdata["linkdims_SVDedAdisc"] = TCI.linkdims(qtt_SVDed.tt)
+
+f_plotdata["singularvalues_origKernel"] = S
+f_plotdata["singularvalues_dirtyKernel"] = Sn
+
+close(f_plotdata)
 
 
 
@@ -146,8 +288,33 @@ end
 
 ## 2D: 
 @benchmark for idxs in Iterators.product(1:10, 1:10)#, 1:10)
+    #idx = rand(axes(ωconts[1],1),2)
+    broadenedPsf_BCK(Nωcont_pos .+idxs...)
+end
+@benchmark for idxs in Iterators.product(1:10, 1:10)#, 1:10)
+    #idx = rand(axes(ωconts[1],1),2)
+    broadenedPsf(Nωcont_pos .+idxs...)
+end
+
+@benchmark for idxs in Iterators.product(1:10, 1:10)#, 1:10)
     broadenedPsf(idxs...)
 end
+
+broadenedPsf(1,1)
+@code_warntype broadenedPsf_BCK(1,1)
+
+broadenedPsf.Kernels[1]
+TCI4Keldysh.maxabs(broadenedPsf_BCK.Kernels[1][:,2])
+TCI4Keldysh.maxabs(broadenedPsf_BCK.Kernels[1][end-3,:])
+
+TCI4Keldysh.allconcrete(broadenedPsf)
+TCI4Keldysh.allconcrete(broadenedPsf_BCK)
+
+broadenedPsf.Kernels[1][:] .= 1.
+#broadenedPsf.Kernels[1][:] .= 1.
+
+broadenedPsf.Kernels[1] = ones(2,3)
+#broadenedPsf.Kernels = ntuple(i -> ones(2,3), 2)
 
 # old implementation:
 #BenchmarkTools.Trial: 10000 samples with 1 evaluation.
@@ -175,8 +342,17 @@ end
 
 
 @benchmark for idxs in Iterators.product(1:10, 1:10, 1:10)
-    broadenedPsf(idxs...)
+    broadenedPsf(Nωcont_pos .+ idxs...)
 end
+@benchmark for idxs in Iterators.product(1:10, 1:10, 1:10)
+    broadenedPsf_new(Nωcont_pos .+ idxs...)
+end
+@benchmark for idxs in Iterators.product(1:10, 1:10, 1:10)
+    broadenedPsf_BCK(Nωcont_pos .+ idxs...)
+end
+
+@code_warntype broadenedPsf(1,1,1)
+typeof(broadenedPsf)
 
 # general implementation
 #BenchmarkTools.Trial: 169 samples with 1 evaluation.
@@ -203,7 +379,9 @@ end
 # Memory estimate: 625.00 KiB, allocs estimate: 2000.
 ## ==> time spent per point: 5.489 ms / 1000 = 5.489 μs
 
+@benchmark broadenedPsf_BCK[:,:,:]
 @benchmark broadenedPsf[:,:,:]
+@benchmark broadenedPsf_new[:,:,:]
 #BenchmarkTools.Trial: 22 samples with 1 evaluation.
 # Range (min … max):  224.051 ms … 231.063 ms  ┊ GC (min … max): 4.99% … 6.02%
 # Time  (median):     227.568 ms               ┊ GC (median):    6.21%
@@ -215,7 +393,7 @@ end
 #
 # Memory estimate: 347.03 MiB, allocs estimate: 49.
 ## ==> time spent per point: 227.568 ms / prod(length.(ωconts)) = 0.0134 μs
-
+2081 / prod(length.(ωconts))
 
 plaindata = broadenedPsf[:,:,:]
 @benchmark for idxs in Iterators.product(1:10, 1:10, 1:10)
@@ -235,32 +413,10 @@ end
 ## ==> time spent per point: 19.432 μs / 1000 = 0.0194 μs
 
 
-Adisc = broadenedPsf.Adisc
-shapeAdisc = size(Adisc)
-U,S,V = svd(reshape(Adisc, (shapeAdisc[1], prod(shapeAdisc[2:3]))))
-TCI4Keldysh.maxabs(U*Diagonal(S)*V' - reshape(Adisc, (shapeAdisc[1], prod(shapeAdisc[2:3]))))
-
-UU, US, UV = svd(U)
-US
-S
-
-# truncate:
-oks = S .> 1.e-3 / TCI4Keldysh.maxabs(kernel1D)
-U, S, V = U[:,oks], S[oks], V[:,oks]
-TCI4Keldysh.maxabs(U*Diagonal(S)*V' - reshape(Adisc, (shapeAdisc[1], prod(shapeAdisc[2:3]))))
 
 
-plot(S, yscale=:log10)
-kernel1D = broadenedPsf.Kernels[1]
-TCI4Keldysh.maxabs(U)
-TCI4Keldysh.maxabs(kernel1D)
-plot(kernel1D[:,1])
 
 
-medians = [0.1756, 1.291, 19.727]
-
-using Plots
-plot(collect(1:3), log.(medians))
 
 # evaluation of a single point for a 1D PSF:
 #BenchmarkTools.Trial: 10000 samples with 732 evaluations.
@@ -467,17 +623,3 @@ rand(1:2*N_MF)
 filename_broadened = "data/precomputedAcont_estep"*string(estep)*"_Nw"*string(Nωcont_pos)
 save_Acont(filename_broadened, ωdisc, Adisc, ωcont, Acont)
 
-
-
-using ITensors
-Adisc = Adisc[1:64,1:64,1:64]
-Kernels = [broadenedPsf.Kernels[i][1:2^8,1:2^6] for i in 1:3]
-
-is = [Index(64,"i"*string(i)) for i in 1:3]
-js = [Index(2^8,"j"*string(i)) for i in 1:3]
-
-
-A = ITensor(Adisc,is...)
-Ks = [ITensor(Kernels[i],js[i],is[i]) for i in 1:3]
-
-Ks[1][js[1]=>1,is[1]=>2]

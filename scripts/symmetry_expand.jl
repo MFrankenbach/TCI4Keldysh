@@ -1,7 +1,7 @@
 using Revise
 using TCI4Keldysh
 
-data_dir = "./data/PSF_nz=2_conn_zavg/4pt/";
+data_dir = "./data/SIAM_u=1.00/PSF_nz=4_conn_zavg/4pt/";
 
 symmred_correlators = [
     ["F1", "F1dag", "F3", "F3dag"], # 1 FFFF
@@ -38,7 +38,12 @@ needed_i_symmred = [
 
 filelist = readdir(data_dir)
 for fn in filelist
-    println(string.(parse_filename_to_Ops(fn)))
-    TCI4Keldysh.symmetry_expand(data_dir, string.(parse_filename_to_Ops(fn)))
+    println(string.(TCI4Keldysh.parse_filename_to_Ops(fn)))
+    TCI4Keldysh.symmetry_expand(data_dir, string.(TCI4Keldysh.parse_filename_to_Ops(fn)))
 end
 
+using MAT
+f = matopen("data/SIAM_u=1.00/PSF_nz=4_conn_zavg/PSF_((F1dag,F1)).mat")
+keys(f)
+read(f, "Adisc")[1]
+read(f, "PSF")
