@@ -1,39 +1,52 @@
 """
-logGaussian broadening of Adisc(w') --> Acont(w) = ∫dw' L(w,w')Adisc(w') with
-    a)  Centered logarithmic Gaussian ("CLG") (sign(w) == sign(w'))
-        L(w,w') = exp(-(log(w'/w)/sigmab)^2) /(sqrt(pi)*sigmab*abs(w'))
-        CONSERVES: MODE
+    getAcont_logBroaden(ωdisc::Vector{Float64}, Adisc::Matrix{Float64}, sigmab::Vector{Float64}; kwargs...)
 
-OR
-    b)  Symmetric logarithmic Gaussian ("SLG") (sign(w) == sign(w'))  (* Default)
-        L(w,w') = exp(-(log(w'/w)/sigmab - sigmab/4)^2)         /(sqrt(pi)*sigmab*abs(w'))        
-        CONSERVES: MEAN
+Performs log-Gaussian broadening of discrete spectral data Adisc(w') --> Acont(w) := ∫dw' L(w,w')Adisc(w') with the broadening kernels
+1.  Symmetric logarithmic Gaussian ("SLG") (sign(w) == sign(w'))  (*Default*)   \n
+    L(w,w') = exp(-(log(w'/w)/sigmab - sigmab/4)^2)         /(sqrt(pi) * sigmab * abs(w')) \n
+    CONSERVES: MEAN
+2.  Centered logarithmic Gaussian ("CLG") (sign(w) == sign(w')) \n
+    L(w,w') = exp(-(log(w'/w)/sigmab)^2) /(sqrt(pi) * sigmab * abs(w')) \n
+    CONSERVES: MODE
 
-Here sigmab = sigmak*alphaz, where sigmak is input and alphaz is option.
+# Arguments
+1. ωdisc   ::Vector{Float64}:      centers of frequency bins
+2. Adisc   ::Matrix{Float64}:      spectral data in format |#ωdisc|x|#sigmab|
+3. sigmab  ::Vector{Float64}:      broadening parameter(s) - see explanation
 
-<Returns>
-ωcont   ::Vector{Float64}   centers of frequency bins (pos. ωs on logarithmic grid)
-Δωcont  ::Vector{Float64}   widths of frequency bins
-Acont   ::Vector{Float64}   broadened spectral data
-     
+# Keyword arguments
+* Hfun    ::String (="SLG"): determines type of broadening kernel - see explanation
+* emin    ::Float64 (=1e-2): suggestion for smallest positive energy scale (for continous frequency)
+* emax    ::Float64 (=1e+2): suggestion for largest  positive energy scale (for continous frequency)
+* estep   ::Int (=256):      determines number of bins (for continous frequency)
+* tol     ::Float64 (=1e-14):Minimum value of (spectral weight)*(value of
+                            broadening kernel) to consider. The spectral weights whose
+                            contribution to the curve Acont are smaller than tol are not
+                            considered. Also the far-away tails of the broadening kernel, whose
+                            resulting contribution to the curve are smaller than tol, are not
+                            considered also.
+* is2sum  ::Bool (=true):    sum over all sigmab-variations?
+
+# Returns
+1. ωcont   ::Vector{Float64}   centers of frequency bins (pos. ωs on logarithmic grid)
+2. Δωcont  ::Vector{Float64}   widths of frequency bins; mimics trapezoidal rule, i.e., ∫dω A(ω) ~ Δωcont ⋅ Acont
+3. Acont   ::Vector{Float64}   broadened spectral data
+
+# Comments
+For comparison with Matlab code: sigmab = sigmak * alphaz
 """
 function getAcont_logBroaden(
-    ωdisc   ::Vector{Float64},      
-    Adisc   ::Matrix{Float64},      # spectral data in format |#ωdisc|x|#sigmab|
-    sigmab  ::Vector{Float64},     
-    tol     ::Float64,        # Minimum value of (spectral weight)*(value of
-                # broadening kernel) to consider. The spectral weights whose
-                # contribution to the curve Acont are smaller than tol are not
-                # considered. Also the far-away tails of the broadening kernel, whose
-                # resulting contribution to the curve are smaller than tol, are not
-                # considered also.
-    Hfun    ::String, 
-    emin    ::Float64, 
-    emax    ::Float64, 
-    estep   ::Int, 
-    is2sum  ::Bool
+    ωdisc   ::Vector{Float64},
+    Adisc   ::Matrix{Float64},
+    sigmab  ::Vector{Float64}
+    ;
+    Hfun    ::String    ="SLG",
+    emin    ::Float64   =1e-2, 
+    emax    ::Float64   =1e+2, 
+    estep   ::Int       =256,  
+    tol     ::Float64   =1e-14,
+    is2sum  ::Bool      =true  
     )
-    # primary broadening: log-Gaussian broadening
 
     if !all([length(ωdisc), length(sigmab)] .== size(Adisc))
         throw(DimensionMismatch("|ωdisc|x|sigmab| = "*(@sprintf "%s" length(ωdisc)) *" x "* (@sprintf "%s" length(sigmab))*", but Adisc has size "*string(size(Adisc))))

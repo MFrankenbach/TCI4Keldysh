@@ -16,9 +16,9 @@ d = 2^2
 m = zeros(d,d)
 m[:,2] .= 1.
 qtt = TCI4Keldysh.fatTensortoQTCI(m; tolerance=1e-10, method="qtci")
-QuanticsTCI.TensorCrossInterpolation.linkdims(qtt.tt)
-size.(qtt.tt.T)
-qtt.tt.T
+QuanticsTCI.TensorCrossInterpolation.linkdims(qtt.tci)
+size.(qtt.tci.T)
+qtt.tci.T
 maximum(abs.(qtt[:,:]-m))
 
 
@@ -26,23 +26,23 @@ maximum(abs.(qtt[:,:]-m))
 m = zeros(d,d)
 m[16,16] = 1.
 qtt = TCI4Keldysh.fatTensortoQTCI(m; tolerance=1e-10, method="svd")
-QuanticsTCI.TensorCrossInterpolation.linkdims(qtt.tt)
-size.(qtt.tt.T)
-qtt.tt.T
+QuanticsTCI.TensorCrossInterpolation.linkdims(qtt.tci)
+size.(qtt.tci.T)
+qtt.tci.T
 maximum(abs.(qtt[:,:]-m))
 
 
 m = Matrix(LinearAlgebra.Diagonal(ones(d)))
 qtt = TCI4Keldysh.fatTensortoQTCI(m; tolerance=1e-10, method="qtci")
-QuanticsTCI.TensorCrossInterpolation.linkdims(qtt.tt)
-size.(qtt.tt.T)
-qtt.tt.T
+QuanticsTCI.TensorCrossInterpolation.linkdims(qtt.tci)
+size.(qtt.tci.T)
+qtt.tci.T
 maximum(abs.(qtt[:,:]-m))
 
 
 m = reverse(Matrix(LinearAlgebra.Diagonal(ones(d))), dims=1) + Matrix(LinearAlgebra.Diagonal(ones(d)))
 qtt = TCI4Keldysh.fatTensortoQTCI(m; tolerance=1e-10, method="qtci")
-QuanticsTCI.TensorCrossInterpolation.linkdims(qtt.tt)
-size.(qtt.tt.T)
-qtt.tt.T
+QuanticsTCI.TensorCrossInterpolation.linkdims(qtt.tci)
+size.(qtt.tci.T)
+qtt.tci.T
 maximum(abs.(qtt[:,:]-m))

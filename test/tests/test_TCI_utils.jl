@@ -65,8 +65,8 @@ nonzeroinds_left=[1,2,2,1]
 N = 2
 D = 2
 qtt_padded = TCI4Keldysh.zeropad_QTCI2(qtt_orig; N, nonzeroinds_left)
-@test all(qtt_padded.tt.sitetensors[N*D+1:end] .== qtt_orig.tt.sitetensors)
-@test all(getindex.(argmax.(qtt_padded.tt.sitetensors[1:N*D]), 2) .== nonzeroinds_left)
+@test all(qtt_padded.tci.sitetensors[N*D+1:end] .== qtt_orig.tci.sitetensors)
+@test all(getindex.(argmax.(qtt_padded.tci.sitetensors[1:N*D]), 2) .== nonzeroinds_left)
     
 
 end

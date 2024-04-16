@@ -2,7 +2,31 @@
 """
 PartialCorrelator_reg
 
-partial correlator ̃Gₚ(ω₁, ω₂, ...) = ∫dε₁dε₂ ̃K(ω₁-ε₁) ̃K( ω₂- ε₂)... Sₚ(ε₁,ε₂,...)
+Regular partial correlator ̃Gₚ(ω₁, ω₂, ...) = ∫dε₁dε₂ ̃K(ω₁-ε₁) ̃K( ω₂- ε₂)... Sₚ(ε₁,ε₂,...)
+
+Members:
+* formalism:: String                          # "MF" or "KF"
+* Adisc   ::  Array{Float64,D}                # discrete PSF data; best: compactified with compactAdisc(...)
+* ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
+* Kernels ::  Vector{Matrix{ComplexF64}}      # regular kernels
+* ωs_ext  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
+* ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
+* ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices ~ i_ωs_int = ωconvMat * i_ωs_ext + ωconvOff
+* ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of indices
+
+
+
+Kernel for formalism == "MF":  ̃K(ω₁-ε₁) = 1/(ω₁-ε₁)            [= regular kernel]
+                        "KF":  ̃K(ω₁-ε₁) = 1/(ω₁-ε₁ +im 0^+)    [= retarded kernel]
+Pointwise evaluation of PartialCorrelator_reg Gp: 
+ * without frequency conversion (any formalism) --> Gp[i,j,...]
+ * with    frequency conversion 
+        for MF --> Gp(i,j,...) returns regular part of partial correlator
+        for KF --> evaluate_with_ωconversion_KF(...) returns all useful combinations of retarded/advanced kernels ̃∏_{αᵢ=R/A} K^{αᵢ}
+
+precompute_all_values:
+ * "MF": computes values for all external frequencies ωs_ext (and includes anomalous contributions!)
+ * "KF": not implemented yet
 """
 struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     formalism:: String                          # "MF" or "KF"
@@ -11,8 +35,8 @@ struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     Kernels ::  Vector{Matrix{ComplexF64}}      # regular kernels
     ωs_ext  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
     ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
-    ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices
-    ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of indices
+    ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices ~ i_ωs_int = ωconvMat * i_ωs_ext + ωconvOff
+    ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of (one-based!) indices
 
     ####################
     ### Constructors ###
@@ -132,45 +156,47 @@ function evaluate_with_ωconversion(
 end
 
 
-function precompute_all_values(
+function precompute_all_values_MF(
     Gp :: PartialCorrelator_reg{D},
 ) ::Array{ComplexF64,D} where{D}
     
-    data_unrotated = contract_Kernels_w_Adisc_mp(Gp.Kernels, Gp.Adisc)  # contributions from regular kernel
+    @assert Gp.formalism == "MF"
+
+    data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.Kernels, Gp.Adisc)  # contributions from regular kernel
     
     # compute anomalous contribution for Matsubara formalism
-    if Gp.formalism == "MF"
-        ## check for ω=0 entries in ωs_int:
-        for d in 1:D
-            is_zero_ωs_int = abs.(Gp.ωs_int[d]) .< 1.e-10
-            is_zero_ωdisc = abs.(Gp.ωdiscs[d]) .< 1.e-10
-            if any(is_zero_ωs_int) && any(is_zero_ωdisc)  ## currently only support single bosonic frequency
-                #println("Has anomalous contribution: ")
-                Adisc_ano = dropdims(Gp.Adisc[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
-                #println("size of Adisc_ano: ", size(Adisc_ano))
-                # compute anomalous contribution:
-                Kernels_ano = [Gp.Kernels[1:d-1]..., Gp.Kernels[d+1:D]...]
-                # add β/2 contribution?
-                β = 2. * π / abs(Gp.ωs_int[1][2]-Gp.ωs_int[1][1])
-                #println("β: ", β)
-                values_ano = β* contract_Kernels_w_Adisc_mp(Kernels_ano, Adisc_ano)
-                for dd in 1:D-1
-                    Kernels_tmp = [Kernels_ano...]
-                    #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
-                    Kernels_tmp[dd] = Kernels_tmp[dd].^2
-                    #println("maxima after: ", maximum(abs.(Kernels_tmp[dd])))
-                    values_ano .+= contract_Kernels_w_Adisc_mp(Kernels_tmp, Adisc_ano)
-                end
-                values_ano .*= -0.5
-        
-                #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
-                #println("size of view: ", size(myview))
-                #println("size of values_ano = ", size(values_ano))
-                view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...) .+= values_ano
+    ## check for ω=0 entries in ωs_int:
+    for d in 1:D
+        is_zero_ωs_int = abs.(Gp.ωs_int[d]) .< 1.e-10
+        is_zero_ωdisc = abs.(Gp.ωdiscs[d]) .< 1.e-10
+        if any(is_zero_ωs_int) && any(is_zero_ωdisc)  ## currently only support single bosonic frequency
+            #println("Has anomalous contribution: ")
+            Adisc_ano = dropdims(Gp.Adisc[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
+            #println("size of Adisc_ano: ", size(Adisc_ano))
+            # compute anomalous contribution:
+            Kernels_ano = [Gp.Kernels[1:d-1]..., Gp.Kernels[d+1:D]...]
+            # add β/2 contribution?
+            β = 2. * π / abs(Gp.ωs_int[1][2]-Gp.ωs_int[1][1])
+            #println("β: ", β)
+            values_ano = β* contract_1D_Kernels_w_Adisc_mp(Kernels_ano, Adisc_ano)
+            for dd in 1:D-1
+                Kernels_tmp = [Kernels_ano...]
+                #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
+                Kernels_tmp[dd] = Kernels_tmp[dd].^2
+                #println("maxima after: ", maximum(abs.(Kernels_tmp[dd])))
+                values_ano .+= contract_1D_Kernels_w_Adisc_mp(Kernels_tmp, Adisc_ano)
             end
+            values_ano .*= -0.5
+    
+            #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
+            #println("size of view: ", size(myview))
+            #println("size of values_ano = ", size(values_ano))
+            view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...) .+= values_ano
         end
     end
+    
 
+    ## perform frequency rotation:
     strides_internal = [stride(data_unrotated, i) for i in 1:D]'
     strides4rot = ((strides_internal * Gp.ωconvMat)...,)
     offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
@@ -180,6 +206,24 @@ function precompute_all_values(
     return sv[[Colon() for _ in 1:D]...]
 end
 
+
+function precompute_all_values_KF(
+    Gp :: PartialCorrelator_reg{D},
+) where{D}
+    
+    @assert Gp.formalism == "KF"
+
+    data_unrotated = contract_KF_Kernels_w_Adisc_mp(Gp.Kernels, Gp.Adisc)  # contributions from fully-retarded kernels
+
+    ## perform frequency rotation:
+    strides_internal = [stride(data_unrotated, i) for i in 1:D]'
+    strides4rot = ((strides_internal * Gp.ωconvMat)...,)
+    offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
+    sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)..., D), [strides4rot; strides(data_unrotated)[D+1]], offset4rot)
+
+
+    return sv[[Colon() for _ in 1:D+1]...]
+end
 
 function evaluate_without_ωconversion(Gp::PartialCorrelator_reg{D}, idx::Vararg{Int,D})  ::ComplexF64 where {D}
     res = Gp.Adisc
@@ -235,7 +279,7 @@ function evaluate_without_ωconversion(
         return nothing
     end
 
-    kernels_new = [Gp.Kernels[i] for i in 1:D]# [qtt.tt.T[i][:,qw[i],:] for i in 1:DR]
+    kernels_new = [Gp.Kernels[i] for i in 1:D]# [qtt.tci.T[i][:,qw[i],:] for i in 1:DR]
     # bounds check
     #@assert all(1 .<= w .<= 2^R)
 
@@ -254,7 +298,7 @@ function evaluate_without_ωconversion(
         end
      end
     
-    result = contract_Kernels_w_Adisc_mp(kernels_new, Gp.Adisc)
+    result = contract_1D_Kernels_w_Adisc_mp(kernels_new, Gp.Adisc)
 
     return result
 end

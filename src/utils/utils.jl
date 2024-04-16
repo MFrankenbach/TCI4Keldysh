@@ -53,6 +53,106 @@ end
 
 
 """
+contract_1D_Kernels_w_Adisc_mp(Kernels, Adisc)
+
+Contracts kernels with Adisc
+
+For 3p correlators we e.g. get K[i,a] K[j,b] Adisc[a,b]
+"""
+function contract_1D_Kernels_w_Adisc_mp(Kernels, Adisc)
+    sz = [size(Adisc)...]
+    D = ndims(Adisc)
+
+    ##########################################################
+    ### EFFICIENCY IN TERMS OF   CPU TIME: 🙈     RAM: 😄  ###
+    ##########################################################
+    #if D == 1
+    #    M1 = Kernels[1]
+    #    @tullio Acont[i] := M1[i,a] * Adisc[a]
+    #elseif D == 2
+    #    M1, M2 = Kernels[1], Kernels[2]
+    #    @tullio Acont[i,j] := M1[i,a] * M2[j,b] * Adisc[a,b]
+    #else     # D == 3
+    #    M1, M2, M3 = Kernels[1], Kernels[2], Kernels[3]
+    #    @tullio Acont[i,j,k] := M1[i,a] * M2[j,b] * M3[k,c] * Adisc[a,b,c]
+    #end
+
+    
+    ##########################################################
+    ### EFFICIENCY IN TERMS OF   CPU TIME: 😄     RAM: 🙈  ###
+    ##########################################################
+    Acont = copy(Adisc)  # Initialize
+    for it1 in 1:D
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tit1 = ", it1)
+        Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1]))
+        Acont = Kernels[it1] * Acont
+
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tconvolution [done]")
+        sz[it1] = size(Kernels[it1])[1]
+        Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
+        if D>1
+            Acont = permutedims(Acont, (collect(2:D)..., 1))
+        end
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tpermutation [done]")
+        #GC.gc()
+    end
+
+    return Acont
+end
+
+
+"""
+    contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc)
+
+Contracts retarded kernels with Adisc and deduces all fully-retarded kernels.
+
+For 3p correlators we e.g. get K^{R/A}[i,a] K^{R/A}[j,b] Adisc[a,b]
+
+# Returns
+Array with contracted data with all available external frequencies in the first D dimensions.
+The trailing dimension D+1 is of size D and enumerates the fully-retarded kernels.
+
+We need
+for 2p:     K^[1](ω₁,ω₂)        =       K^R(ω₁)
+            K^[2](ω₁,ω₂)        =       K^A(ω₁)                 = c.c.of first line
+for 3p:     K^[1](ω₁,ω₂,ω₃)     =       K^R(ω₁)K^R(ω₂)         \\=2p result x K^R(ω₂)
+            K^[2](ω₁,ω₂,ω₃)     =       K^A(ω₁)K^R(ω₂)         /
+            K^[3](ω₁,ω₂,ω₃)     =       K^A(ω₁)K^A(ω₂)          = c.c.of first line
+for 4p:     K^[1](ω₁,ω₂,ω₃,ω₄)  =       K^R(ω₁)K^R(ω₂)K^R(ω₃)  \\
+            K^[2](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^R(ω₂)K^R(ω₃)  |=3p result x K^R(ω₃)
+            K^[3](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^R(ω₃)  /
+            K^[4](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^A(ω₃)   = c.c.of first line
+"""
+function contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc)
+    sz = [size(Adisc)...]
+    D = ndims(Adisc)
+    
+    ##########################################################
+    ### EFFICIENCY IN TERMS OF   CPU TIME: 😄     RAM: 🙈  ###
+    ##########################################################
+    Acont = copy(Adisc)  # Initialize
+    for it1 in 1:D
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tit1 = ", it1)
+        Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1] * it1))
+        Acont = Kernels[it1] * Acont
+        sz[it1] = size(Kernels[it1])[1]
+        Acont = reshape(Acont, ((sz[it1], prod(sz) ÷ sz[it1], it1)))
+        Acont = cat(Acont, conj.(Acont[:,:,1]), dims=3)
+
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tconvolution [done]")
+        #Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
+        if D>1
+            Acont = permutedims(Acont, (collect(2:D)..., 1, D+1))
+        end
+        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tpermutation [done]")
+        #GC.gc()
+    end
+
+    return Acont
+end
+
+
+"""
     hilbert(x)
     hilbert(x, n)
 Analytic signal, computed using the Hilbert transform.
@@ -324,7 +424,7 @@ function shift_singular_values_to_center!(broadenedPsf::AbstractTuckerDecomp{D})
         push!(tmpKernels, Diagonal(S)*V')
         broadenedPsf.Kernels[d][:] = U[:]
     end
-    Adisc_new = TCI4Keldysh.contract_Kernels_w_Adisc_mp(tmpKernels, broadenedPsf.Adisc)
+    Adisc_new = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(tmpKernels, broadenedPsf.Adisc)
     broadenedPsf.Adisc[:] = Adisc_new[:]
     
     return nothing

@@ -1,34 +1,47 @@
 """
-linear broadening of Adisc(w') with
- a) Gaussian
-   f(w,w') = exp(-((w - w')/σ).^2)/(σ*sqrt(pi))
+    getAcont_linBroaden(ωdisc::Vector{Float64}, Δωdisc::Vector{Float64}, Adisc::Matrix{Float64}, σ::Float64)
 
- b) Derivative of Fermi-Dirac function (Default)
+Performs linear broadening of Adisc(w') with broadening kernels
+1. Derivative of Fermi-Dirac function (*Default*) \n
    f(w,w') = 1/(1+cosh((w - w')/σ))*(1/2/σ)
            = - d(Fermi-Dirac function of temperature σ)/d(energy)
-
- c) Lorentzian
+2. Lorentzian
    f(w,w') = (1/pi/σ)/(1 + ((w - w')/σ)^2)
+3. Gaussian \n
+   f(w,w') = exp(-((w - w')/σ).^2)/(σ*sqrt(pi))
 
-<Returns>
-ωcont   ::Vector{Float64}   centers of frequency bins
-Acont   ::Vector{Float64}   broadened spectral data
+# Arguments
+1. ωdisc   ::Vector{Float64}:   centers of frequency bins
+2. Δωdisc  ::Vector{Float64}:   widths of frequency bins
+3. Adisc   ::Matrix{Float64}:   discrete spectral data
+4. σ       ::Float6:,           broadening parameter (see explanation)
+   
+# Keyword arguments
+* Lfun    ::String (="FD"):     determines type of broadening kernel (see explanation)
+* ωcont   ::Vector{Float64}:    continuous frequencies on which we want to evaluate A
+* Δωcont  ::Vector{Float64}:    widths of continous frequency bins (mimics trapezoidal rule)
+* Acont   ::Matrix{Float64}:    continuous spectral data
+* tol     ::Float64 (=1e-14):   tolerance
+        
+# Returns
+1. ωcont   ::Vector{Float64}   centers of frequency bins
+2. Acont   ::Vector{Float64}   broadened spectral data
 
-< Issues >
+# Issues
     a)  Sensitivity to choice of grid (linear / logarithmic)
         It seems that Gaussian ("G") and Fermi-Dirac ("FD") broadening prefer a linear grid for ωcont
         while lorentzian broadening prefers a logarithmic one.
 """
 function getAcont_linBroaden(
-    ωdisc   ::Vector{Float64},      
-    Δωdisc  ::Vector{Float64}, 
-    Adisc   ::Matrix{Float64}, 
-    σ       ::Float64, 
-    ωcont   ::Vector{Float64},  # continuous frequencies on which we want to evaluate A
-    δωcont   ::Vector{Float64}, 
-    Acont   ::Matrix{Float64}, 
-    tol     ::Float64, 
-    Lfun    ::String
+    ωdisc   ::Vector{Float64},  
+    Δωdisc  ::Vector{Float64},  
+    Adisc   ::Matrix{Float64},  
+    σ       ::Float64;          
+    ωcont   ::Vector{Float64},  
+    Δωcont  ::Vector{Float64},  
+    Acont   ::Matrix{Float64},  
+    tol     ::Float64,          
+    Lfun    ::String            
     )
     # secondary linear broadening
     if !isempty(ωdisc) && !isempty(Adisc)
@@ -83,9 +96,9 @@ function getAcont_linBroaden(
                     else    # Lorentzian
                         ytmp = (1 / (pi * g2[ito])) ./ (1.0 .+ ((ωcont[okt] .- ωdisc_val) ./ g2[ito]).^2)
                     end
-                    ytmp = ytmp .* δωcont[okt]  # height -> weight
+                    ytmp = ytmp .* Δωcont[okt]  # height -> weight
                     ytmp = ytmp ./ sum(ytmp)  # normalize
-                    Acont[okt, ids[ito]] .+= (ytmp ./ δωcont[okt]) .* Adisc[ito]  # weight -> height
+                    Acont[okt, ids[ito]] .+= (ytmp ./ Δωcont[okt]) .* Adisc[ito]  # weight -> height
                 end
             end
         end

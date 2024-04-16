@@ -50,21 +50,21 @@ end
         Acont = zeros(Nωcont_pos*2+1,D)
     end
     
-    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc1, σ, ωcont, Δωcont, Acont, tol, Lfun)
+    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc1, σ; ωcont, Δωcont, Acont, tol, Lfun)
     @test TCI4Keldysh.maxabs((x -> gaussian.(x, ωdisc[Nωs_pos+1+idx_ω′1]; σ=σ)).(ωcont) - Acont[:,1]) < 1e-13
 
     Acont .= 0.
-    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc3, σ, ωcont, Δωcont, Acont, tol, Lfun)
+    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc3, σ; ωcont, Δωcont, Acont, tol, Lfun)
     @test (x -> α * gaussian(x, ωdisc[Nωs_pos+1+idx_ω′1]; σ=σ) + (1. - α) * gaussian(x, ωdisc[Nωs_pos+1+idx_ω′2]; σ=σ)).(ωcont) ≈ Acont[:,1] atol=1e-13
 
     # same with "FD":
     Lfun = "FD" 
     Acont .= 0.
-    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc1, σ, ωcont, Δωcont, Acont, tol, Lfun)
+    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc1, σ; ωcont, Δωcont, Acont, tol, Lfun)
     @test (x -> diff_FD_distr.(x, ωdisc[Nωs_pos+1+idx_ω′1]; σ=σ)).(ωcont) ≈ Acont[:,1] atol=1e-12
 
     Acont .= 0.
-    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc3, σ, ωcont, Δωcont, Acont, tol, Lfun)
+    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc3, σ; ωcont, Δωcont, Acont, tol, Lfun)
     @test (x -> α * diff_FD_distr(x, ωdisc[Nωs_pos+1+idx_ω′1]; σ=σ) + (1. - α) * diff_FD_distr(x, ωdisc[Nωs_pos+1+idx_ω′2]; σ=σ)).(ωcont) ≈ Acont[:,1] atol=1e-13
 
     # same with "L"
@@ -74,10 +74,10 @@ end
 
     Lfun = "L"
     Acont .= 0.
-    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc1, σ, ωcont, Δωcont, Acont, tol, Lfun)
+    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc1, σ; ωcont, Δωcont, Acont, tol, Lfun)
     @test TCI4Keldysh.maxabs((x -> lorentzian.(x, ωdisc[Nωs_pos+1+idx_ω′1]; σ=σ)).(ωcont) - Acont[:,1]) < 1.e-5
 
     Acont .= 0.
-    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc3, σ, ωcont, Δωcont, Acont, tol, Lfun)
+    TCI4Keldysh.getAcont_linBroaden(ωdisc, Δωdisc, Adisc3, σ; ωcont, Δωcont, Acont, tol, Lfun)
     @test TCI4Keldysh.maxabs((x -> α * lorentzian(x, ωdisc[Nωs_pos+1+idx_ω′1]; σ=σ) + (1. - α) * lorentzian(x, ωdisc[Nωs_pos+1+idx_ω′2]; σ=σ)).(ωcont) - Acont[:,1]) < 1e-5
 end

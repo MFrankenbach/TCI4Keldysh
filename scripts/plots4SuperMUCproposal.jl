@@ -118,9 +118,9 @@ Colorbar(fig[1, 4], hm)#, ticks = [-1,-5,-15])
 ax3 = Axis(fig[1, 5],
     xlabel = L"\ell",
     ylabel = L"D_\ell")
-ldims = TCI.linkdims(qtt.tt)
-ldims5= TCI.linkdims(qtt5.tt)
-ldims6= TCI.linkdims(qtt6.tt)
+ldims = TCI.linkdims(qtt.tci)
+ldims5= TCI.linkdims(qtt5.tci)
+ldims6= TCI.linkdims(qtt6.tci)
 D = length(qtt.grid.origin)
 R = 8
 2^R

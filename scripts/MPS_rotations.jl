@@ -4,7 +4,6 @@ using Quantics
 using QuanticsTCI
 import TensorCrossInterpolation as TCI
 using QuanticsGrids
-import QuanticsGrids: UnfoldingSchemes
 using LinearAlgebra
 using ITensors
 using HDF5
@@ -67,7 +66,7 @@ qtt_orig = deepcopy(qtt)
 
 tags =("ω", "ν")
 sites = TCI4Keldysh.getsitesforqtt(qtt; tags)
-mps = TCI4Keldysh.TCItoMPS(qtt.tt; sites)       # convert QTT to MPS
+mps = TCI4Keldysh.TCItoMPS(qtt.tci; sites)       # convert QTT to MPS
 
 qtt_unrot = TCI4Keldysh.MPStoQTCI(mps)          # convert MPS back to QTT and check that no information got lost
 qttunrotdat = qtt_unrot[:,:]
@@ -152,7 +151,7 @@ begin
 end
 
 #d1 = qtt[:,:]
-#mps_temp = TCI4Keldysh.TCItoMPS(qtt.tt)
+#mps_temp = TCI4Keldysh.TCItoMPS(qtt.tci)
 #qtt_recov = TCI4Keldysh.MPStoQTCI(mps_temp)
 #d2 = qtt_recov[:,:]
 #heatmap(real.(d1))

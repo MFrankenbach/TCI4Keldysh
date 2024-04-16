@@ -9,7 +9,6 @@ using Dates
 using Quantics
 using QuanticsTCI
 using QuanticsGrids
-import QuanticsGrids: UnfoldingSchemes
 import TensorCrossInterpolation as TCI
 using ITensors
 

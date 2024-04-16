@@ -59,7 +59,7 @@
     qmesh = collect(1:size(Acont)[1])
     qtt , ranks , errors  = quanticscrossinterpolate(Float64, broadenedPsf, ntuple(i -> length(qmesh), 2); tolerance=1e-8, maxiter=400)
     qtt2, ranks2, errors2 = quanticscrossinterpolate(Acont; tolerance=1e-8, maxiter=400)
-    #[any(isnan.(qtt.tt.T[i])) for i in 1:2*R]      # check for NaN's
+    #[any(isnan.(qtt.tci.T[i])) for i in 1:2*R]      # check for NaN's
 
     qttdata = qtt[:,:]
     qtt2data= qtt2[:,:]

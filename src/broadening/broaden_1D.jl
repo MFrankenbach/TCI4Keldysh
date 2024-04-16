@@ -1,88 +1,104 @@
 """
-Currently no support for zshifts
+    getAcont(ωdisc::Vector{Float64}, Adisc::Matrix{Float64}, sigmak::Vector{Float64}, γ::Float64; kwargs...)
 
+Broadens 1-dimensional discrete spectrum.
 
-< Output >
-ωcont :     [numeric vector]    Logarithimic frequency grid.
-Acont :     [numeric vector]    Smoothened spectral function.
+# Arguments:
+1. ωdisc   ::Vector{Float64}:   Logarithimic frequency bins. 
+                                Here the original frequency values from the differences
+                                b/w energy eigenvalues are shifted to the closest bins. 
+2. Adisc   ::Matrix{Float64},   Spectral function in layout |ωdisc|x|sigmak|.
+3. sigmak  ::Vector{Float64},   Sensitivity of logarithmic position of spectral
+                                weight to z-shift, i.e. |d[log(|omega|)]/dz|. These values will
+                                be used to broaden discrete data. (sigma_{ij} or sigma_k in
+                                Lee2016.)
+4. γ       ::Float64            Parameter for secondary linear broadening kernel. (γ in Lee2016.)
+                                    
+# Keyword arguments
+* emin    ::Float64 ()= 1e-12): Minimum absolute value of frequency grid. Set this
+                                be equal to or smaller than the minimum of finite elements of
+                                ωdisc, to properly broaden the spectral weights at frequencies
+                                lower than 'emin'. The spectral weights binned at frequencies
+                                smaller that emin are *not* broadened by the primary logarithmic
+                                broadening; they are broadened only by the secondary linear
+                                broadening.
+* emax    ::Float64 (= 1e4):    Maximum absoulte value of frequency grid.
+* estep   ::Int (= 200) :       Number of frequency grid points per decade, i.e.,
+                                between a frequency and the frequency times 10 (e.γ., between 1 and
+                                10).
+* isw0    ::Bool (= false) :    If true, the result frequency grid 'ωcont' contains
+                                zero frequency. If false, the grid has only finite frequencies.
+                                (Default: false)
+* ωcont   ::Vector{Float64} (= zeros(0)) :   
+                                Frequency grid to be used for the result Acont.
+                                First, the logarithmic and linear broadenings are applied by using
+                                the frequency grid defined by emin, emax, and estep. Then the
+                                result Acont is obtained by inter-/extra-polating for the broadened
+                                curve with respect to this optional input of frequency grid.
+                                (Default: not used)
+* alphaz  ::Float64 (= 1.) :    Overall factor of broadening. (\alpha_z in Lee2016.)
+* smin    ::Float64 (= 0.) :    Minimum broadening width (= sigmak*alphaz, not bare sigmak). 
+                                (Default : 3/estep) 
+* smax    ::Float64 (= Inf) :   Maximum boradening width (= sigmak*alphaz, not bare sigmak).
+* Hfun    ::String (= "SLG") :  Name of the functional form of the primary
+                                logarithmic broadening kernel. There are three possibilities:
+    * "CLG" : centered log. Gaussian.
+    * "SLG" : symmetric log. Gaussian.
+    * "G"   : regular Gaussian.
+* Lfun    ::String (= "FD") :   Name of the functional form of the secondary
+                                linear broadening kernel. There are two possibilities:
+    * "FD" : derivative of Fermi-Dirac distribution function.
+    * "G"  : regular Gaussian.
+    * "L"  : Lorentzian.
+* A0      ::Vector{Float64} (= zeros(0)): 
+                                Discrete weight as delta function at w = 0. This
+                                weight is broadened by the secondary linear broadening kernel. If
+                                the option 'sum' is set as false, 'A0' should be a row vector whose
+                                n-th element corresponds to the n-th column of Adisc and Acont (see
+                                'sum' below).
+                                (Default: 0 if 'sum',true (default); zeros(1,length(sigmak)) if
+                                'sum',false)
+* tol     ::Float64 (= 1e-14) : Minimum value of (spectral weight)*(value of
+                                broadening kernel) to consider. The spectral weights whose
+                                contribution to the curve Acont are smaller than tol are not
+                                considered. Also the far-away tails of the broadening kernel, whose
+                                resulting contribution to the curve are smaller than tol, are not
+                                considered also.
+* is2sum  ::Bool (= true) :     If false, Acont is a matrix whose columns are the
+                                broadening of the corresponding columns of Adisc. If true, Acont is
+                                the sum of such columns.
+* verbose ::Bool (= false) :    Show details.
 
-< Issues >
-    a) rediscretization might lead to discretization artifacts in final Acont
-    b) Sensitivity to choice of grid (linear / logarithmic)
+# Returns
+1. ωcont ::Vector{Float64} :    Logarithimic frequency grid.
+2. Acont ::Vector{Float64} :    Smoothened spectral function.
+
+# Issues
+1. rediscretization might lead to discretization artifacts in final Acont
+2. Sensitivity to choice of grid (linear / logarithmic)
+3. Currently no support for zshifts
+
 """
 function getAcont(
-    ωdisc   ::Vector{Float64},  # Logarithimic frequency bins. 
-                                # Here the original frequency values from the differences
-                                # b/w energy eigenvalues are shifted to the closest bins.
-                                # 
-    Adisc   ::Matrix{Float64},  # Spectral function in layout |ωdisc|x|sigmak|.
-    sigmak  ::Vector{Float64},  # Sensitivity of logarithmic position of spectral
-                                # weight to z-shift, i.e. |d[log(|omega|)]/dz|. These values will
-                                # be used to broaden discrete data. (\sigma_{ij} or \sigma_k in
-                                # Lee2016.)
-    γ       ::Float64           # Parameter for secondary linear broadening kernel. (\gamma
-                                # in Lee2016.)
+    ωdisc   ::Vector{Float64},  
+    Adisc   ::Matrix{Float64},  
+    sigmak  ::Vector{Float64},  
+    γ       ::Float64           
     ; 
-    emin    ::Float64   = 1e-12,# Minimum absolute value of frequency grid. Set this
-                                # be equal to or smaller than the minimum of finite elements of
-                                # ωdisc, to properly broaden the spectral weights at frequencies
-                                # lower than 'emin'. The spectral weights binned at frequencies
-                                # smaller that emin are *not* broadened by the primary logarithmic
-                                # broadening; they are broadened only by the secondary linear
-                                # broadening.
-                                # (Default : 1e-12)
-    
-    emax    ::Float64   = 1e4,  # Maximum absoulte value of frequency grid.
-                                # (Default : 1e4)
-    estep   ::Int       = 200,  # Number of frequency grid points per decade, i.e.,
-                                # between a frequency and the frequency times 10 (e.γ., between 1 and
-                                # 10).
-                                # (Default: 200)
-    isw0    ::Bool      = false,# If true, the result frequency grid 'ωcont' contains
-                                # zero frequency. If false, the grid has only finite frequencies.
-                                # (Default: false)
-    ωcont   ::Vector{Float64}   = zeros(0),   # Frequency grid to be used for the result Acont.
-                                # First, the logarithmic and linear broadenings are applied by using
-                                # the frequency grid defined by emin, emax, and estep. Then the
-                                # result Acont is obtained by inter-/extra-polating for the broadened
-                                # curve with respect to this optional input of frequency grid.
-                                # (Default: not used)
-    alphaz  ::Float64   = 1.,   # Overall factor of broadening. (\alpha_z in Lee2016.)
-    smin    ::Float64   = 0.,   # Minimum broadening width (= sigmak*alphaz, not bare sigmak). 
-                                # (Default : 3/estep) 
-    smax    ::Float64   = Inf,  # Maximum boradening width (= sigmak*alphaz, not bare sigmak).
-                                # (Default : Inf, i.e. no maximum) 
-    Hfun    ::String    = "SLG",# Name of the functional form of the primary
-                                # logarithmic broadening kernel. There are three possibilities:
-                                # "CLG" : centered log. Gaussian.
-                                # "SLG" : symmetric log. Gaussian.
-                                # "G"   : regular Gaussian.
-                                # (Default: "SLG")
-    Lfun    ::String    = "FD", # Name of the functional form of the secondary
-                                # linear broadening kernel. There are two possibilities:
-                                # "FD" : derivative of Fermi-Dirac distribution function.
-                                # "G"  : regular Gaussian.
-                                # "L"  : Lorentzian.
-                                # (Default: "FD");
-    A0      ::Vector{Float64}   = zeros(0),   # Discrete weight as delta function at w = 0. This
-                                # weight is broadened by the secondary linear broadening kernel. If
-                                # the option 'sum' is set as false, 'A0' should be a row vector whose
-                                # n-th element corresponds to the n-th column of Adisc and Acont (see
-                                # 'sum' below).
-                                # (Default: 0 if 'sum',true (default); zeros(1,length(sigmak)) if
-                                # 'sum',false)
-    tol     ::Float64   = 1e-14,# Minimum value of (spectral weight)*(value of
-                                # broadening kernel) to consider. The spectral weights whose
-                                # contribution to the curve Acont are smaller than tol are not
-                                # considered. Also the far-away tails of the broadening kernel, whose
-                                # resulting contribution to the curve are smaller than tol, are not
-                                # considered also.
-                                # (Default : 1e-14)
-    is2sum  ::Bool      = true, # If false, Acont is a matrix whose columns are the
-                                # broadening of the corresponding columns of Adisc. If true, Acont is
-                                # the sum of such columns.
-                                # (Default: true)
-    verbose ::Bool      = false # Show details.
+    emin    ::Float64   = 1e-12,
+    emax    ::Float64   = 1e4,  
+    estep   ::Int       = 200,  
+    isw0    ::Bool      = false,
+    ωcont   ::Vector{Float64}   = zeros(0),   
+    alphaz  ::Float64   = 1.,   
+    smin    ::Float64   = 0.,   
+    smax    ::Float64   = Inf,  
+    Hfun    ::String    = "SLG",
+    Lfun    ::String    = "FD", 
+    A0      ::Vector{Float64}   = zeros(0),   
+    tol     ::Float64   = 1e-14,
+    is2sum  ::Bool      = true, 
+    verbose ::Bool      = false 
     )
 
     #######################################
@@ -230,7 +246,7 @@ function getAcont(
         ωcont_pos = ωcont[ωcont.>0.]
     end
     # width of frequency bins
-    docs = [ωcont[2] - ωcont[1]; (ωcont[3:end] - ωcont[1:end-2]) ./ 2; ωcont[end] - ωcont[end-1]]
+    Δωcont = [ωcont[2] - ωcont[1]; (ωcont[3:end] - ωcont[1:end-2]) ./ 2; ωcont[end] - ωcont[end-1]]
     # buffer for result
     Acont = zeros(length(ωcont), (length(sigmab) - 1) * (1 - is2sum) + 1)
     
@@ -243,11 +259,11 @@ function getAcont(
         if any(oks1)
             odtmp = ωdisc[oks1]
             Adtmp = Adisc[oks1, :]
-            ots, dots, yts = getAcont_logBroaden(odtmp, Adtmp, sigmab, tol, Hfun, emin, emax, estep, is2sum)
+            ots, dots, yts = getAcont_logBroaden(odtmp, Adtmp, sigmab; tol, Hfun, emin, emax, estep, is2sum)
             yts_disc = yts .* dots # rediscretization
             # uncomment to check spectral weigth of positive frequencies
             #println("∑Ainter = ", sum(yts .* dots))
-            getAcont_linBroaden(ots, dots, yts_disc, γ, ωcont, docs, Acont, tol, Lfun)
+            getAcont_linBroaden(ots, dots, yts_disc, γ; ωcont, Δωcont, Acont, tol, Lfun)
             
         end
 
@@ -255,9 +271,9 @@ function getAcont(
         if any(oks2)
             odtmp = -ωdisc[oks2] # negative -> positive
             Adtmp = Adisc[oks2, :]
-            ots, dots, yts = getAcont_logBroaden(odtmp, Adtmp, sigmab, tol, Hfun, emin, emax, estep, is2sum)
+            ots, dots, yts = getAcont_logBroaden(odtmp, Adtmp, sigmab; tol, Hfun, emin, emax, estep, is2sum)
             yts_disc = yts .* dots # rediscretization
-            getAcont_linBroaden(-ots, dots, yts_disc, γ, ωcont, docs, Acont, tol, Lfun) # -ots: return to negative frequency
+            getAcont_linBroaden(-ots, dots, yts_disc, γ; ωcont, Δωcont, Acont, tol, Lfun) # -ots: return to negative frequency
         end
 
         oks3 = (oks1.+oks2).==0
@@ -280,7 +296,7 @@ function getAcont(
         if is2sum
             Adtmp = sum(Adtmp,dims=2);
         end
-        getAcont_linBroaden([ωdisc[oks3];0],docs[div(end+1,2)].+zeros(sum(oks3)+1),[Adtmp;A0'],γ,ωcont,docs,Acont,tol,Lfun);
+        getAcont_linBroaden([ωdisc[oks3];0],Δωcont[div(end+1,2)].+zeros(sum(oks3)+1),[Adtmp;A0'],γ;ωcont,Δωcont,Acont,tol,Lfun);
     end
 
     # Interpolate data on ocin

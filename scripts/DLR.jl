@@ -8,7 +8,6 @@ using Quantics
 using QuanticsTCI
 import TensorCrossInterpolation as TCI
 using QuanticsGrids
-import QuanticsGrids: UnfoldingSchemes
 using LinearAlgebra
 using ITensors
 using HDF5

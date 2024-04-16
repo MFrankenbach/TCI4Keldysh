@@ -190,7 +190,7 @@ worst_case = 2 .^ min.(1:3*6-1, 3*6-1:-1:1)
 
 
 
-#plot([worst_case, TCI.linkdims.([qtt_orig.tt, qtt_DIRTY.tt, qtt_SVDed.tt])...], 
+#plot([worst_case, TCI.linkdims.([qtt_orig.tci, qtt_DIRTY.tci, qtt_SVDed.tci])...], 
 # labels=["worst case" "orig" "dirty" "SVD"], 
 # title="link dimensions for tol="*string(tolerance), 
 # xlabel="link")
@@ -204,9 +204,9 @@ ax1 = Axis(fig[1, 1],
     )
 
 l1 = lines!(ax1, worst_case, color="gray")
-l2 = lines!(ax1, TCI.linkdims(qtt_orig.tt), label="original Adisc")
-l3 = lines!(ax1, TCI.linkdims(qtt_DIRTY.tt), label="Adisc weighted by |ω′|")
-l4 = lines!(ax1, TCI.linkdims(qtt_SVDed.tt), label="Adisc weighted by sᵢ from B")
+l2 = lines!(ax1, TCI.linkdims(qtt_orig.tci), label="original Adisc")
+l3 = lines!(ax1, TCI.linkdims(qtt_DIRTY.tci), label="Adisc weighted by |ω′|")
+l4 = lines!(ax1, TCI.linkdims(qtt_SVDed.tci), label="Adisc weighted by sᵢ from B")
 
 axislegend(ax1)#, merge = merge, unique = unique)
 
@@ -217,18 +217,18 @@ save("scripts/plots/linksdims_QTCI4Adisc.pdf", fig)
 
 plot([ranks_orig, ranks_DIRTY, ranks_SVDed], labels=["orig" "dirty" "SVD"], yscale=:log10)
 worst_case = 2 .^ min.(1:3R-1, 3R-1:-1:1)
-plot([worst_case, TCI.linkdims.([qtt_orig.tt, qtt_DIRTY.tt, qtt_SVDed.tt])...], labels=["worst case" "orig" "dirty" "SVD"], title="link dimensions for tol="*string(tolerance), xlabel="link")
+plot([worst_case, TCI.linkdims.([qtt_orig.tci, qtt_DIRTY.tci, qtt_SVDed.tci])...], labels=["worst case" "orig" "dirty" "SVD"], title="link dimensions for tol="*string(tolerance), xlabel="link")
 
 savefig("data/linksdims_QTCI4Adisc.pdf")
 
-plot([qtt_orig.tt.pivoterrors, qtt_DIRTY.tt.pivoterrors,  qtt_SVDed.tt.pivoterrors], labels=["orig" "dirty" "SVD"], title="pivoterrors", yscale=:log10, ylabel="abs. error", xlabel="D_max")
+plot([qtt_orig.tci.pivoterrors, qtt_DIRTY.tci.pivoterrors,  qtt_SVDed.tci.pivoterrors], labels=["orig" "dirty" "SVD"], title="pivoterrors", yscale=:log10, ylabel="abs. error", xlabel="D_max")
 
 
 f_plotdata = h5open("data/plotdata_QTCI4Adisc.h5", "w")
 f_plotdata["linkdims_worstcase"] = worst_case
-f_plotdata["linkdims_origAdisc"] = TCI.linkdims(qtt_orig.tt)
-f_plotdata["linkdims_dirtyAdisc"] = TCI.linkdims(qtt_DIRTY.tt)
-f_plotdata["linkdims_SVDedAdisc"] = TCI.linkdims(qtt_SVDed.tt)
+f_plotdata["linkdims_origAdisc"] = TCI.linkdims(qtt_orig.tci)
+f_plotdata["linkdims_dirtyAdisc"] = TCI.linkdims(qtt_DIRTY.tci)
+f_plotdata["linkdims_SVDedAdisc"] = TCI.linkdims(qtt_SVDed.tci)
 
 f_plotdata["singularvalues_origKernel"] = S
 f_plotdata["singularvalues_dirtyKernel"] = Sn
@@ -477,7 +477,8 @@ GKeldysh = TCI4Keldysh.FullCorrelator_KF(PSFpath, ["F1", "F1dag", "Q34"]; flavor
 
 using BenchmarkTools
 
-evaluate(GKeldysh, 1,1,1)
+TCI4Keldysh.evaluate(GKeldysh, 1,1; iK=1)
+TCI4Keldysh.evaluate_all_iK(GKeldysh, 1,1)
 
 length(ωcont)
 

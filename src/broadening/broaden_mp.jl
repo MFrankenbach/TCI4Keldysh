@@ -1,54 +1,55 @@
 
 
-"""
-< Description >
-[ocont,Acont] = getAcont_mp (ωdisc,Adisc,sigmak,γ [,option])
+"""    
+    getAcont_mp(ωdisc::Vector{Float64}, Adisc::Array{Float64}, sigmak::Vector{Float64}, γ::Float64; kwargs...)
 
-Broaden multipoint partial spectral function (PSF) data with log-Gaussian
--type broadening used by the "getAcont" function. 
+Broaden multipoint partial spectral function (PSF) data with log-Gaussian-type and linear broadening. 
 
-< Keyword arguments >
+# Arguments
+1. ωdisc   ::Vector{Float64} :      Logarithimic frequency bins. 
+                                    Here the original frequency values from the differences
+                                    b/w energy eigenvalues are shifted to the closest bins.
+2. Adisc   ::Array{Float64}  :      Spectral function in layout |ωdisc|x|sigmak|.
+3. sigmak  ::Vector{Float64} :      Sensitivity of logarithmic position of spectral
+                                    weight to z-shift, i.e. |d[log(|ω|)]/dz|. These values will
+                                    be used to broaden discrete data. (σ _{ij} or σ_k in
+                                    Lee2016.)
+4. γ       ::Float64         :      Parameter for secondary linear broadening kernel. (γ in Lee2016.)
+
+# Keyword arguments 
 This function accepts the same options as for "getAcont". A difference
 from the standard usage of "getAcont" is that the default values of
 'emin', 'emax', and 'estep' are set to 1e-6, 10, and 16, respectively.
 This is necessary since this function broadens two- or higher dimensional
 data; with the default values of "getAcont", your memory might blow up.
 
-< Output >
-ocont : [numeric] One-dimensional frequency grid for "Acont", used to
-      describe the frequency space for "Acont" along all dimensions.
-Acont : [numeric] Multi-dimensional array that represent the broadened
-      spectral data.
+# Returns
+1. ωcont   ::Vector{Float64}:    continous frequencies
+2. Acont   ::Vector{Float64}:    continous spectral data
+
+
+# Output
+1. ocont ::Vector{Float64} :    One-dimensional frequency grid for "Acont", used to
+                                describe the frequency space for "Acont" along all dimensions.
+2. Acont ::Vector{Float64} :    Multi-dimensional array that represent the broadened spectral data.
 """
 function getAcont_mp(
-    ωdisc   ::Vector{Float64},  # Logarithimic frequency bins. 
-                                # Here the original frequency values from the differences
-                                # b/w energy eigenvalues are shifted to the closest bins.
-                                # 
-    Adisc   ::Array{Float64},   # Spectral function in layout |ωdisc|x|sigmak|.
-    sigmak  ::Vector{Float64},  # Sensitivity of logarithmic position of spectral
-                                # weight to z-shift, i.e. |d[log(|omega|)]/dz|. These values will
-                                # be used to broaden discrete data. (\sigma_{ij} or \sigma_k in
-                                # Lee2016.)
-    γ       ::Float64           # Parameter for secondary linear broadening kernel. (\gamma
-                                # in Lee2016.)
+    ωdisc   ::Vector{Float64},  
+    Adisc   ::Array{Float64},   
+    sigmak  ::Vector{Float64},
+    γ       ::Float64           
     ; 
-    kwargs...
+    kwargs...                   # keyword arguments to be passed to 1D broadening function
     )
-    # Broaden multipoint partial spectral function (PSF) data with log-Gaussian
-    # -type broadening used by the "getAcont" function.
 
-
-
-
-    D, _, Adisc, Kernels, ωcont = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; kwargs...)
-    Acont = contract_Kernels_w_Adisc_mp(Kernels, Adisc)
+    D, _, Adisc, Kernels, ωcont = _prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; kwargs...)
+    Acont = contract_1D_Kernels_w_Adisc_mp(Kernels, Adisc)
 
     return ωcont, Acont
 end
 
 
-function prepare_broadening_mp(
+function _prepare_broadening_mp(
     ωdisc   ::Vector{Float64},  # Logarithimic frequency bins. 
                                 # Here the original frequency values from the differences
                                 # b/w energy eigenvalues are shifted to the closest bins.
@@ -89,97 +90,30 @@ function prepare_broadening_mp(
     return D, ωdiscs, Adisc, Kernels, ωcont
 end
 
-"""
-Contracts kernels with Adisc
-
-For 3p correlators we e.g. get K[i,a] K[j,b] Adisc[a,b]
-"""
-function contract_Kernels_w_Adisc_mp(Kernels, Adisc)
-    sz = [size(Adisc)...]
-    D = ndims(Adisc)
-
-    ##########################################################
-    ### EFFICIENCY IN TERMS OF   CPU TIME: 🙈     RAM: 😄  ###
-    ##########################################################
-    #if D == 1
-    #    M1 = Kernels[1]
-    #    @tullio Acont[i] := M1[i,a] * Adisc[a]
-    #elseif D == 2
-    #    M1, M2 = Kernels[1], Kernels[2]
-    #    @tullio Acont[i,j] := M1[i,a] * M2[j,b] * Adisc[a,b]
-    #else     # D == 3
-    #    M1, M2, M3 = Kernels[1], Kernels[2], Kernels[3]
-    #    @tullio Acont[i,j,k] := M1[i,a] * M2[j,b] * M3[k,c] * Adisc[a,b,c]
-    #end
-
-    
-    ##########################################################
-    ### EFFICIENCY IN TERMS OF   CPU TIME: 😄     RAM: 🙈  ###
-    ##########################################################
-    Acont = copy(Adisc)  # Initialize
-    for it1 in 1:D
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tit1 = ", it1)
-        Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1]))
-        Acont = Kernels[it1] * Acont
-
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tconvolution [done]")
-        sz[it1] = size(Kernels[it1])[1]
-        Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
-        if D>1
-            Acont = permutedims(Acont, (collect(2:D)..., 1))
-        end
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tpermutation [done]")
-        #GC.gc()
-    end
-
-    return Acont
-end
-
 
 """
-Contracts retarded kernels with Adisc and deduces all fully-retarded kernels
+    BroadenedPSF{D} <: AbstractTuckerDecomp{D}
 
-For 3p correlators we e.g. get K^{R/A}[i,a] K^{R/A}[j,b] Adisc[a,b]
+Stores a broadened D-dimensional PSF in form of a Tucker decomposition. \n
+Kernels are precomputed, such that e.g. for D=2 we get Acontᵢⱼ = ∑ᵦᵧ Kᵢᵦ Kⱼᵧ Adiscᵦᵧ. \n
+A BroadenedPSF can be evaluated at indices 1:length(ωconts[d]) with 1≤d≤D.
 
-We need
-for 2p:     K^[1](ω₁,ω₂)        =       K^R(ω₁)
-            K^[2](ω₁,ω₂)        =       K^A(ω₁)                 = c.c.of first line
-for 3p:     K^[1](ω₁,ω₂,ω₃)     =       K^R(ω₁)K^R(ω₂)         \\=2p result x K^R(ω₂)
-            K^[2](ω₁,ω₂,ω₃)     =       K^A(ω₁)K^R(ω₂)         /
-            K^[3](ω₁,ω₂,ω₃)     =       K^A(ω₁)K^A(ω₂)          = c.c.of first line
-for 4p:     K^[1](ω₁,ω₂,ω₃,ω₄)  =       K^R(ω₁)K^R(ω₂)K^R(ω₃)  \\
-            K^[2](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^R(ω₂)K^R(ω₃)  |=3p result x K^R(ω₃)
-            K^[3](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^R(ω₃)  /
-            K^[3](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^A(ω₃)   = c.c.of first line
+# Pointwise evaluation
+```julia-repl
+julia> psf(1, 2)
+2.0
+```
+
+# Slicing
+```julia-repl
+julia> psf[1, :]
+4-element Vector{Float64}:
+ 1.0
+ 2.0
+ 3.0
+ 4.0
+```
 """
-function contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc)
-    sz = [size(Adisc)...]
-    D = ndims(Adisc)
-    
-    ##########################################################
-    ### EFFICIENCY IN TERMS OF   CPU TIME: 😄     RAM: 🙈  ###
-    ##########################################################
-    Acont = copy(Adisc)  # Initialize
-    for it1 in 1:D
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tit1 = ", it1)
-        Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1] * it1))
-        Acont = Kernels[it1] * Acont
-        sz[it1] = size(Kernels[it1])[1]
-        Acont = reshape(Acont, ((sz[it1], prod(sz) ÷ sz[it1], it1)))
-        Acont = cat(Acont, conj.(Acont[:,:,1]), dims=3)
-
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tconvolution [done]")
-        #Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
-        if D>1
-            Acont = permutedims(Acont, (collect(2:D)..., 1, D+1))
-        end
-        #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tpermutation [done]")
-        #GC.gc()
-    end
-
-    return Acont
-end
-
 struct BroadenedPSF{D} <: AbstractTuckerDecomp{D}                 ### D = number of frequency dimensions
     Adisc   ::Array{Float64,D}          ### discrete spectral data; best: compactified with compactAdisc(...)
     ωdiscs  ::Vector{Vector{Float64}}   ### discrete frequencies for all D dimensions
@@ -214,7 +148,7 @@ struct BroadenedPSF{D} <: AbstractTuckerDecomp{D}                 ### D = number
         ωconts  ::NTuple{D,Vector{Float64}},
         kwargs...
     ) where{D}
-        @TIME _, ωdiscs, Adisc, Kernels, _ = prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; ωconts, kwargs...) "Prepare broadening."
+        @TIME _, ωdiscs, Adisc, Kernels, _ = _prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; ωconts, kwargs...) "Prepare broadening."
         sz = size(Adisc)
         return new{D}(Adisc, ωdiscs, Kernels, ωconts, sz)
     end
@@ -272,7 +206,7 @@ function Base.:getindex(
         return nothing
     end
 
-    kernels_new = [psf.Kernels[i] for i in 1:D]# [qtt.tt.T[i][:,qw[i],:] for i in 1:DR]
+    kernels_new = [psf.Kernels[i] for i in 1:D]# [qtt.tci.T[i][:,qw[i],:] for i in 1:DR]
     # bounds check
     #@assert all(1 .<= w .<= 2^R)
 
@@ -291,7 +225,7 @@ function Base.:getindex(
         end
      end
     
-    result = contract_Kernels_w_Adisc_mp(kernels_new, psf.Adisc)
+    result = contract_1D_Kernels_w_Adisc_mp(kernels_new, psf.Adisc)
 
     return result
 end

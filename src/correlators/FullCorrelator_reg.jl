@@ -1,13 +1,42 @@
-struct FullCorrelator_MF{D}
-    name    ::Vector{String}                    # list of operators to distinguish the objects
-    Gps     ::Vector{PartialCorrelator_reg}     # list of partial correlators
-    Gp_to_G ::Vector{Float64}                   # prefactors for Gp's (currently this coefficient is applied to Adisc => no need to apply it during evaluation.)
+"""
+    FullCorrelator_MF{D}
 
-    ωs_ext  ::NTuple{D,Vector{ComplexF64}}      # external complex frequencies in the chosen parametrization
-    ωconvMat::Matrix{Int}                       # matrix of size (D+1, D) encoding conversion of external frequencies to the frequencies of the D+1 legs
-                                                # columns must add up to zero
-                                                # allowed matrix entries: -1, 0, 1
-    isBos   ::BitVector                         # BitVector indicating which legs are bosonic
+The struct FullCorrelator_MF{D} represents a full Matsubara correlator via the sum of PartialCorrelator_reg objects.
+This representation is described in Eq.(39) in [Kugler et al. PHYS. REV. X 11, 041006 (2021)],
+where the *partial* correlators Gp are the contributions from individual permutations p.
+
+# Members:
+* name    ::Vector{String}                    : name to distinguish the objects (e.g.: list of operators)
+* Gps     ::Vector{PartialCorrelator_reg}     : list of partial correlators
+* Gp_to_G ::Vector{Float64}                   : prefactors for Gp's (currently this coefficient is applied to Adisc => no need to apply it during evaluation.)
+* ωs_ext  ::NTuple{D,Vector{ComplexF64}}      : external complex frequencies in the chosen parametrization
+* ωconvMat::Matrix{Int}                       : Matrix of size (D+1, D) encoding conversion of external frequencies to the frequencies of the D+1 legs ~ ω_ferm = ωconvMat * ω_ext.
+                                                Columns must add up to zero.
+                                                Allowed matrix entries: -1, 0, 1
+* isBos   ::BitVector                         : BitVector indicating which legs are bosonic
+
+# Evaluation
+Objects of type FullCorrelator_MF{D} can be evaluated *pointwisely* at indices, e.g. for D=2
+```julia-repl
+julia> GM(1, 2)
+2.0
+```
+
+To evaluate it at *all* available indices:
+```julia-repl
+julia> precompute_all_values(GM)
+MxN Matrix{Float64}
+ ...
+```
+"""
+struct FullCorrelator_MF{D}
+    name    ::Vector{String}                    
+    Gps     ::Vector{PartialCorrelator_reg}     
+    Gp_to_G ::Vector{Float64}                   
+
+    ωs_ext  ::NTuple{D,Vector{ComplexF64}}      
+    ωconvMat::Matrix{Int}                       
+    isBos   ::BitVector                         
 
     function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::String="") where{D}
         ##########################################################################
@@ -48,7 +77,7 @@ struct FullCorrelator_MF{D}
 
 
         perms = permutations(collect(1:D+1))
-        Gp_to_G = get_Gp_to_G(D, isBos)
+        Gp_to_G = _get_Gp_to_G(D, isBos)
         Gps = [PartialCorrelator_reg("MF", Gp_to_G[i].*Adiscs[i], ωdisc, ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
 
         return new{D}(name, Gps, Gp_to_G, ωs_ext, ωconvMat)
@@ -56,7 +85,7 @@ struct FullCorrelator_MF{D}
 end
 
 
-function get_Gp_to_G(D::Int, isBos::BitVector) ::Vector{Float64}
+function _get_Gp_to_G(D::Int, isBos::BitVector) ::Vector{Float64}
     N_fermions = D + 1 - sum(isBos)
     i_Fer = zeros(Int, D+1)
     i_Fer[.!isBos] .= 1:N_fermions
@@ -84,15 +113,51 @@ end
 
 
 function precompute_all_values(G :: FullCorrelator_MF{D}) ::Array{ComplexF64,D} where{D}
-    #result = precompute_all_values(G.Gps[1]) .* G.Gp_to_G[1]
+    #result = precompute_all_values_MF(G.Gps[1]) .* G.Gp_to_G[1]
     #for i in 2:length(G.Gps)
-    #    result .+= precompute_all_values(G.Gps[i]) .* G.Gp_to_G[i]
+    #    result .+= precompute_all_values_MF(G.Gps[i]) .* G.Gp_to_G[i]
     #end
     #return result
-    return  sum(gp -> precompute_all_values(gp), G.Gps)
+    return  sum(gp -> precompute_all_values_MF(gp), G.Gps)
 end
 
 
+"""
+    FullCorrelator_KF{D}
+
+The struct FullCorrelator_KF{D} represents a full Keldysh correlator via the sum of PartialCorrelator_reg objects.
+This representation is described in Eqs.(67) in [Kugler et al. PHYS. REV. X 11, 041006 (2021)],
+where the *partial* correlators Gp are the contributions from individual permutations p.
+
+# Members:
+* name    ::Vector{String}                    : name to distinguish the objects (e.g.: list of operators)
+* Gps     ::Vector{PartialCorrelator_reg}     : list of partial correlators
+* Gp_to_G ::Vector{Float64}                   : prefactors for Gp's (currently this coefficient is applied to Adisc => no need to apply it during evaluation.)
+* GR_to_GK::Array{Float64,3}                  : Matrix of size (D+1, 2^{D+1}) mapping fully-retarded Gp to Keldysh Gp
+* ωs_ext  ::NTuple{D,Vector{ComplexF64}}      : external complex frequencies in the chosen parametrization
+* ωconvMat::Matrix{Int}                       : Matrix of size (D+1, D) encoding conversion of external frequencies to the frequencies of the D+1 legs ~ ω_ferm = ωconvMat * ω_ext.
+                                                Columns must add up to zero.
+                                                Allowed matrix entries: -1, 0, 1
+* isBos   ::BitVector                         : BitVector indicating which legs are bosonic
+
+# Evaluation
+Objects of type FullCorrelator_KF{D} can be evaluated *pointwisely* at frequency indices and Keldysh indices, e.g. for D=2
+```julia-repl
+julia> evaluate_all_iK(GK, 1, 2)
+N-element Vector{ComplexF64}
+ ...
+
+julia> evaluate(GK, 1, 2; iK=1)
+ 0.0
+```
+
+To evaluate it at *all* available indices:
+```julia-repl
+julia> precompute_all_values(GK)
+MxNx8 Matrix{ComplexF64}
+ ...
+```
+"""
 struct FullCorrelator_KF{D}
     name    ::Vector{String}                    # list of operators to distinguish the objects
     Gps     ::Vector{PartialCorrelator_reg}     # list of partial correlators
@@ -178,7 +243,7 @@ struct FullCorrelator_KF{D}
         print("All the rest: ")
         @time begin
         perms = permutations(collect(1:D+1))
-        Gp_to_G = get_Gp_to_G(D, isBos)
+        Gp_to_G = _get_Gp_to_G(D, isBos)
         for (i,sp) in enumerate(Aconts)
             sp.Adisc .*= Gp_to_G[i]
         end
@@ -190,26 +255,53 @@ struct FullCorrelator_KF{D}
 end
 
 
-function evaluate(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}) where{D}
+"""
+    evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D})
+
+Evaluate Keldysh correlator at indices idx. Returns all Keldysh components in a vector.
+iK ∈ 1:2^D is the linear index for the 2x...x2 Keldysh structure.
+
+"""
+function evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}) where{D}
     #eval_gps(gp) = evaluate_with_ωconversion_KF(gp, idx...)
     #Gp_values = eval_gps.(G.Gps)
-    result = evaluate_with_ωconversion_KF(G.Gps[1], idx...)' * view(G.GR_to_GK, :, :, 1)# .* G.Gp_to_G[1]
+    result = transpose(evaluate_with_ωconversion_KF(G.Gps[1], idx...)) * view(G.GR_to_GK, :, :, 1)# .* G.Gp_to_G[1]
     for i in 2:length(G.Gps)
         println("i: ", i)
-        result .+= evaluate_with_ωconversion_KF(G.Gps[i], idx...)' * view(G.GR_to_GK, :, :, i)# .* G.Gp_to_G[i]
+        result .+= transpose(evaluate_with_ωconversion_KF(G.Gps[i], idx...)) * view(G.GR_to_GK, :, :, i)# .* G.Gp_to_G[i]
     end
     return result
     #return mapreduce(gp -> evaluate_with_ωconversion_KF(gp, idx...)' * G.GR_to_GK, +, G.Gps)
 end
 
 
-function evaluate(G::FullCorrelator_KF{D}, iK::Int,  idx::Vararg{Int,D}) where{D}
+"""
+    evaluate(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}; iK::Int)
+
+Evaluate Keldysh correlator at indices idx and Keldysh component iK.
+iK ∈ 1:2^D is the linear index for the 2x...x2 Keldysh structure.
+"""
+function evaluate(G::FullCorrelator_KF{D},  idx::Vararg{Int,D}; iK::Int) where{D}
     #eval_gps(gp) = evaluate_with_ωconversion_KF(gp, idx...)
     #Gp_values = eval_gps.(G.Gps)
-    result = evaluate_with_ωconversion_KF(G.Gps[1], idx...)' * G.GR_to_GK[:, iK, 1]# .* G.Gp_to_G[1]
+    result = transpose(evaluate_with_ωconversion_KF(G.Gps[1], idx...)) * G.GR_to_GK[:, iK, 1]# .* G.Gp_to_G[1]
     for i in 2:length(G.Gps)
-        result += evaluate_with_ωconversion_KF(G.Gps[i], idx...)' * G.GR_to_GK[:, iK, i]# .* G.Gp_to_G[i]
+        result += transpose(evaluate_with_ωconversion_KF(G.Gps[i], idx...)) * G.GR_to_GK[:, iK, i]# .* G.Gp_to_G[i]
     end
     return result
     #return mapreduce(gp -> evaluate_with_ωconversion_KF(gp, idx...)' * G.GR_to_GK, +, G.Gps)
+end
+
+
+function precompute_all_values(G :: FullCorrelator_KF{D}) where{D}
+    
+    @assert false # Not tested at all!
+    p = 1
+    temp = precompute_all_values_KF(G.Gps[p])
+    result = reshape(temp, (prod(size(temp)[1:end-1]),D)) * view(G.GR_to_GK, :, :, p)
+    for p in 2:length(G.Gps)
+        temp = precompute_all_values_KF(G.Gps[p])
+        result += reshape(temp, (prod(size(temp)[1:end-1]),D)) * view(G.GR_to_GK, :, :, p)
+    end
+    return reshape(result, (length.(G.ωs_ext)..., 2^(D+1)))
 end

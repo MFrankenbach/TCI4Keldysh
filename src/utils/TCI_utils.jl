@@ -1,3 +1,8 @@
+"""
+qtt_to_fattensor(Ts::Vector{Array{T, 3}})
+
+Convert QTT to fat tensor.
+"""
 function qtt_to_fattensor(Ts::Vector{Array{T, 3}} ) where{T}
     # fatten: turn tensor train into fat tensor:
     DR = length(Ts)
@@ -12,7 +17,12 @@ function qtt_to_fattensor(Ts::Vector{Array{T, 3}} ) where{T}
     return result
 end
 
-function qinterleaved_fattensor_to_regular(input, R)
+"""
+qinterleaved_fattensor_to_regular(input::Array, R)
+
+Permute dimensions to convert a fattensor in (interleaved) Quantics format to a fat tensor in regular format.
+"""
+function qinterleaved_fattensor_to_regular(input::Array, R)
     
     if length(input) == 1
         result = input[1]
@@ -45,10 +55,10 @@ function Base.:getindex(
         return nothing
     end
 
-    DR = length(qtt.tt.sitetensors)
+    DR = length(qtt.tci.sitetensors)
     R = div(DR, D)
 
-    Ts_new = [qtt.tt.sitetensors[i] for i in 1:DR]# [qtt.tt.T[i][:,qw[i],:] for i in 1:DR]
+    Ts_new = [qtt.tci.sitetensors[i] for i in 1:DR]# [qtt.tci.T[i][:,qw[i],:] for i in 1:DR]
     # bounds check
     #@assert all(1 .<= w .<= 2^R)
 
@@ -70,13 +80,17 @@ function Base.:getindex(
     return result
 end
 
+"""
+    getsitesforqtt(qtt::QuanticsTCI.QuanticsTensorCI2; tags)
 
+Construct strings to be used as site tags of an MPS (from iTensor) that represents a QTT.
+"""
 function getsitesforqtt(qtt::QuanticsTCI.QuanticsTensorCI2; tags=("bla", "blu"))
     D = length(qtt.grid.origin)
     R = qtt.grid.R
     @assert length(tags) == D "number of tags inconsitent with QTCI dimensions."
     
-    localdims = [size(t, 2) for t in TCI.tensortrain(qtt.tt)]
+    localdims = [size(t, 2) for t in TCI.tensortrain(qtt.tci)]
     sites = [Index(localdims[R*(d-1)+r], "Qubit, $(tags[d])=$r") for r in 1:R for d in 1:D]
     return sites
 
@@ -112,7 +126,7 @@ function QTCItoMPS(qtci::QuanticsTCI.QuanticsTensorCI2{T}, tags::NTuple{D,String
     D_ = length(qtci.grid.origin)
     D_ == D || throw(ArgumentError("tags must be $D_-Tuple of Strings."))
     sites = getsitesforqtt(qtci; tags)
-    return TCItoMPS(qtci.tt; sites)
+    return TCItoMPS(qtci.tci; sites)
 end
 
 """
@@ -136,7 +150,7 @@ end
 #        tt.T[d] = reshape(mps[d].tensor, (lnkdims[d], localdimensions[d], lnkdims[d+1]))
 #    end
 #
-#    grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=QuanticsGrids.UnfoldingSchemes.interleaved)
+#    grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
 #    qtt = QuanticsTCI.QuanticsTensorCI2{T}(tt, grid)
 #
 #    return qtt
@@ -148,7 +162,7 @@ end
 Convert tucker decomposition to QuanticsTensorCI2
 """
 function TDtoQTCI(tc_in::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", tolerance=1e-8,
-    unfoldingscheme::UnfoldingSchemes.UnfoldingScheme=UnfoldingSchemes.interleaved
+    unfoldingscheme=:interleaved
     ) where{D}
 
     function truncateTD!(tc)
@@ -195,7 +209,7 @@ function TDtoQTCI(tc_in::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", tole
 end
 
 function fatTensortoQTCI(fattensor::Array{T,D} ; method="svd", tolerance=1e-8,
-    unfoldingscheme::UnfoldingSchemes.UnfoldingScheme=UnfoldingSchemes.interleaved,
+    unfoldingscheme=:interleaved,
     kwargs...
     ) where{T, D}
 
@@ -243,8 +257,14 @@ function fatTensortoQTCI(fattensor::Array{T,D} ; method="svd", tolerance=1e-8,
             tt.sitetensors[d] = qtt_dat[d]
         end
 
+
+        
         grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
-        qtt = QuanticsTCI.QuanticsTensorCI2{T}(tt, grid)
+        
+        qf_ =  q -> f(QuanticsGrids.quantics_to_origcoord(grid, q)...)
+        qf = TCI.CachedFunction{T}(qf_, localdimensions)
+
+        qtt = QuanticsTCI.QuanticsTensorCI2{T}(tt, grid, qf)
 
 
     elseif method == "qtci"
@@ -275,7 +295,17 @@ function MPS_to_fatTensor(mps::MPS; tags)
     return arr
 end
 
+"""
+affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
 
+Perform an affine frequency transform (i.e. one that combines at most 2 frequencies into a new frequency)
+
+Arguments:
+ * mps          ::MPS
+ * tags         ::Vector{String}
+ * ωconvMat     ::Matrix{Int}    matrix M encoding the frequency conversion ω_old = M * ω_new
+ * isferm_ωnew  ::Vector{Int}    0 for bosonic, 1 for fermionic
+"""
 function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
 
     D = length(isferm_ωnew) # number of frequencies
@@ -311,7 +341,17 @@ function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ω
 end
 
 
+"""
+freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
 
+Perform a general frequency transform ωold ↦ ωnew = ωconvMat * ωold.
+
+Arguments:
+ * mps          ::MPS
+ * tags         ::Vector{String}
+ * ωconvMat     ::Matrix{Int}    matrix M encoding the frequency conversion ωold = M * ωnew
+ * isferm_ωnew  ::Vector{Int}    0 for bosonic, 1 for fermionic
+"""
 function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
 
     function convert_to_affineTrafos(m::Matrix{Int}) ::Vector{Matrix{Int}}
@@ -364,7 +404,7 @@ function zeropad_QTCI2(qtt_in::QuanticsTCI.QuanticsTensorCI2; N::Int, nonzeroind
     #nonzeroinds_left = nothing
     #N = 2
     R_old = qtt_in.grid.R
-    D = div(length(qtt_in.tt), R_old)
+    D = div(length(qtt_in.tci), R_old)
     if nonzeroinds_left === nothing
         nonzeroinds_left = ones(Int, N*D)
     else
@@ -376,11 +416,11 @@ function zeropad_QTCI2(qtt_in::QuanticsTCI.QuanticsTensorCI2; N::Int, nonzeroind
     end
     R_new = R_old + N
     
-    #tensors_new = qtt_in.tt.sitetensors
+    #tensors_new = qtt_in.tci.sitetensors
     #tensors_new = [[deepcopy(trivialtensor) for _ in 1:N*D]; tensors]
     
-    T = eltype(qtt_in.tt.sitetensors[1])
-    localdims_new = [2*ones(Int, N*D); qtt_in.tt.localdims]
+    T = eltype(qtt_in.tci.sitetensors[1])
+    localdims_new = [2*ones(Int, N*D); qtt_in.tci.localdims]
     tt_new = TCI.TensorCI2{T}(localdims_new)
     for i in eachindex(tt_new.sitetensors)
         if i <= N*D
@@ -389,7 +429,7 @@ function zeropad_QTCI2(qtt_in::QuanticsTCI.QuanticsTensorCI2; N::Int, nonzeroind
         trivialtensor = reshape(trivialtensor, (1,2,1))
         tt_new.sitetensors[i] = trivialtensor
         else
-            tt_new.sitetensors[i] = qtt_in.tt.sitetensors[i-N*D]
+            tt_new.sitetensors[i] = qtt_in.tci.sitetensors[i-N*D]
 
         end
     end
@@ -408,19 +448,19 @@ function zeropad_QTCI2(qtt_in::QuanticsTCI.QuanticsTensorCI2; N::Int, nonzeroind
         end
         return nothing
     end
-    modify_IJsets!(tt_new.Iset, tt_new.Jset, qtt_in.tt.Iset, qtt_in.tt.Jset)
-    for i in eachindex(qtt_in.tt.Iset_history)
-        push!(tt_new.Iset_history, qtt_in.tt.Iset_history[i])
-        push!(tt_new.Jset_history, qtt_in.tt.Jset_history[i])
-        modify_IJsets!(tt_new.Iset_history[i], tt_new.Jset_history[i], qtt_in.tt.Iset_history[i], qtt_in.tt.Jset_history[i])
+    modify_IJsets!(tt_new.Iset, tt_new.Jset, qtt_in.tci.Iset, qtt_in.tci.Jset)
+    for i in eachindex(qtt_in.tci.Iset_history)
+        push!(tt_new.Iset_history, qtt_in.tci.Iset_history[i])
+        push!(tt_new.Jset_history, qtt_in.tci.Jset_history[i])
+        modify_IJsets!(tt_new.Iset_history[i], tt_new.Jset_history[i], qtt_in.tci.Iset_history[i], qtt_in.tci.Jset_history[i])
     end
     #tt_new.Iset
     #tt_new.Jset
-    grid_new = QuanticsGrids.InherentDiscreteGrid{D}(R_new; unfoldingscheme=QuanticsGrids.UnfoldingSchemes.interleaved)
+    grid_new = QuanticsGrids.InherentDiscreteGrid{D}(R_new; unfoldingscheme=:interleaved)
     @assert all(TCI.linkdims(tt_new) .== length.(tt_new.Iset)[2:end])
     @assert all(TCI.linkdims(tt_new) .== length.(tt_new.Jset)[1:end-1])
 
-    return QuanticsTCI.QuanticsTensorCI2{T}(tt_new, grid_new)
+    return QuanticsTCI.QuanticsTensorCI2{T}(tt_new, grid_new, qtt_in.quanticsfunction)
  
 end
 
@@ -577,8 +617,8 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
     # pad qtt:
     nonzeroinds_left=ones(Int, (R-R_Adisc)*D)
     qtt_Adisc_padded = TCI4Keldysh.zeropad_QTCI2(qtt_Adisc; N=R-R_Adisc, nonzeroinds_left)
-    all(qtt_Adisc_padded.tt.sitetensors[(R-R_Adisc)*D+1:end] .== qtt_Adisc.tt.sitetensors)
-    all(getindex.(argmax.(qtt_Adisc_padded.tt.sitetensors[1:(R-R_Adisc)*D]), 2) .== nonzeroinds_left)
+    all(qtt_Adisc_padded.tci.sitetensors[(R-R_Adisc)*D+1:end] .== qtt_Adisc.tci.sitetensors)
+    all(getindex.(argmax.(qtt_Adisc_padded.tci.sitetensors[1:(R-R_Adisc)*D]), 2) .== nonzeroinds_left)
 
 
 
@@ -666,8 +706,8 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     # pad qtt:
     nonzeroinds_left=ones(Int, (R-R_Adisc)*D)
     qtt_Adisc_padded = TCI4Keldysh.zeropad_QTCI2(qtt_Adisc; N=R-R_Adisc, nonzeroinds_left)
-    all(qtt_Adisc_padded.tt.sitetensors[(R-R_Adisc)*D+1:end] .== qtt_Adisc.tt.sitetensors)
-    all(getindex.(argmax.(qtt_Adisc_padded.tt.sitetensors[1:(R-R_Adisc)*D]), 2) .== nonzeroinds_left)
+    all(qtt_Adisc_padded.tci.sitetensors[(R-R_Adisc)*D+1:end] .== qtt_Adisc.tci.sitetensors)
+    all(getindex.(argmax.(qtt_Adisc_padded.tci.sitetensors[1:(R-R_Adisc)*D]), 2) .== nonzeroinds_left)
 
 
 

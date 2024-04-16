@@ -10,7 +10,7 @@
     m = reshape(collect(1:d^2)*1., (d,d)) # zeros(ComplexF64, d,d)
     qtt = TCI4Keldysh.fatTensortoQTCI(m; tolerance=1e-10, method="qtci")
     sites = TCI4Keldysh.getsitesforqtt(qtt; tags)
-    mps = TCI4Keldysh.TCItoMPS(qtt.tt; sites)
+    mps = TCI4Keldysh.TCItoMPS(qtt.tci; sites)
     #qtt[:,:]
 
 
@@ -76,7 +76,7 @@ end
     m = reshape(collect(1:N^D)*1., N*ones(Int, D)...)
     qtt = TCI4Keldysh.fatTensortoQTCI(m; tolerance=1e-10, method="qtci")
     sites = TCI4Keldysh.getsitesforqtt(qtt; tags)
-    mps = TCI4Keldysh.TCItoMPS(qtt.tt; sites)
+    mps = TCI4Keldysh.TCItoMPS(qtt.tci; sites)
     mps_cp = deepcopy(mps)
 
     isferm_ωnew = [0, 1, 1] # 
