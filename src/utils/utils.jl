@@ -417,7 +417,7 @@ end
 
 
 function shift_singular_values_to_center!(broadenedPsf::AbstractTuckerDecomp{D}) where{D}
-    tmpKernels = Vector{Matrix{Float64}}(undef, 0)
+    tmpKernels = Vector{typeof(broadenedPsf.Kernels[1])}(undef, 0)
     for d in 1:D
         # shift all singular values to central tensor
         U, S, V = svd(broadenedPsf.Kernels[d])
@@ -447,7 +447,7 @@ function shift_singular_values_to_center_DIRTY!(broadenedPsf::AbstractTuckerDeco
     return nothing
 end
 
-function svd_trunc_Adisc(broadenedPsf::AbstractTuckerDecomp{D}; atol::Float64) where{D}
+function svd_trunc_Adisc!(broadenedPsf::AbstractTuckerDecomp{D}; atol::Float64) where{D}
     Adisc_tmp = broadenedPsf.Adisc
     Kernels_new = [broadenedPsf.Kernels...]
 
@@ -466,8 +466,128 @@ function svd_trunc_Adisc(broadenedPsf::AbstractTuckerDecomp{D}; atol::Float64) w
 
     end
 
-    broadenedPsf_new = TCI4Keldysh.BroadenedPSF(
-        Adisc_tmp,  broadenedPsf.ωdiscs, Kernels_new, broadenedPsf.ωconts, size(Adisc_tmp)
-    )
-    return broadenedPsf_new
+    broadenedPsf.Adisc = Adisc_tmp
+    broadenedPsf.Kernels = Kernels_new
+    broadenedPsf.ωdiscs = broadenedPsf.ωdiscs .* 0 # after shifting the singular values there is no concept of ωdiscs anymore
+    return nothing# broadenedPsf_new
+end
+
+
+"""
+Performs interpolative decomposition of matrix A_in.
+For a given tolerance it returns the column indices that should be kept.
+
+# Arguments
+1. A_in     ::Matrix    matrix that is to be decomposed
+
+# Keyword arguments
+1. atol     ::Float64   absolute tolerance (approximately in terms of truncated singular values)
+2. ncols_min::Int       determines the minimal number of columns
+
+# Returns
+1. p        ::Vector{Int}   column indices that should be kept.
+"""
+function interp_decomp(A_in::AbstractMatrix; atol::Float64=1e-8, rtol::Float64=1e-8, ncols_min::Int=-1)
+    # check input
+    @assert atol > 0.
+    @assert ncols_min ≤ size(A_in, 2)
+
+    _, s, _ = svd(A_in)
+    _, r, p = qr(A_in, Val(true))
+    #s
+    #i_s = argmax(s .< tol)
+    #s[i_s]
+    
+    imax = -1
+    #println("argmax(s .< atol): \t", argmax(s .< atol))
+    #println("argmax(s ./ s[1] .< rtol): \t", argmax(s ./ s[1] .< rtol))
+    #println("length(s): ", length(s))
+    #for i_s in max(argmax(s .< atol),argmax(s ./ s[1] .< rtol)):length(s)
+    for i_s in min(argmax(s .< atol),argmax(s ./ s[1] .< rtol)):length(s)
+        #println(i_s)
+        R22 = r[i_s:end, i_s:end]
+        _, s2, _ = svd(R22)
+            if (s2[1] < atol && s2[1] < s[1]*rtol) || i_s == length(s)
+                #println("Found an imax!")
+                imax = i_s
+                break
+            end
+    end
+    imax = max(imax, ncols_min)
+    #println("imax: ", imax)
+    return p[1:imax]
+    
+end
+
+function linear_least_squares(A, b; metric=nothing)
+    if !(metric === nothing)
+        @assert ndims(metric) == 1
+        A = metric .* A
+        b = metric .* b
+    end
+    @DEBUG begin A_bckup = deepcopy(A); true end ""    #Check linear least squares fit:
+    qrA = qr(A);                    # QR decomposition
+    x = qrA\b;
+    #println(qrA.R)
+    @DEBUG maximum(abs.(A - A_bckup)) < 1e-13 "Matrix A got changed!"
+    @DEBUG begin dev = maximum(abs.(b - A*x)); dev < 1e-12 end "Linear least squares fit unstable. Deviation in to: \t$dev"
+    return x
+end
+
+
+function discreteLehmann4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rtol::Float64=1e-5) where{D}
+    Kernels = Gp.Kernels
+    #ωdiscs = Gp.ωdiscs
+    #iωs = Gp.ωs_int
+    p_ωdiscs = [ones(Int, 1) for _ in 1:D]
+    p_iωs = [ones(Int, 1) for _ in 1:D]
+
+    Gp_data = Gp[[Colon() for _ in 1:D]...]
+    Gp_data_tmp = deepcopy(Gp_data)
+    Kernels_new = deepcopy(Kernels)
+    for i in 1:D
+        K_in = Kernels[i]
+        p_ωdisc = interp_decomp(K_in; atol, rtol)
+        K_interm = K_in[:,p_ωdisc]
+        println("length(p_ωdisc): ", length(p_ωdisc))
+        p_iω = interp_decomp(transpose(K_interm); atol, rtol, ncols_min=length(p_ωdisc))
+        K_new = K_interm[p_iω,:]
+        Kernels_new[i] = K_new
+
+        _, s, _ = svd(K_in)
+        #sum(s .> atol)
+
+        
+        #Gp_data = Gp.Kernels[1] * Gp.Adisc
+
+        sz_Gp_data = size(Gp_data_tmp)
+        Gp_data_tmp = reshape(Gp_data_tmp, (sz_Gp_data[1], prod(sz_Gp_data[2:end])))
+        Gp_data_DLR = Gp_data_tmp[p_iω,:]
+        adisc_DLR = linear_least_squares(K_new, Gp_data_DLR)
+        Gp_data_DLRapprox = K_new * adisc_DLR
+
+        #println("dimenstion i/D = $i/D")
+        #println("\t abs error of approximant: ", maximum(abs.(Gp_data_DLR - Gp_data_DLRapprox)))
+        #println("\t deviation in coefficients", maximum(abs.(Gp_data_tmp[p_ωdisc,:] - adisc_DLR)))
+
+        p_ωdiscs[i] = p_ωdisc
+        p_iωs[i] = p_iω
+        Gp_data_tmp = permutedims(reshape(adisc_DLR, (size(adisc_DLR, 1), prod(sz_Gp_data[2:end]))), [collect(2:D)..., 1])
+    end
+
+    Adisc_new = Gp_data_tmp
+    size(Adisc_new)
+    size.(Kernels)
+    
+    @DEBUG begin
+        Kernels_new_large = [Gp.Kernels[i][:,p_ωdiscs[i]] for i in 1:D]
+        Gp_data_new = contract_1D_Kernels_w_Adisc_mp(Kernels_new_large, Adisc_new)
+        devabs = maximum(abs.(Gp_data - Gp_data_new))
+        println("abs. deviation of compressed MF correlator on original domain: \t", devabs)
+        devabs < atol && devabs/maximum(abs.(Gp_data)) < rtol
+    end "DLR compression did not work within the required tolerance."
+
+
+    return Kernels_new, Adisc_new, p_iωs, p_ωdiscs
+
 end

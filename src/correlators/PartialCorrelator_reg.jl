@@ -28,9 +28,9 @@ precompute_all_values:
  * "MF": computes values for all external frequencies ωs_ext (and includes anomalous contributions!)
  * "KF": not implemented yet
 """
-struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
+mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     formalism:: String                          # "MF" or "KF"
-    Adisc   ::  Array{Float64,D}                # discrete PSF data; best: compactified with compactAdisc(...)
+    Adisc   ::  Array{ComplexF64,D}             # discrete PSF data; best: compactified with compactAdisc(...)
     ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
     Kernels ::  Vector{Matrix{ComplexF64}}      # regular kernels
     ωs_ext  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies

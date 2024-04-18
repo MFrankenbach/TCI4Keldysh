@@ -14,7 +14,7 @@ function compute_K2r_symmetric_estimator(
 
     #K2a      = TCI4Keldysh.FullCorrelator_MF(PSFpath, [op_labels[1], "F"*op_labels[2], "F"*op_labels[3]]; flavor_idx, ωs_ext, ωconvMat);
     K2a_data = zeros(ComplexF64, length.(ωs_ext))
-    println("max dat 0: ", maxabs(K2a_data))
+    #println("max dat 0: ", maxabs(K2a_data))
 
     # precompute Σs:
     is_incoming = 1 .< length.(op_labels[2:3])
@@ -28,7 +28,7 @@ function compute_K2r_symmetric_estimator(
 
         K2a_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; flavor_idx, ωs_ext, ωconvMat);
         K2a_data_tmp = TCI4Keldysh.precompute_all_values(K2a_tmp)
-        println("max dat 1 ", letts," : ", maxabs(K2a_data_tmp))
+        #println("max dat 1 ", letts," : ", maxabs(K2a_data_tmp))
         # multiply Σ if necessary:
         for il in eachindex(letts)
             if letts[il] == 'F'
@@ -36,7 +36,7 @@ function compute_K2r_symmetric_estimator(
             end
         end
 
-        println("max dat 2 ", letts," : ", maxabs(K2a_data_tmp))
+        #println("max dat 2 ", letts," : ", maxabs(K2a_data_tmp))
 
         K2a_data += K2a_data_tmp
     end

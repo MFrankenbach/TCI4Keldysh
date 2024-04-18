@@ -114,7 +114,7 @@ julia> psf[1, :]
  4.0
 ```
 """
-struct BroadenedPSF{D} <: AbstractTuckerDecomp{D}                 ### D = number of frequency dimensions
+mutable struct BroadenedPSF{D} <: AbstractTuckerDecomp{D}                 ### D = number of frequency dimensions
     Adisc   ::Array{Float64,D}          ### discrete spectral data; best: compactified with compactAdisc(...)
     ωdiscs  ::Vector{Vector{Float64}}   ### discrete frequencies for all D dimensions
     Kernels ::Vector{Matrix{Float64}}   ### broadening kernels
