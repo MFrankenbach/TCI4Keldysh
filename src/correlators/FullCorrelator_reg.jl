@@ -295,13 +295,13 @@ end
 
 function precompute_all_values(G :: FullCorrelator_KF{D}) where{D}
     
-    @assert false # Not tested at all!
+#    @assert false # Not tested at all!
     p = 1
     temp = precompute_all_values_KF(G.Gps[p])
-    result = reshape(temp, (prod(size(temp)[1:end-1]),D)) * view(G.GR_to_GK, :, :, p)
+    result = reshape(temp, (prod(size(temp)[1:end-1]),D+1)) * view(G.GR_to_GK, :, :, p)
     for p in 2:length(G.Gps)
         temp = precompute_all_values_KF(G.Gps[p])
-        result += reshape(temp, (prod(size(temp)[1:end-1]),D)) * view(G.GR_to_GK, :, :, p)
+        result += reshape(temp, (prod(size(temp)[1:end-1]),D+1)) * view(G.GR_to_GK, :, :, p)
     end
-    return reshape(result, (length.(G.ωs_ext)..., 2^(D+1)))
+    return reshape(result, (length.(G.ωs_ext)..., (2*ones(Int, D+1))...))
 end

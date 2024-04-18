@@ -97,7 +97,7 @@ function getAcont(
     Lfun    ::String    = "FD", 
     A0      ::Vector{Float64}   = zeros(0),   
     tol     ::Float64   = 1e-14,
-    is2sum  ::Bool      = true, 
+    is2sum  ::Bool      = false, 
     verbose ::Bool      = false 
     )
 
