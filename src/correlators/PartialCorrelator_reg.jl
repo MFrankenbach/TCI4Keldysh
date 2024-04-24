@@ -31,6 +31,7 @@ precompute_all_values:
 mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     formalism:: String                          # "MF" or "KF"
     Adisc   ::  Array{ComplexF64,D}             # discrete PSF data; best: compactified with compactAdisc(...)
+    Adisc_anoβ::Array{ComplexF64,D}             # anomalous part of the discrete PSF data (only used for computing the anomalous contribution ∝ β)
     ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
     Kernels ::  Vector{Matrix{ComplexF64}}      # regular kernels
     ωs_ext  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
@@ -41,7 +42,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     ####################
     ### Constructors ###
     ####################
-    function PartialCorrelator_reg(formalism::String, Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
+    function PartialCorrelator_reg(formalism::String, Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}; is_compactAdisc::Bool=true) where {D}
         if !(formalism == "MF" || formalism == "KF")
             throw(ArgumentError("formalism must be MF when unbroadened Adisc is input."))
         end
@@ -50,11 +51,18 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
         end
 
         ωs_int, ωconvMat, ωconvOff = trafo_ω_args(ωs_ext, ωconv)
+        if is_compactAdisc
         # Delete rows/columns that contain only zeros
         _, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
+        else
+            ωdiscs, Adisc = [ωdisc for _ in 1:D], Adisc
+        end
         # Then pray that Adisc has no contributions for which the kernels diverge:
         @TIME Kernels = [get_regular_1DKernel(ωs_int[i], ωdiscs[i]) for i in 1:D] "Precomputing 1D kernels (for MF)."
-        return new{D}(formalism, Adisc, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
+        if formalism == "MF"
+            Adisc_anoβ = deepcopy(Adisc)
+        end
+        return new{D}(formalism, Adisc, Adisc_anoβ, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end
     function PartialCorrelator_reg(formalism::String, Acont::BroadenedPSF{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
         if !(formalism == "MF" || formalism == "KF")
@@ -79,7 +87,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             # compute retarded 1D kernels
             @TIME Kernels = [-im * π * hilbert_fft(Acont.Kernels[i]; dims=1) for i in 1:D] "Hilbert trafo (for KF)."
         end
-        return new{D}(formalism, Acont.Adisc, Acont.ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
+        return new{D}(formalism, Acont.Adisc, Array{ComplexF64,D}(undef, ones(Int,D)), Acont.ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end
 
 end
@@ -172,13 +180,15 @@ function precompute_all_values_MF(
         if any(is_zero_ωs_int) && any(is_zero_ωdisc)  ## currently only support single bosonic frequency
             #println("Has anomalous contribution: ")
             Adisc_ano = dropdims(Gp.Adisc[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
+
+            Adisc_anoβ_temp = dropdims(Gp.Adisc_anoβ[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
             #println("size of Adisc_ano: ", size(Adisc_ano))
             # compute anomalous contribution:
             Kernels_ano = [Gp.Kernels[1:d-1]..., Gp.Kernels[d+1:D]...]
             # add β/2 contribution?
             β = 2. * π / abs(Gp.ωs_int[1][2]-Gp.ωs_int[1][1])
             #println("β: ", β)
-            values_ano = β* contract_1D_Kernels_w_Adisc_mp(Kernels_ano, Adisc_ano)
+            values_ano = β* contract_1D_Kernels_w_Adisc_mp(Kernels_ano, Adisc_anoβ_temp)
             for dd in 1:D-1
                 Kernels_tmp = [Kernels_ano...]
                 #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))

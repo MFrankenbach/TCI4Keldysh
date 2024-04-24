@@ -29,16 +29,17 @@ MxN Matrix{Float64}
  ...
 ```
 """
-struct FullCorrelator_MF{D}
+mutable struct FullCorrelator_MF{D}
     name    ::Vector{String}                    
     Gps     ::Vector{PartialCorrelator_reg}     
     Gp_to_G ::Vector{Float64}                   
+    ps      ::Vector{Vector{Int}}
 
     ωs_ext  ::NTuple{D,Vector{ComplexF64}}      
     ωconvMat::Matrix{Int}                       
     isBos   ::BitVector                         
 
-    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::String="") where{D}
+    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::String="", is_compactAdisc::Bool=true) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if length(Ops) != D+1
@@ -51,11 +52,11 @@ struct FullCorrelator_MF{D}
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
 
-        return FullCorrelator_MF(Adiscs, ωdisc; isBos, ωs_ext, ωconvMat, name=[Ops; name])
+        return FullCorrelator_MF(Adiscs, ωdisc; isBos, ωs_ext, ωconvMat, name=[Ops; name], is_compactAdisc)
     end
 
 
-    function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; isBos::BitVector, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
+    function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; isBos::BitVector, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=true) where{D}
         if DEBUG()
             println("Constructing FullCorrelator_MF.")
         end
@@ -78,9 +79,9 @@ struct FullCorrelator_MF{D}
 
         perms = permutations(collect(1:D+1))
         Gp_to_G = _get_Gp_to_G(D, isBos)
-        Gps = [PartialCorrelator_reg("MF", Gp_to_G[i].*Adiscs[i], ωdisc, ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
+        Gps = [PartialCorrelator_reg("MF", Gp_to_G[i].*Adiscs[i], ωdisc, ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1); is_compactAdisc) for (i,p) in enumerate(perms)]        
 
-        return new{D}(name, Gps, Gp_to_G, ωs_ext, ωconvMat)
+        return new{D}(name, Gps, Gp_to_G, [perms...], ωs_ext, ωconvMat)
     end
 end
 
@@ -120,6 +121,58 @@ function precompute_all_values(G :: FullCorrelator_MF{D}) ::Array{ComplexF64,D} 
     #return result
     return  sum(gp -> precompute_all_values_MF(gp), G.Gps)
 end
+
+
+function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
+    function findfirstp(p::Vector{Int}, ps::Vector{Vector{Int}}) ::Int
+        for (i,x) in enumerate(ps)
+            if x == p
+                return i
+            end
+        end
+        return -1
+    end
+    
+    function findindepps(ps::Vector{Vector{Int}}) ::Vector{Int}
+        N = length(ps)
+        is_indep = ones(Int, N) .== 1
+        for (i,p) in enumerate(ps)
+            ipr = findfirstp(reverse(p), ps)
+            if is_indep[i]
+                is_indep[ipr] = false
+            end
+        end
+        return collect(1:N)[is_indep]
+    end
+    
+    #using Combinatorics
+    #G_in = deepcopy(Gs[1])
+    #G_new = deepcopy(G_in)
+    ps = G_in.ps
+    i_indepps = findindepps(ps)
+    N_indep = length(i_indepps)
+    #D = 2
+    Adiscs_new = Vector{Matrix{ComplexF64}}(undef, N_indep)
+    Adiscs_ano_new = Vector{Matrix{ComplexF64}}(undef, N_indep)
+    #Kernels_new = Vector{Vector{Matrix{ComplexF64}}}(undef, N_indep)
+    for (i,ip) in enumerate(i_indepps)
+        ipr = findfirstp(reverse(ps[ip]), ps)
+        #Kernels_new[i] = G_in.Gps[ip].Kernels
+        Adisc_pr = reverse(permutedims(G_in.Gps[ipr].Adisc, (reverse(collect(1:D)))))
+        Adiscs_new[i] = G_in.Gps[ip].Adisc + reverse(permutedims(G_in.Gps[ipr].Adisc, (reverse(collect(1:D))))) .* (-1)^D
+        Adiscs_ano_new[i] = G_in.Gps[ip].Adisc_anoβ + reverse(permutedims(G_in.Gps[ipr].Adisc_anoβ, (reverse(collect(1:D))))) .* (-1)^(D-1)
+        #println("ip: $ip \t ipr: $ipr")
+    end
+    G_in.ps = ps[i_indepps]
+    G_in.Gp_to_G = G_in.Gp_to_G[i_indepps]
+    G_in.Gps = G_in.Gps[i_indepps]
+    for i in 1:length(i_indepps)
+        G_in.Gps[i].Adisc = Adiscs_new[i]
+        G_in.Gps[i].Adisc_anoβ = Adiscs_ano_new[i]
+    end
+    return nothing
+end
+
 
 
 """

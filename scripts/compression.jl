@@ -11,6 +11,166 @@ TCI4Keldysh.DEBUG() = false
 
 begin
 
+    # NRG convention for fermionic legs:
+    # 1         1'
+    # \        /
+    #  \______/
+    #   |    |          = <1 1' 3 3'>
+    #   |____|
+    #  /      \
+    # /        \
+    # 3'        3
+
+
+
+    # NRG frequency convention:
+    # t- channel
+    # 
+    # ν         ν+ω
+    # \        /
+    #  \______/
+    #   |    |
+    #   |____|
+    #  /      \
+    # /        \
+    # ν′        ν′+ω
+
+
+    # p- channel
+    # 
+    # ν         -ν′-ω       ω_p = ν′_t - ν_t 
+    # \        /            ν_p = ν_t
+    #  \______/             ν′_p= ν′_t
+    #   |    |
+    #   |____|
+    #  /      \
+    # /        \
+    # ν′       -ν-ω
+
+
+    # a- channel
+    # 
+    # ν         ν′          ω_a = ν_t - ν′_t
+    # \        /            ν_a = ν_t
+    #  \______/             ν′_a= ν_t + ω_t
+    #   |    |
+    #   |____|
+    #  /      \
+    # /        \
+    # ν+ω      ν′+ω
+
+
+
+    # MBEsolver frequency convention:
+    # t- channel: same as in NRG
+    # 
+    # p- channel: difference to NRG: ω_p --> -ω_p
+    # 
+    # ν         ω-ν′        ω_p = ω_t + ν_t + ν′_t
+    # \        /            ν_p = ν_t
+    #  \______/             ν′_p= ν′_t
+    #   |    |
+    #   |____|
+    #  /      \
+    # /        \
+    # ν′        ω-ν
+    #
+    # a-channel: same as in NRG
+
+
+    begin
+        # set frequency conventions
+        
+        ωconvMat_t = [
+            0 -1  0;
+            1  1  0;
+           -1  0 -1;
+            0  0  1;
+        ]
+        #ωconvMat_p = [   # NRG convention
+        #    0 -1  0;
+        #    -1  0 -1;
+        #    1  1  0;
+        #    0  0  1;
+        #]
+        ωconvMat_p = [    # MBEsolver convention
+            0 -1  0;
+            1  0 -1;
+        -1  1  0;
+            0  0  1;
+        ]
+        ωconvMat_a = [
+            0 -1  0;
+            0  0  1;
+            -1  0 -1;
+            1  1  0;
+        ]
+
+        ### deduce frequency conventions for 2p and 3p vertex contributions:
+
+        # K1t = ["Q12", "Q34"]
+        # K1p = ["Q13", "Q24"]
+        # K1a = ["Q14", "Q23"])
+        ωconvMat_K1t = reshape([
+            sum(view(ωconvMat_t, [1,2], 1), dims=1);
+            sum(view(ωconvMat_t, [3,4], 1), dims=1);
+        ], (2,1))
+        ωconvMat_K1p = reshape([
+            sum(view(ωconvMat_p, [1,3], 1), dims=1);
+            sum(view(ωconvMat_p, [2,4], 1), dims=1);
+        ], (2,1))
+        ωconvMat_K1a =  reshape([
+            sum(view(ωconvMat_a, [1,4], 1), dims=1);
+            sum(view(ωconvMat_a, [2,3], 1), dims=1);
+        ], (2,1))
+
+        # K2t = ("Q34", "1", "1dag")
+        # K2p = ("Q24", "1", "3")
+        # K2a = ("Q23", "1", "3dag")
+
+        ωconvMat_K2t = [
+            sum(view(ωconvMat_t, [3,4], [1,2]), dims=1);
+            view(ωconvMat_t, [1,2], [1,2])
+        ]
+
+        ωconvMat_K2p = [
+            sum(view(ωconvMat_p, [2,4], [1,2]), dims=1);
+            view(ωconvMat_p, [1,3], [1,2])
+        ]
+
+
+        ωconvMat_K2a = [
+            sum(view(ωconvMat_a, [2,3], [1,2]), dims=1);
+            view(ωconvMat_a, [1,4], [1,2])
+        ]
+
+
+        # K2′t = ("Q12", "3", "3dag")
+        # K2′p = ("Q13", "1dag", "3dag")
+        # K2′a = ("Q14", "3", "1dag")
+
+        ωconvMat_K2′t = [
+            1  0;
+            0  1;
+            -1 -1;
+        ]
+        ωconvMat_K2′t = [
+            sum(view(ωconvMat_t, [1,2], [1,3]), dims=1);
+            view(ωconvMat_t, [3,4], [1,3])
+        ]
+
+        ωconvMat_K2′p = [
+            sum(view(ωconvMat_p, [1,3], [1,3]), dims=1);
+            view(ωconvMat_p, [2,4], [1,3])
+        ]
+
+
+        ωconvMat_K2′a = [
+            sum(view(ωconvMat_a, [1,4], [1,3]), dims=1);
+            view(ωconvMat_a, [2,3], [1,3])
+        ]
+    end
+
     function get_ωcont(ωmax, Nωcont_pos)
         ωcont = collect(range(-ωmax, ωmax; length=Nωcont_pos*2+1))
         return ωcont
@@ -28,10 +188,14 @@ begin
 
     ### System parameters of SIAM ### 
     D = 1.
-    # Keldysh paper:    u=0.5 OR u=1.0
-    U = 1. / 20.
-    T = 0.01 * U
-    #Δ = (U/pi)/0.5
+    ## Keldysh paper:    u=0.5 OR u=1.0
+     # set physical parameters
+     u = 0.5; 
+     #u = 1.0
+ 
+     U = 0.05;
+     Δ = U / (π * u)
+     T = 0.01*U
 
     Rpos = 10
     R = Rpos + 1
@@ -42,19 +206,65 @@ begin
     # get functor which can evaluate broadened data pointwisely
     #broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
     ωbos = im * π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
-    ωfer = im * π * T *(collect(-Nωcont_pos:Nωcont_pos-1) * 2 .+ 1)
+    ωfer = im * π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
     ωs_ext = (ωbos, ωfer)
     ωconv = [
          1  0;
          -1  -1
-    ]
-    Gp = TCI4Keldysh.PartialCorrelator_reg("MF", Adisc, ωdisc, ωs_ext, ωconv)
+    
+         ]
+    
+    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
+    K1ts    = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "Q34"]; flavor_idx=i, ωs_ext=(ωbos,), ωconvMat=ωconvMat_K1t, name="SIAM 2pG") for i in 1:2];
+    Gp = Gs[1].Gps[1]#TCI4Keldysh.PartialCorrelator_reg("MF", Adisc, ωdisc, ωs_ext, ωconv)
 end
+
+
+
+
+Gs_data = [TCI4Keldysh.precompute_all_values(Gs[i]) for i in 1:2]
+K1ts_data = [TCI4Keldysh.precompute_all_values(K1ts[i]) for i in 1:2]
+
+
+K1ts_data_phys = K1ts_data[1] + K1ts_data[2], K1ts_data[1] - K1ts_data[2]
+Gs_data_phys = Gs_data[1] + Gs_data[2], Gs_data[1] - Gs_data[2]
+
+maximum(abs.(imag.(Gs_data_phys[1])))
+maximum(abs.(real.(Gs_data_phys[1])))
+using Plots
+plot(real.([K1ts_data_phys[1]- T*sum(Gs_data_phys[1], dims=2)*U]))
+plot(real.([K1ts_data_phys[2], T*sum(Gs_data_phys[2], dims=2)*(-U)]))
+
+heatmap(log.(abs.(imag.(Gs_data_phys[1]))))
+
+sum(Gs_data_phys[1], dims=2)
+
+
+########################
+###### Reduce number of partial correlators
+########################
+G_in = deepcopy(Gs[1])
+TCI4Keldysh.reduce_Gps!(G_in)
+
+
+G_in_data = TCI4Keldysh.precompute_all_values(G_in)
+G_predata = TCI4Keldysh.precompute_all_values(Gs[1])
+
+maximum(abs.(G_in_data - G_predata))
+maximum(abs.(imag.(G_in_data - G_predata)))
+argmax(abs.(real.(G_in_data - G_predata)))
+using Plots
+plot(real.([G_in_data_ano[1025,:], G_predata_ano[1025,:]]))
+plot(real.(G_in_data - G_predata)[1025,:])
+plot(real.(G_in_data - G_predata)[:,2048])
+
 
 ###################
 ### DLR: ##########
 ###################
 rtols = 10. .^[-2, -3, -4, -5, -6, -7, -8, -9, -10]
+rtols = 10. .^[-4]
 N = length(rtols)
 Nbasis_DLR1 = zeros(Int, N)
 Nbasis_DLR2 = zeros(Int, N)
@@ -73,6 +283,28 @@ for ir in 1:N
     absdev_DLR[ir] = maximum(abs.(Gpdata_orig - Gpdata_DLR))
     
 end
+
+atol=1e-2;
+rtol=rtols[1];
+Kernels_new, Adisc_new, p_iωs, p_ωdiscs = TCI4Keldysh.discreteLehmann4TD(Gp; atol, rtol);
+sizes_kernels = size.(Kernels_new)
+Kernel2D = reshape(Kernels_new[1], (sizes_kernels[1][1], 1, sizes_kernels[1][2], 1)) .* reshape(Kernels_new[2], (1, sizes_kernels[2][1], 1, sizes_kernels[2][2]))
+size_Kernel2D = size(Kernel2D)
+Kernel2D = reshape(Kernel2D, (prod(size_Kernel2D[1:2]), prod(size_Kernel2D[3:4])))
+
+# apply ID to 2D-Kernel again:
+K_in = deepcopy(Kernel2D)
+p_ωdisc = TCI4Keldysh.interp_decomp(K_in; atol, rtol)
+K_interm = K_in[:,p_ωdisc]
+println("length(p_ωdisc): ", length(p_ωdisc))
+p_iω = TCI4Keldysh.interp_decomp(transpose(K_interm); atol, rtol, ncols_min=length(p_ωdisc))
+K_new = K_interm[p_iω,:]
+Gp_data_DLR = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(Kernels_new, Adisc_new)[:]
+adisc_DLR = TCI4Keldysh.linear_least_squares(K_new, Gp_data_DLR[p_iω])
+Gp_data_reconstr = Kernel2D[:,p_ωdisc] * adisc_DLR
+
+maximum(abs.(Gp_data_reconstr - Gp_data_DLR))
+
 
 using Plots
 plot(rtols, [Nbasis_DLR1, Nbasis_DLR2], labels=["Nbasis kernel bos" "Nbasis kernel fer"], xscale=:log10, xlabel="rtol", ylabel="Nbasis")
