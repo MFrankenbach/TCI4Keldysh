@@ -166,7 +166,7 @@ function TDtoQTCI(tc_in::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", tole
     ) where{D}
 
     function truncateTD!(tc)
-        dims_ext = size.(tc.Kernels, 1)
+        dims_ext = size.(tc.legs, 1)
         
         if !allequal(dims_ext)
 
@@ -177,11 +177,11 @@ function TDtoQTCI(tc_in::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", tole
             N = 2^R
             println("N = ", N)
             
-            for d in eachindex(tc.Kernels)
+            for d in eachindex(tc.legs)
                 idx_zero = div.(dims_ext[d], 2) + 1
                 idx_min = idx_zero - 2^(R-1)
                 idx_max = idx_min + N -1
-                tc.Kernels[d] = tc.Kernels[d][idx_min:idx_max,:]
+                tc.legs[d] = tc.legs[d][idx_min:idx_max,:]
                 @VERBOSE "Truncating dim $d of length=$(dims_ext[d]) to range=$idx_min:$idx_max\n"
             end
         end    
@@ -191,7 +191,7 @@ function TDtoQTCI(tc_in::TCI4Keldysh.AbstractTuckerDecomp{D}; method="svd", tole
     tc = deepcopy(tc_in)
     truncateTD!(tc)
 
-    dims_ext = size.(tc.Kernels, 1)
+    dims_ext = size.(tc.legs, 1)
     Rs = trunc.(Int, log2.(dims_ext))
     R = Rs[1]
     @assert all(R .== Rs)
@@ -599,8 +599,8 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
 
     
 
-    R = trunc(Int, log2(size(broadenedPsf.Kernels[1],1)))
-    residue = size(broadenedPsf.Kernels[1],1) - 2^R
+    R = trunc(Int, log2(size(broadenedPsf.legs[1],1)))
+    residue = size(broadenedPsf.legs[1],1) - 2^R
     @assert residue == 1 || residue == 0
     R_Adisc = maximum(ceil.(Int, log2.(size(broadenedPsf.Adisc)))    )
 
@@ -625,12 +625,12 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
     # convert qtt for Tucker center
     mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
 
-    #Kernels = [zeros(eltype(broadenedPsf.Kernels[1]), 2^R, 2^R) for i in 1:D]
+    #legs = [zeros(eltype(broadenedPsf.legs[1]), 2^R, 2^R) for i in 1:D]
     #for i in 1:D
-    #    Kernels[i][:,1:2^6] .= broadenedPsf.Kernels[i][1:end-residue,end-2^6+1:end]
+    #    legs[i][:,1:2^6] .= broadenedPsf.legs[i][1:end-residue,end-2^6+1:end]
     #end
-    Kernels = [zeropad_array(broadenedPsf.Kernels[i][1:end-residue,:]) for i in 1:D]
-    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(Kernels[i]; tolerance=-1.) for i in 1:D]
+    legs = [zeropad_array(broadenedPsf.legs[i][1:end-residue,:]) for i in 1:D]
+    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=-1.) for i in 1:D]
     mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
 
     ### contract Kernel with Tucker center
@@ -688,8 +688,8 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     kwargs = Dict(:alg=>alg, :tolerance=>tolerance)
 
 
-    R = trunc(Int, log2(size(broadenedPsf.Kernels[1],1)))
-    residue = size(broadenedPsf.Kernels[1],1) - 2^R
+    R = trunc(Int, log2(size(broadenedPsf.legs[1],1)))
+    residue = size(broadenedPsf.legs[1],1) - 2^R
     @assert residue == 1 || residue == 0
     R_Adisc = maximum(ceil.(Int, log2.(size(broadenedPsf.Adisc)))    )
 
@@ -714,12 +714,12 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     # convert qtt for Tucker center
     mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
 
-    #Kernels = [zeros(eltype(broadenedPsf.Kernels[1]), 2^R, 2^R) for i in 1:D]
+    #legs = [zeros(eltype(broadenedPsf.legs[1]), 2^R, 2^R) for i in 1:D]
     #for i in 1:3
-    #    Kernels[i][:,1:2^R_Adisc] .= broadenedPsf.Kernels[i][1:end-1,end-2^6+1:end]
+    #    legs[i][:,1:2^R_Adisc] .= broadenedPsf.legs[i][1:end-1,end-2^6+1:end]
     #end
-    Kernels = [zeropad_array(broadenedPsf.Kernels[i][1:end-residue,:]) for i in 1:D]
-    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(Kernels[i]; tolerance=-1.) for i in 1:D]
+    legs = [zeropad_array(broadenedPsf.legs[i][1:end-residue,:]) for i in 1:D]
+    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=-1.) for i in 1:D]
     mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
 
     ### contract Kernel with Tucker center

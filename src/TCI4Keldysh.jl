@@ -45,7 +45,9 @@ macro VERBOSE(msgs)
     esc(:(if $(@__MODULE__).VERBOSE() print($msgs...) end))
 end
 
-include("types.jl")
+function promote_rule(::Type{T}, ::Type{T}) where{T} return T end
+
+include("TuckerDecomposition.jl")
 include("utils/utils.jl")
 include("utils/TCI_utils.jl")
 include("broadening/broaden_1D.jl")

@@ -64,7 +64,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
         end
         return new{D}(formalism, Adisc, Adisc_anoβ, ωdiscs, Kernels, ωs_ext, ωs_int, ωconvMat, ωconvOff)
     end
-    function PartialCorrelator_reg(formalism::String, Acont::BroadenedPSF{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
+    function PartialCorrelator_reg(formalism::String, Acont::AbstractTuckerDecomp{D}, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconv::Matrix{Int}) where {D}
         if !(formalism == "MF" || formalism == "KF")
             throw(ArgumentError("formalism must be MF or KF."))
         end

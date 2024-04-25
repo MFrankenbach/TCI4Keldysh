@@ -266,7 +266,7 @@ struct FullCorrelator_KF{D}
     end
 
 
-    function FullCorrelator_KF(Aconts::Vector{BroadenedPSF{D}}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
+    function FullCorrelator_KF(Aconts::Vector{<:AbstractTuckerDecomp{D}}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if size(ωconvMat) != (D+1, D)

@@ -416,16 +416,16 @@ function symmetry_expand(path::String, Ops::Vector{String})
 end
 
 
-function shift_singular_values_to_center!(broadenedPsf::AbstractTuckerDecomp{D}) where{D}
-    tmpKernels = Vector{typeof(broadenedPsf.Kernels[1])}(undef, 0)
+function shift_singular_values_to_center!(td::AbstractTuckerDecomp{D}) where{D}
+    tmp_legs = Vector{typeof(td.legs[1])}(undef, 0)
     for d in 1:D
         # shift all singular values to central tensor
-        U, S, V = svd(broadenedPsf.Kernels[d])
-        push!(tmpKernels, Diagonal(S)*V')
-        broadenedPsf.Kernels[d][:] = U[:]
+        U, S, V = svd(td.legs[d])
+        push!(tmp_legs, Diagonal(S)*V')
+        td.legs[d][:] = U[:]
     end
-    Adisc_new = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(tmpKernels, broadenedPsf.Adisc)
-    broadenedPsf.Adisc[:] = Adisc_new[:]
+    center_new = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(tmp_legs, td.center)
+    td.center[:] = center_new[:]
     
     return nothing
 end
@@ -436,20 +436,20 @@ function shift_singular_values_to_center_DIRTY!(broadenedPsf::AbstractTuckerDeco
 
     # modify Adisc and Kernels by multiplying / dividing by |ωdisc|
     for d in 1:D
-        ωdisc = broadenedPsf.ωdiscs[d]
+        ωdisc = broadenedPsf.ωs_center[d]
         modifier_Kernel = [.-ωdisc[ωdisc.<-tiny]; ones(sum(abs.(ωdisc).< tiny)); ωdisc[ωdisc.> tiny]]
-        broadenedPsf.Kernels[d] .= broadenedPsf.Kernels[d] .* modifier_Kernel'
+        broadenedPsf.legs[d] .= broadenedPsf.legs[d] .* modifier_Kernel'
         
         modifier_Adisc = 1 ./ modifier_Kernel
-        broadenedPsf.Adisc .= broadenedPsf.Adisc .* reshape(modifier_Adisc, (ones(Int, d-1)..., length(modifier_Adisc)))
+        broadenedPsf.center .= broadenedPsf.center .* reshape(modifier_Adisc, (ones(Int, d-1)..., length(modifier_Adisc)))
     end
 
     return nothing
 end
 
-function svd_trunc_Adisc!(broadenedPsf::AbstractTuckerDecomp{D}; atol::Float64) where{D}
-    Adisc_tmp = broadenedPsf.Adisc
-    Kernels_new = [broadenedPsf.Kernels...]
+function svd_trunc_Adisc!(td::AbstractTuckerDecomp{D}; atol::Float64) where{D}
+    Adisc_tmp = td.center
+    Kernels_new = [td.legs...]
 
     for it1 in 1:D
 
@@ -457,7 +457,7 @@ function svd_trunc_Adisc!(broadenedPsf::AbstractTuckerDecomp{D}; atol::Float64) 
         U, S, V = svd(reshape(Adisc_tmp, (sizetmp[1], prod(sizetmp[2:end]))))
         oktmp = S.>atol
         sizetmp[1] = sum(oktmp)
-        Kernels_new[it1] = (broadenedPsf.Kernels[it1] * U)[:,oktmp]
+        Kernels_new[it1] = (td.legs[it1] * U)[:,oktmp]
         Adisc_tmp = reshape((Diagonal(S[oktmp]) * V[:,oktmp]'), (sizetmp...))
 
         if D>1
@@ -466,9 +466,9 @@ function svd_trunc_Adisc!(broadenedPsf::AbstractTuckerDecomp{D}; atol::Float64) 
 
     end
 
-    broadenedPsf.Adisc = Adisc_tmp
-    broadenedPsf.Kernels = Kernels_new
-    broadenedPsf.ωdiscs = broadenedPsf.ωdiscs .* 0 # after shifting the singular values there is no concept of ωdiscs anymore
+    td.center = Adisc_tmp
+    td.legs = Kernels_new
+    td.ωs_center = typeof(td.ωs_center)(undef, D) # after shifting the singular values there is no concept of ωdiscs anymore
     return nothing# broadenedPsf_new
 end
 
@@ -536,7 +536,7 @@ end
 
 
 function discreteLehmann4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rtol::Float64=1e-5) where{D}
-    Kernels = Gp.Kernels
+    Kernels = Gp.legs
     #ωdiscs = Gp.ωdiscs
     #iωs = Gp.ωs_int
     p_ωdiscs = [ones(Int, 1) for _ in 1:D]
@@ -580,7 +580,7 @@ function discreteLehmann4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rto
     size.(Kernels)
     
     @DEBUG begin
-        Kernels_new_large = [Gp.Kernels[i][:,p_ωdiscs[i]] for i in 1:D]
+        Kernels_new_large = [Gp.legs[i][:,p_ωdiscs[i]] for i in 1:D]
         Gp_data_new = contract_1D_Kernels_w_Adisc_mp(Kernels_new_large, Adisc_new)
         devabs = maximum(abs.(Gp_data - Gp_data_new))
         println("abs. deviation of compressed MF correlator on original domain: \t", devabs)

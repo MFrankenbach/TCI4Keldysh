@@ -56,7 +56,7 @@ end
 
 
 qtt_orig, ranks_orig, errors_orig = quanticscrossinterpolate(
-        broadenedPsf.Adisc[end-2^6+1:end,end-2^6+1:end],
+        broadenedPsf.center[end-2^6+1:end,end-2^6+1:end],
         tolerance=1e-8
     )  
 
