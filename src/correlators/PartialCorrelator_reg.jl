@@ -146,7 +146,7 @@ end
 
 function Base.:getindex(
     Gp :: PartialCorrelator_reg{D},
-    w   :: Vararg{Union{Int, Colon}, D} # , UnitRange
+    w   :: Vararg{Union{Int, Colon, Vector{Int}, UnitRange}, D} # , UnitRange
     )   :: Union{ComplexF64, AbstractArray{ComplexF64}} where {D}
     return evaluate_without_ωconversion(Gp, w...)
 end
@@ -273,7 +273,7 @@ end
 
 function evaluate_without_ωconversion(
     Gp :: PartialCorrelator_reg{D},
-    w   :: Vararg{Union{Int, Colon}, D} # , UnitRange
+    w   :: Vararg{Union{Int, Colon, Vector{Int}, UnitRange}, D} # , UnitRange
     )   :: Union{ComplexF64, AbstractArray{ComplexF64}} where {D}
 
     function check_bounds_int(d)
@@ -300,7 +300,7 @@ function evaluate_without_ωconversion(
                 
             kernels_new[d] = kernels_new[d][w[d]:w[d],:]    # maybe replace this by a view => no copying needed
             
-        elseif typeof(w[d]) == UnitRange
+        else #if typeof(w[d]) == UnitRange
             @boundscheck check_bounds_ur(d)
 
             kernels_new[d] = kernels_new[d][w[d],:]

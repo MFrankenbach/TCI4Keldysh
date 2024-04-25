@@ -588,6 +588,6 @@ function discreteLehmann4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rto
     end "DLR compression did not work within the required tolerance."
 
 
-    return Kernels_new, Adisc_new, p_iωs, p_ωdiscs
+    return (kernels_new=Kernels_new, adisc_new=Adisc_new, p_iωs=p_iωs, p_ωdiscs=p_ωdiscs)
 
 end

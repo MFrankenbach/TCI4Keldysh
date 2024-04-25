@@ -260,6 +260,39 @@ plot(real.(G_in_data - G_predata)[1025,:])
 plot(real.(G_in_data - G_predata)[:,2048])
 
 
+###########################
+#### compress with DLR ####
+###########################
+atol = 1e-1
+rtol = 1e-6
+dlrs = [TCI4Keldysh.discreteLehmann4TD(G_in.Gps[ip]; atol, rtol) for ip in 1:3];
+
+## compress Adiscs:
+for ip in 1:3
+    G_in.Gps[ip].Adisc = G_in.Gps[ip].Adisc[dlrs[ip].p_ωdiscs...]
+    G_in.Gps[ip].ωdiscs  = [G_in.Gps[ip].ωdiscs[d][dlrs[ip].p_ωdiscs[d]] for d in 1:2]
+    G_in.Gps[ip].Kernels = [G_in.Gps[ip].Kernels[d][:,dlrs[ip].p_ωdiscs[d]] for d in 1:2]
+end
+
+G_in.Gps[1].Adisc
+
+
+
+Kernel_t = 1. ./ (reshape(G_in.ωs_ext[1], (1,1,length(G_in.ωs_ext[1]))) .- G_in.Gps[3].ωdiscs[1] .+ G_in.Gps[3].ωdiscs[2]')
+is_nan = .!isfinite.(Kernel_t)
+Kernel_t[is_nan] .= 0
+G_1 = transpose(dropdims(sum(Adisc .* Kernel_t, dims=2), dims=2))
+G_2 = transpose(dropdims(sum(Adisc .* Kernel_t, dims=1), dims=1))
+p_iωs1[1]-p_iωs2[1]
+Adisc_shift1 = Kernels_new1[1] \ G_1[p_iωs1[1],:]
+Adisc_shift2 = Kernels_new1[1] \ G_2[p_iωs1[1],:]
+
+maximum(abs.(G_1[p_iωs1[1],:] - Kernels_new1[1] * Adisc_shift1))
+maximum(abs.(G_1 - G_in.Gps[1].Kernels[1][:,dlrs[1].p_ωdiscs[1]] * Adisc_shift1))
+maximum(abs.(G_2 - G_in.Gps[1].Kernels[1][:,dlrs[1].p_ωdiscs[1]] * Adisc_shift2))
+p_iωs1[1]
+G_in.ωs_ext[1][p_iωs1[1]]
+
 ###################
 ### DLR: ##########
 ###################
