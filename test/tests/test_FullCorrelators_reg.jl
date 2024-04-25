@@ -6,8 +6,8 @@
     T = 3.
 
     N_MF = 100
-    ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * im * π * T
-    ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
+    ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * π * T
+    ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
     Nωdisc = 100
     ωdisc_shift = 1#50
 
@@ -48,7 +48,7 @@
     data_axes = ntuple(i -> reshape(collect(axes(ωs_ext[i])[1]), (ones(Int,i-1)..., length(ωs_ext[i]))), D)
 
     #@time G_data = G.(data_axes...);    # this data is generated via on-the-fly computation of correlator values (WITHOUT anomalous terms!)
-    func_tmp = (w, v) -> - ((u^2 + v *(v+w)) + (abs(w) > 1.e-10 ? 0. : -u/T*expβu*Zinv* (2*u^2 - v^2 - (v+w)^2)) ) / ((u^2 - v^2) * (u^2 - (v+w)^2))
+    func_tmp = (w, v) -> begin w=im*w; v=im*v; - ((u^2 + v *(v+w)) + (abs(w) > 1.e-10 ? 0. : -u/T*expβu*Zinv* (2*u^2 - v^2 - (v+w)^2)) ) / ((u^2 - v^2) * (u^2 - (v+w)^2)) end
     G_expec= func_tmp.(ω_bos, reshape(ω_fer,(1,length(ω_fer))));
     G_prec = TCI4Keldysh.precompute_all_values(G);
 
@@ -57,8 +57,8 @@
     ### 4-point correlator corresponding to <d_↑^† d_↓ (d_↓^† d_↑)>: 
     D = 3
     N_MF = 10
-    ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * im * π * T
-    ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
+    ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * π * T
+    ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
     Nωdisc = 10
     
     ωdisc = get_Adisc_δpeak_mp([0,0,0], Nωdisc, D; ωdisc_min=u)[1]
@@ -99,6 +99,7 @@
 
     ## missing:
     function HA_4p_conn_correlator(w, v, vp; u, T) 
+        w = im*w; v = im*v; vp = im*vp
         ωs_fermionic = [-w-v, v, -vp, w+vp]
         _f(ϵ) = 1 / (1 + exp(ϵ/T))
         _D(x,y) = (-x^2 + u^2) * (-y^2 + u^2) #/ (x*y)^2
@@ -145,8 +146,8 @@ end
         
         # get functor which can evaluate broadened data pointwisely
         #broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
-        ωbos = im * π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
-        ωfer = im * π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
+        ωbos = π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
+        ωfer = π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
         ωs_ext = (ωbos, ωfer)
         
         PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"

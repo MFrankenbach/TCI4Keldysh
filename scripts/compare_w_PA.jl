@@ -193,7 +193,7 @@ PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
 #PSFpath = "data/PSF_nz=2_conn_zavg_u=1.00/"
 
 N_MF = div(length(Σ_PA), 2) * 4
-ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
+ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
 
 function compute_Π_p_DK(G, N_ωpos)
     # Π_t(ω,ν) = G(ν) G(-ω+ν)
@@ -267,7 +267,7 @@ K1a_PA = read(file_PA, "K1_a")[:] / Δ_PA
 K1p_PA = read(file_PA, "K1_p")[:] / Δ_PA
 K1t_PA = read(file_PA, "K1_t")[:] / Δ_PA
 N_MF = div(length(K1a_PA)-1, 2)
-ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * im * π * T
+ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * π * T
 
 K1a      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q14", "Q23"]; flavor_idx=i, ωs_ext=(ω_bos,), ωconvMat=ωconvMat_K1a, name="SIAM K1a") for i in 1:2];
 K1p      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q13", "Q24"]; flavor_idx=i, ωs_ext=(ω_bos,), ωconvMat=ωconvMat_K1p, name="SIAM K1p") for i in 1:2];
@@ -350,8 +350,8 @@ K2a_PA = permutedims(read(file_PA, "K2_a")[1,1,:,:,1,1], (2,1))
 K2p_PA = permutedims(read(file_PA, "K2_p")[1,1,:,:,1,1], (2,1))
 K2t_PA = permutedims(read(file_PA, "K2_t")[1,1,:,:,1,1], (2,1))
 N_K2_bos, N_K2_fer = div.(size(K2a_PA), 2) .* 4
-ω_bos = (collect(-N_K2_bos:N_K2_bos) * (2.)      ) * im * π * T
-ω_fer = (collect(-N_K2_fer:N_K2_fer-1) * (2.) .+ 1.) * im * π * T
+ω_bos = (collect(-N_K2_bos:N_K2_bos) * (2.)      ) * π * T
+ω_fer = (collect(-N_K2_fer:N_K2_fer-1) * (2.) .+ 1.) * π * T
 ωs_ext=(ω_bos, ω_fer)
 
 
@@ -441,8 +441,8 @@ plot([real.(K2t_data[2][N_K2_bos+1,:] / Δ), K2t_PA[N_K2_bos+1,:] / Δ_PA], labe
 
 # compute vertex core in t-channel parametrization:
 N_K2_bos, N_K2_fer = 100, 100
-ω_bos = (collect(-N_K2_bos:N_K2_bos) * (2.)      ) * im * π * T
-ω_fer = (collect(-N_K2_fer:N_K2_fer-1) * (2.) .+ 1.) * im * π * T
+ω_bos = (collect(-N_K2_bos:N_K2_bos) * (2.)      ) * π * T
+ω_fer = (collect(-N_K2_fer:N_K2_fer-1) * (2.) .+ 1.) * π * T
 ωs_ext=(ω_bos, ω_fer, ω_fer)
 
 Γcore_data = [TCI4Keldysh.compute_Γcore_symmetric_estimator(PSFpath*"4pt/", Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_t, flavor_idx=i) for i in 1:2]

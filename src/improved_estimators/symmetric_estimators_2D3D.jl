@@ -4,7 +4,7 @@ function compute_K2r_symmetric_estimator(
     Σ_calc_aIE  ::Vector{ComplexF64}
     ;
     flavor_idx::Int,
-    ωs_ext  ::NTuple{2,Vector{ComplexF64}},
+    ωs_ext  ::NTuple{2,Vector{Float64}},
     ωconvMat::Matrix{Int}
     )
 
@@ -49,7 +49,7 @@ function compute_Γcore_symmetric_estimator(
     Σ_calc_aIE  ::Vector{ComplexF64}
     ;
     flavor_idx::Int,
-    ωs_ext  ::NTuple{3,Vector{ComplexF64}},
+    ωs_ext  ::NTuple{3,Vector{Float64}},
     ωconvMat::Matrix{Int}
     )
 

@@ -45,7 +45,6 @@ macro VERBOSE(msgs)
     esc(:(if $(@__MODULE__).VERBOSE() print($msgs...) end))
 end
 
-function promote_rule(::Type{T}, ::Type{T}) where{T} return T end
 
 include("TuckerDecomposition.jl")
 include("utils/utils.jl")
@@ -63,13 +62,13 @@ include("improved_estimators/symmetric_estimators_2D3D.jl")
 @compile_workload begin
     T = 1.
     N_MF = 100
-    ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
+    ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
 
     G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
     precompute_all_values(G)
     
-    Σ_calc_aIE = 1 ./ ω_fer
+    Σ_calc_aIE = 1 ./ ω_fer .+ 0*im
     ωconvMat_a = [
         0 -1  0;
         0  0  1;
@@ -81,8 +80,8 @@ include("improved_estimators/symmetric_estimators_2D3D.jl")
         view(ωconvMat_a, [1,4], [1,2])
     ]
     N_K2_bos, N_K2_fer = 50, 50
-    ω_bos = (collect(-N_K2_bos:N_K2_bos) * (2.)      ) * im * π * T
-    ω_fer = (collect(-N_K2_fer:N_K2_fer-1) * (2.) .+ 1.) * im * π * T
+    ω_bos = (collect(-N_K2_bos:N_K2_bos) * (2.)      ) * π * T
+    ω_fer = (collect(-N_K2_fer:N_K2_fer-1) * (2.) .+ 1.) * π * T
     ωs_ext=(ω_bos, ω_fer)
     K2a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q23", "1", "3dag"), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2a, flavor_idx=i) for i in 1:2]
 

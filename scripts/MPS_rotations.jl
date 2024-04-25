@@ -50,9 +50,9 @@ begin
     
     # get functor which can evaluate broadened data pointwisely
     #broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
-    ωbos = im * π * T * collect(-Nωcont_pos+1:Nωcont_pos-1) * 2
-    ωbos = im * π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
-    ωfer = im * π * T *(collect(-Nωcont_pos:Nωcont_pos-1) * 2 .+ 1)
+    ωbos = π * T * collect(-Nωcont_pos+1:Nωcont_pos-1) * 2
+    ωbos = π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
+    ωfer = π * T *(collect(-Nωcont_pos:Nωcont_pos-1) * 2 .+ 1)
     ωs_ext = (ωbos, ωfer)
     ωconv = [
          1  0;

@@ -3,11 +3,11 @@
     N_MF = 100
     u = 0.5
     T = 1.
-    #ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * im * π * T
-    ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
+    #ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * π * T
+    ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
 
     Σ_Hartree = u
-    G0_HA_inv = ω_fer .+ u
+    G0_HA_inv = im.* ω_fer .+ u
     G_HA = HA_exact_corr_F1_F1dag.(ω_fer, u=u)
     Σ_HA = HA_exact_selfenergy.(ω_fer, u=u)
     G_aux = HA_exact_corr_Q1_F1dag.(ω_fer, u=u)

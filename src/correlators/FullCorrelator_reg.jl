@@ -35,11 +35,11 @@ mutable struct FullCorrelator_MF{D}
     Gp_to_G ::Vector{Float64}                   
     ps      ::Vector{Vector{Int}}
 
-    ωs_ext  ::NTuple{D,Vector{ComplexF64}}      
+    ωs_ext  ::NTuple{D,Vector{Float64}}      
     ωconvMat::Matrix{Int}                       
     isBos   ::BitVector                         
 
-    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::String="", is_compactAdisc::Bool=true) where{D}
+    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::String="", is_compactAdisc::Bool=true) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if length(Ops) != D+1
@@ -56,7 +56,7 @@ mutable struct FullCorrelator_MF{D}
     end
 
 
-    function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; isBos::BitVector, ωs_ext::NTuple{D,Vector{ComplexF64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=true) where{D}
+    function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=true) where{D}
         if DEBUG()
             println("Constructing FullCorrelator_MF.")
         end
@@ -155,12 +155,12 @@ function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
     #G_new = deepcopy(G_in)
     ps = G_in.ps
     i_indepps = findindepps(ps)
-    Adiscs_new = [G_in.Gps[ip].Adisc for ip in i_indepps]
+    Adiscs_new = [G_in.Gps[ip].tucker.center for ip in i_indepps]
     Adiscs_ano_new = [G_in.Gps[ip].Adisc_anoβ for ip in i_indepps]
     for (i,ip) in enumerate(i_indepps)
         ipr = idx_of_p(reverse(ps[ip]), ps)
         if ipr != -1
-            Adiscs_new[i] += reverse(permutedims(G_in.Gps[ipr].Adisc, (reverse(collect(1:D))))) .* (-1)^D
+            Adiscs_new[i] += reverse(permutedims(G_in.Gps[ipr].tucker.center, (reverse(collect(1:D))))) .* (-1)^D
             Adiscs_ano_new[i] += reverse(permutedims(G_in.Gps[ipr].Adisc_anoβ, (reverse(collect(1:D))))) .* (-1)^(D-1)
             @DEBUG all([maxabs(G_in.Gps[ip].ωdiscs[d] + reverse(G_in.Gps[ipr].ωdiscs[D-d+1])) < 1e-10 for d in 1:D]) "Kernels for p and reverse(p) are not equivalent."
             @DEBUG all([maxabs(G_in.Gps[ip].Kernels[d] - G_in.Gps[ipr].Kernels[D-d+1]) < 1e-10 for d in 1:D]) "Kernels for p and reverse(p) are not equivalent."
@@ -170,7 +170,7 @@ function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
     G_in.Gp_to_G = G_in.Gp_to_G[i_indepps]
     G_in.Gps = G_in.Gps[i_indepps]
     for i in 1:length(i_indepps)
-        G_in.Gps[i].Adisc = Adiscs_new[i]
+        G_in.Gps[i].tucker.center = Adiscs_new[i]
         G_in.Gps[i].Adisc_anoβ = Adiscs_ano_new[i]
     end
     return nothing
@@ -257,7 +257,7 @@ struct FullCorrelator_KF{D}
         end
         print("Creating Broadened PSFs: ")
         function get_Acont_p(i, p)
-            ωs_int, _, _ = trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+            ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
             return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=ωs_int, broadening_kwargs...)
         end
         @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
@@ -301,7 +301,7 @@ struct FullCorrelator_KF{D}
         perms = permutations(collect(1:D+1))
         Gp_to_G = _get_Gp_to_G(D, isBos)
         for (i,sp) in enumerate(Aconts)
-            sp.Adisc .*= Gp_to_G[i]
+            sp.center .*= Gp_to_G[i]
         end
         Gps = [PartialCorrelator_reg("KF", Aconts[i], ntuple(i->ωs_ext[i] .+0im, D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
         GR_to_GK = get_GR_to_GK(D)

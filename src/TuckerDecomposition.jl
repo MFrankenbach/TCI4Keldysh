@@ -49,7 +49,7 @@ mutable struct TuckerDecomposition{T,D} <: AbstractTuckerDecomp{D}              
     @DEBUG D == length(ωs_legs)     "number of ωs_legs inconsistent with dims(center)=$D."
     @DEBUG D == length(idxs_center) "number of idxs_center inconsistent with dims(center)=$D."
     @DEBUG D == length(idxs_legs)   "number of idxs_legs inconsistent with dims(center)=$D."
-        return new{promote_rule(T1,T2),D}(center, legs, size(center), name, ωs_center, ωs_legs, idxs_center, idxs_legs)
+        return new{promote_type(T1,T2),D}(center, legs, size(center), name, ωs_center, ωs_legs, idxs_center, idxs_legs)
     end
 
 end
@@ -95,11 +95,9 @@ function _getindex(
                 
             legs_new[d] = legs_new[d][w[d]:w[d],:]    # maybe replace this by a view => no copying needed
             
-        else 
-            if typeof(w[d]) != Colon
-                @boundscheck check_bounds_ur(d)
-            end
-
+        elseif typeof(w[d]) != Colon
+            @boundscheck check_bounds_ur(d)
+            
             legs_new[d] = legs_new[d][w[d],:]
             
         end

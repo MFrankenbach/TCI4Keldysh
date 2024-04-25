@@ -17,18 +17,18 @@ function get_ωcont(ωmax, Nωcont_pos)
 end
 
 function HA_exact_corr_F1_F1dag(ω; u::Float64)
-    return  1 / (ω - u^2/ω)
+    return  1 / (im*ω - u^2/(im*ω))
 end
 
 
 function HA_exact_corr_Q1_F1dag(ω; u::Float64)
-    return  u / (ω - u)
+    return  u / (im*ω - u)
 end
 function HA_exact_corr_Q1_Q1dag(ω; u::Float64)
-    return 2 * u^2 / (ω - u)
+    return 2 * u^2 / (im*ω - u)
 end
 
 
 function HA_exact_selfenergy(ω; u::Float64)
-    return  u + u^2 / ω
+    return  u + u^2 / (im*ω)
 end

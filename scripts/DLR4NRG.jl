@@ -34,8 +34,8 @@ Niω_fer = maximum(abs.(dlr_fer.n))
 Niω_bos = maximum(abs.(dlr_bos.n))
 ngrid_fer = collect(-Niω_fer:Niω_fer-1)
 ngrid_bos = collect(-Niω_bos:Niω_bos)
-ω_fer = im * π * T *(ngrid_fer * 2 .+ 1)
-ω_bos = im * π * T *(ngrid_bos * 2)
+ω_fer = π * T *(ngrid_fer * 2 .+ 1)
+ω_bos = π * T *(ngrid_bos * 2)
 
 ## check DLR for 1D function:
 PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
@@ -68,3 +68,8 @@ GC.gc()
 
 
 
+using OffsetArrays
+ma = OffsetArray(m, -4, -4)
+mama = ma*ma
+
+Gp2D_1_view = OffsetArrays.no_offset_view(m)
