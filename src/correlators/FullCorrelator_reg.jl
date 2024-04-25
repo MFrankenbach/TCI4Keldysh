@@ -123,8 +123,13 @@ function precompute_all_values(G :: FullCorrelator_MF{D}) ::Array{ComplexF64,D} 
 end
 
 
+"""
+    reduce_Gps!(G_in :: FullCorrelator_MF{D})
+
+Summarize the Gps that essentially have the same kernels, namely p and reverse(p), e.g. (1,2,3,4) and (4,3,2,1).
+"""
 function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
-    function findfirstp(p::Vector{Int}, ps::Vector{Vector{Int}}) ::Int
+    function idx_of_p(p::Vector{Int}, ps::Vector{Vector{Int}}) ::Int
         for (i,x) in enumerate(ps)
             if x == p
                 return i
@@ -137,8 +142,8 @@ function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
         N = length(ps)
         is_indep = ones(Int, N) .== 1
         for (i,p) in enumerate(ps)
-            ipr = findfirstp(reverse(p), ps)
-            if is_indep[i]
+            ipr = idx_of_p(reverse(p), ps)
+            if is_indep[i] && ipr!=-1
                 is_indep[ipr] = false
             end
         end
@@ -150,18 +155,16 @@ function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
     #G_new = deepcopy(G_in)
     ps = G_in.ps
     i_indepps = findindepps(ps)
-    N_indep = length(i_indepps)
-    #D = 2
-    Adiscs_new = Vector{Matrix{ComplexF64}}(undef, N_indep)
-    Adiscs_ano_new = Vector{Matrix{ComplexF64}}(undef, N_indep)
-    #Kernels_new = Vector{Vector{Matrix{ComplexF64}}}(undef, N_indep)
+    Adiscs_new = [G_in.Gps[ip].Adisc for ip in i_indepps]
+    Adiscs_ano_new = [G_in.Gps[ip].Adisc_anoβ for ip in i_indepps]
     for (i,ip) in enumerate(i_indepps)
-        ipr = findfirstp(reverse(ps[ip]), ps)
-        #Kernels_new[i] = G_in.Gps[ip].Kernels
-        Adisc_pr = reverse(permutedims(G_in.Gps[ipr].Adisc, (reverse(collect(1:D)))))
-        Adiscs_new[i] = G_in.Gps[ip].Adisc + reverse(permutedims(G_in.Gps[ipr].Adisc, (reverse(collect(1:D))))) .* (-1)^D
-        Adiscs_ano_new[i] = G_in.Gps[ip].Adisc_anoβ + reverse(permutedims(G_in.Gps[ipr].Adisc_anoβ, (reverse(collect(1:D))))) .* (-1)^(D-1)
-        #println("ip: $ip \t ipr: $ipr")
+        ipr = idx_of_p(reverse(ps[ip]), ps)
+        if ipr != -1
+            Adiscs_new[i] += reverse(permutedims(G_in.Gps[ipr].Adisc, (reverse(collect(1:D))))) .* (-1)^D
+            Adiscs_ano_new[i] += reverse(permutedims(G_in.Gps[ipr].Adisc_anoβ, (reverse(collect(1:D))))) .* (-1)^(D-1)
+            @DEBUG all([maxabs(G_in.Gps[ip].ωdiscs[d] + reverse(G_in.Gps[ipr].ωdiscs[D-d+1])) < 1e-10 for d in 1:D]) "Kernels for p and reverse(p) are not equivalent."
+            @DEBUG all([maxabs(G_in.Gps[ip].Kernels[d] - G_in.Gps[ipr].Kernels[D-d+1]) < 1e-10 for d in 1:D]) "Kernels for p and reverse(p) are not equivalent."
+        end
     end
     G_in.ps = ps[i_indepps]
     G_in.Gp_to_G = G_in.Gp_to_G[i_indepps]

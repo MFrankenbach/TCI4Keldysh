@@ -116,3 +116,56 @@
     @test maximum(abs.(G_prec - G_expec)) < 1e-10
 
 end
+
+
+@testset "Test DLR stuff on MF 3p correlators" begin
+    begin
+        # set frequency conventions
+        ωconvMat_K2′t = [
+            1   0;
+            -1  -1;
+             0   1
+        ]
+
+        ### System parameters of SIAM ### 
+        D = 1.
+        ## Keldysh paper:    u=0.5 OR u=1.0
+        # set physical parameters
+        u = 0.5; 
+        #u = 1.0
+    
+        U = 0.05;
+        Δ = U / (π * u)
+        T = 0.01*U
+    
+        Rpos = 6
+        R = Rpos + 1
+        Nωcont_pos = 2^Rpos # 512#
+        ωcont = get_ωcont(D*0.5, Nωcont_pos)
+        ωconts=ntuple(i->ωcont, ndims(Adisc))
+        
+        # get functor which can evaluate broadened data pointwisely
+        #broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+        ωbos = im * π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
+        ωfer = im * π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
+        ωs_ext = (ωbos, ωfer)
+        
+        PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+        Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
+        K1ts    = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "Q34"]; flavor_idx=i, ωs_ext=(ωbos,), ωconvMat=ωconvMat_K1t, name="SIAM 2pG") for i in 1:2];
+        #Gp = Gs[1].Gps[1]#TCI4Keldysh.PartialCorrelator_reg("MF", Adisc, ωdisc, ωs_ext, ωconv)
+    end
+
+    G_in = deepcopy(Gs[1])
+    TCI4Keldysh.reduce_Gps!(G_in)
+    
+    
+    G_in_data = TCI4Keldysh.precompute_all_values(G_in)
+    G_predata = TCI4Keldysh.precompute_all_values(Gs[1])
+    
+    @test maximum(abs.(G_in_data - G_predata)) < 1e-10
+    
+
+
+end
+
