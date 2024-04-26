@@ -15,6 +15,8 @@ using PrecompileTools
     import TensorCrossInterpolation as TCI
     using ITensors
 
+    using Lehmann
+
     using FFTW
     using StaticArrays
     using Combinatorics

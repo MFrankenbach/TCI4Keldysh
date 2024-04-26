@@ -39,6 +39,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     #ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
     ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices ~ i_ωs_int = ωconvMat * i_ωs_ext + ωconvOff
     ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of (one-based!) indices
+    isFermi ::  SVector{D,Bool}                 # encodes whether the i-th dimension of tucker encodes a bosonic or fermionic frequency (only relevant in MF)
 
     ####################
     ### Constructors ###
@@ -63,7 +64,8 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             Adisc_anoβ = deepcopy(Adisc)
         end
         tucker = TuckerDecomposition(Adisc, Kernels; ωs_center=ωdiscs, ωs_legs=[ωs_int...])
-        return new{D}(formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff)
+        isFermi = mod.(length.(tucker.ωs_legs), 2) .== 0
+        return new{D}(formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff, isFermi)
     end
     function PartialCorrelator_reg(formalism::String, Acont::AbstractTuckerDecomp{D}, ωs_ext::NTuple{D,Vector{Float64}}, ωconv::Matrix{Int}) where {D}
         if !(formalism == "MF" || formalism == "KF")
@@ -91,7 +93,8 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             @TIME tucker.legs = [-im * π * hilbert_fft(Acont.legs[i]; dims=1) for i in 1:D] "Hilbert trafo (for KF)."
             Adisc_anoβ = Array{ComplexF64,D}(undef, ones(Int,D))
         end
-        return new{D}(formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff)
+        isFermi = mod.(length.(tucker.ωs_legs), 2) .== 0
+        return new{D}(formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff, isFermi)
     end
 
 end
@@ -262,4 +265,41 @@ function precompute_all_values_KF(
 
 
     return sv[[Colon() for _ in 1:D+1]...]
+end
+
+
+"""
+    discreteLehmannRep4Gp!(Gp_in::TCI4Keldysh.PartialCorrelator_reg{D}; kwargs...)
+
+Compress/represent D-dimensional partial correlator Gp_in with Discrete Lehmann Representation.
+"""
+function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGrid, dlr_fer::DLRGrid) where{D}
+    @assert !dlr_bos.isFermi
+    @assert  dlr_fer.isFermi
+
+    dlrgrids_here = [Gp_in.isFermi[i] ? dlr_fer : dlr_bos for i in 1:D]
+    Nωs_legs_div2 = div.(length.(Gp_in.tucker.ωs_legs).+2, D)
+
+    idxs = [dlrgrids_here[d].n .+ Nωs_legs_div2[d] for d in 1:D]
+    Gp_data = Gp_in.tucker[idxs...]
+    for d in 1:D
+        #d = 1
+        #println("d = $d")
+        coeffs = matfreq2dlr(dlrgrids_here[d], Gp_data; axis=d)
+        compare = d == 1 ? dlrgrids_here[d].kernel_nc * coeffs : coeffs * transpose(dlrgrids_here[d].kernel_nc)
+        @assert maximum(abs.(Gp_data - compare)) < 1e-13
+        @assert maximum(abs.(Gp_in.tucker.ωs_legs[d][idxs[d]] - dlrgrids_here[d].ωn)) < 1e-13
+        Gp_data = coeffs
+        #Gp_in.tucker.legs[d] = TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d], dlrgrids_here[d].ω)
+        Gp_in.tucker.legs[d] = Lehmann.Spectral.kernelΩ(Float64, Val(Gp_in.isFermi[d]), Val(:none), collect(-Nωs_legs_div2[d]+1:Nωs_legs_div2[d]-1-Gp_in.isFermi[d]), dlrgrids_here[d].ω, dlrgrids_here[d].β, true)#-    dlrgrids_here[d].kernel_nc
+        #maximum(abs.(TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d][idxs[d]], dlrgrids_here[d].ω) +    dlrgrids_here[d].kernel_nc .* sign.(dlrgrids_here[d].ω)'))
+        #Lehmann.Spectral.kernelΩ(Float64, Val(Gp.isFerm[d]), Val(:none), dlrgrids_here[d].n, dlrgrids_here[d].ω, dlrgrids_here[d].β, false)-    dlrgrids_here[d].kernel_nc.* sign.(dlrgrids_here[d].ω)'
+        #Gp_in.tucker.ωs_legs[d][idxs[d]] - dlrgrids_here[d].n*2*π*T#- dlrgrids_here[d].ωn
+        #1 ./ TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d][idxs[d]], dlrgrids_here[d].ω)[:,28] ./ (1 ./ dlrgrids_here[d].kernel_nc[:,28])
+        #1 ./ Lehmann.Spectral.kernelΩ(Float64, Val(Gp.isFerm[d]), Val(:none), dlrgrids_here[d].n, dlrgrids_here[d].ω, dlrgrids_here[d].β, false)
+        #dlrgrids_here[d].ωn[29]
+    end
+    Gp_in.tucker.center = Gp_data
+
+    return nothing
 end

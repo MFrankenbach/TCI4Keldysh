@@ -515,7 +515,7 @@ function interp_decomp(A_in::AbstractMatrix; atol::Float64=1e-8, rtol::Float64=1
     end
     imax = max(imax, ncols_min)
     #println("imax: ", imax)
-    return p[1:imax]
+    return sort(p[1:imax])
     
 end
 
@@ -535,7 +535,12 @@ function linear_least_squares(A, b; metric=nothing)
 end
 
 
-function discreteLehmann4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rtol::Float64=1e-5) where{D}
+"""
+    interpolDecomp4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rtol::Float64=1e-5)
+
+Perform interpolative decomposition of tucker legs
+"""
+function interpolDecomp4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rtol::Float64=1e-5) where{D}
     Kernels = Gp.legs
     #ωdiscs = Gp.ωdiscs
     #iωs = Gp.ωs_int
@@ -587,7 +592,7 @@ function discreteLehmann4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rto
         devabs < atol && devabs/maximum(abs.(Gp_data)) < rtol
     end "DLR compression did not work within the required tolerance."
 
-
-    return (kernels_new=Kernels_new, adisc_new=Adisc_new, p_iωs=p_iωs, p_ωdiscs=p_ωdiscs)
+    td_new = TuckerDecomposition(Adisc_new, Kernels_new; ωs_center=Gp.ωs_center, ωs_legs=Gp.ωs_legs, idxs_center=p_ωdiscs, idxs_legs=p_iωs)
+    return td_new#(kernels_new=Kernels_new, adisc_new=Adisc_new, p_iωs=p_iωs, p_ωdiscs=p_ωdiscs)
 
 end

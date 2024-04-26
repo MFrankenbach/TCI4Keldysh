@@ -197,7 +197,7 @@ begin
      Δ = U / (π * u)
      T = 0.01*U
 
-    Rpos = 10
+    Rpos = 13
     R = Rpos + 1
     Nωcont_pos = 2^Rpos # 512#
     ωcont = get_ωcont(D*0.5, Nωcont_pos)
@@ -205,8 +205,8 @@ begin
     
     # get functor which can evaluate broadened data pointwisely
     #broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
-    ωbos = im * π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
-    ωfer = im * π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
+    ωbos = π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
+    ωfer = π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
     ωs_ext = (ωbos, ωfer)
     ωconv = [
          1  0;
@@ -261,18 +261,34 @@ plot(real.(G_in_data - G_predata)[:,2048])
 
 
 ###########################
-#### compress with DLR ####
+#### compress with ID ####
 ###########################
 atol = 1e-1
 rtol = 1e-6
-dlrs = [TCI4Keldysh.discreteLehmann4TD(G_in.Gps[ip]; atol, rtol) for ip in 1:3];
+interpDecomps = [TCI4Keldysh.interpolDecomp4TD(G_in.Gps[ip]; atol, rtol) for ip in 1:3];
 
-## compress Adiscs:
-for ip in 1:3
-    G_in.Gps[ip].Adisc = G_in.Gps[ip].Adisc[dlrs[ip].p_ωdiscs...]
-    G_in.Gps[ip].ωdiscs  = [G_in.Gps[ip].ωdiscs[d][dlrs[ip].p_ωdiscs[d]] for d in 1:2]
-    G_in.Gps[ip].Kernels = [G_in.Gps[ip].Kernels[d][:,dlrs[ip].p_ωdiscs[d]] for d in 1:2]
-end
+
+###########################
+#### compress with DLR ####
+###########################
+Gp_in = deepcopy(Gp)
+
+using Lehmann
+# create DLR grids for bosonic and fermionic MF frequencies
+β = 1/T
+rtol=1e-8
+symmetry = :none
+Euv = D
+dlr_fer = DLRGrid(Euv, β, rtol, true) #initialize the DLR parameters and basis
+dlr_bos = DLRGrid(Euv, β, rtol, false) #initialize the DLR parameters and basis
+
+TCI4Keldysh.discreteLehmannRep4Gp!(Gp_in; dlr_bos, dlr_fer)
+
+dev(g1, g2, idxs...) = maximum(abs.(g1.tucker[idxs...]-g2.tucker[idxs...]))
+dev(Gp, Gp_in, 4000, :)
+dev(Gp, Gp_in, :, 8000)
+
+
 
 G_in.Gps[1].Adisc
 
@@ -307,7 +323,7 @@ absdev_DLR = zeros(N)
 for ir in 1:N
     atol = 1e2
     rtol = rtols[ir]
-    Kernels_new, Adisc_new, p_iωs, p_ωdiscs = TCI4Keldysh.discreteLehmann4TD(Gp; atol, rtol);
+    Kernels_new, Adisc_new, p_iωs, p_ωdiscs = TCI4Keldysh.interpolDecomp4TD(Gp; atol, rtol);
     Nbasis_DLR1[ir] = length(p_iωs[1])
     Nbasis_DLR2[ir] = length(p_iωs[2])
     
@@ -319,7 +335,7 @@ end
 
 atol=1e-2;
 rtol=rtols[1];
-Kernels_new, Adisc_new, p_iωs, p_ωdiscs = TCI4Keldysh.discreteLehmann4TD(Gp; atol, rtol);
+Kernels_new, Adisc_new, p_iωs, p_ωdiscs = TCI4Keldysh.interpolDecomp4TD(Gp; atol, rtol);
 sizes_kernels = size.(Kernels_new)
 Kernel2D = reshape(Kernels_new[1], (sizes_kernels[1][1], 1, sizes_kernels[1][2], 1)) .* reshape(Kernels_new[2], (1, sizes_kernels[2][1], 1, sizes_kernels[2][2]))
 size_Kernel2D = size(Kernel2D)
