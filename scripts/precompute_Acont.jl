@@ -491,8 +491,8 @@ GRtmp_data = gRtmp.(collect(axes(ωcont)[1]))
 ## evaluate MF correlator:
 N_MF = 1000
 T = 3.
-ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * im * π * T
-ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
+ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * π * T
+ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
 
 
 GM = TCI4Keldysh.FullCorrelator_MF("data/PSF_nz=2_conn_zavg/3pt/", ["F1", "F1dag", "Q34"]; flavor_idx=1, ωs_ext=(ω_bos,ω_fer), 
@@ -544,8 +544,8 @@ GM = TCI4Keldysh.FullCorrelator_MF("data/PSF_nz=2_conn_zavg/3pt/", ["F1", "F1dag
 
 N_MF = 10
 T = 3.
-ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * im * π * T
-ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * im * π * T
+ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * π * T
+ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
 ωs_ext=(ω_bos,ω_fer,ω_fer)
 
 GM = TCI4Keldysh.FullCorrelator_MF("data/PSF_nz=2_conn_zavg/4pt/", ["F1", "F1dag", "F3", "F3dag"]; flavor_idx=1, ωs_ext, 

@@ -4,6 +4,9 @@
 using Revise
 using TCI4Keldysh
 using HDF5
+using QuanticsTCI
+import TensorCrossInterpolation as TCI
+using Plots
 
 TCI4Keldysh.VERBOSE() = true
 TCI4Keldysh.DEBUG() = false
@@ -197,7 +200,7 @@ begin
      Δ = U / (π * u)
      T = 0.01*U
 
-    Rpos = 13
+    Rpos = 10
     R = Rpos + 1
     Nωcont_pos = 2^Rpos # 512#
     ωcont = get_ωcont(D*0.5, Nωcont_pos)
@@ -206,7 +209,7 @@ begin
     # get functor which can evaluate broadened data pointwisely
     #broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
     ωbos = π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
-    ωfer = π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
+    ωfer = π * T *(collect(-Nωcont_pos:Nωcont_pos-1) * 2 .+ 1)
     ωs_ext = (ωbos, ωfer)
     ωconv = [
          1  0;
@@ -281,6 +284,8 @@ symmetry = :none
 Euv = D
 dlr_fer = DLRGrid(Euv, β, rtol, true) #initialize the DLR parameters and basis
 dlr_bos = DLRGrid(Euv, β, rtol, false) #initialize the DLR parameters and basis
+maximum(abs.(dlr_fer.ω-dlr_bos.ω))
+
 
 TCI4Keldysh.discreteLehmannRep4Gp!(Gp_in; dlr_bos, dlr_fer)
 
@@ -387,3 +392,98 @@ plot!(absdev_SVD, [Nbasis_SVD1, Nbasis_SVD2], labels=["Nbasis kernel bos (SVD)" 
 savefig("scripts/plots/compare_compression_SVD_DLR.pdf")
 
 Nbasis_SVD1
+
+
+
+##########################################################
+##### TCI ################################################
+##########################################################
+
+tolerances = [1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8]
+colors = reshape(1:N_tols, (1, N_tols))
+N_tols = length(tolerances)
+linkdims = Vector{Vector{Int}}(undef, N_tols)
+errors_Gs = zeros(N_tols)
+
+for (it, tol) in enumerate(tolerances)
+    #tolerance = 1e-5
+    qtt, ranks, errors = quanticscrossinterpolate(
+            Gs_data[1][1:end-1,:],
+            tolerance=tol;
+            maxiter=400
+        ) 
+
+    linkdims[it] = TCI.linkdims(qtt.tci)
+    errors_Gs[it] = maximum(abs.(qtt[:,:]-Gs_data[1][1:end-1,:]))
+
+end
+
+
+linkdims_Gp = Vector{Vector{Int}}(undef, N_tols)
+errors_Gp = zeros(N_tols)
+linkdims_Gprot = Vector{Vector{Int}}(undef, N_tols)
+errors_Gprot = zeros(N_tols)
+
+Gp_data = Gs[1].Gps[2].tucker[:,:][1:end-1,1024:3071]
+Gprot_data = TCI4Keldysh.precompute_all_values_MF(Gs[1].Gps[2])[1:end-1,:]
+for (it, tol) in enumerate(tolerances)
+    #tolerance = 1e-5
+    qtt, ranks, errors = quanticscrossinterpolate(
+            Gp_data,
+            tolerance=tol
+        ) 
+
+    linkdims_Gp[it] = TCI.linkdims(qtt.tci)
+    errors_Gp[it] = maximum(abs.(qtt[:,:]-Gp_data))
+
+
+    qtt, ranks, errors = quanticscrossinterpolate(
+        Gprot_data,
+        tolerance=tol
+    ) 
+
+    linkdims_Gprot[it] = TCI.linkdims(qtt.tci)
+    errors_Gprot[it] = maximum(abs.(qtt[:,:]-Gprot_data))
+
+end
+
+Gs[1].Gps[2].ωconvMat
+
+
+plot(tolerances, [errors_Gs, errors_Gp, errors_Gprot], labels=["G" "Gp" "Gprot"], xscale=:log10, yscale=:log10, seriestype=:scatter)
+plot!(tolerances, labels="diagonal", tolerances, xscale=:log10, yscale=:log10, seriestype=:path, linestyle=:dash, xlabel="tol (TCI)", ylabel="abs. dev.")
+savefig("scripts/plots/Gp_error_vs_tol.pdf")
+
+plot(linkdims, labels=string.(tolerances'), linecolor=colors)
+plot!(linkdims_Gp, labels=string.(tolerances'); linestyle=:dash, linecolor=colors)
+plot!(linkdims_Gprot, labels=string.(tolerances'); linestyle=:dot, linecolor=colors, xlabel="link", ylabel="linkdims")
+savefig("scripts/plots/Gp_linkdims_vs_tol.pdf")
+
+heatmap(log.(abs.(real.(Gp_data))), c=:bluesreds)
+heatmap(log.(abs.(real.(Gprot_data))), c=:bluesreds)
+
+
+using LinearAlgebra
+singvals_bos = zeros(N_tols)
+singvals_fer = zeros(N_tols)
+u, s_bos, v = svd(Gs[1].Gps[2].tucker.legs[1])
+u, s_fer, v = svd(Gs[1].Gps[2].tucker.legs[2])
+for (it, tol) in enumerate(tolerances)
+    println("|s_bos>tol=$tol|: \t", sum(s_bos .> tol), "\t|s_fer>tol=$tol|: \t", sum(s_fer .> tol))
+    singvals_bos[it] = sum(s_bos .> tol)
+    singvals_fer[it] = sum(s_fer .> tol)
+end
+
+
+dlr_Nbasis_bos = zeros(N_tols)
+dlr_Nbasis_fer = zeros(N_tols)
+
+for (it, tol) in enumerate(tolerances)
+    interpDecomps = TCI4Keldysh.interpolDecomp4TD(Gs[1].Gps[2].tucker; atol=tol, rtol=1e-1);
+    dlr_Nbasis_bos[it] = size(interpDecomps.center, 1)
+    dlr_Nbasis_fer[it] = size(interpDecomps.center, 2)
+end
+
+plot(tolerances, [singvals_bos, singvals_fer], labels=["bos. kernel (SVD)" "fer. kernel (SVD)"], xscale=:log10)
+plot!(tolerances, [dlr_Nbasis_bos, dlr_Nbasis_fer], labels=["bos. kernel (ID)" "fer. kernel (ID)"], linestyle=:dash, xscale=:log10, xlabel="tol(SVD/ID)", ylabel="N_basis")
+savefig("scripts/plots/Nbasis_SVD_vs_ID.pdf")
