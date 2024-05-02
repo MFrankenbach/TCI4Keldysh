@@ -218,10 +218,37 @@ begin
          ]
     
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
-    Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
-    K1ts    = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "Q34"]; flavor_idx=i, ωs_ext=(ωbos,), ωconvMat=ωconvMat_K1t, name="SIAM 2pG") for i in 1:2];
-    Gp = Gs[1].Gps[1]#TCI4Keldysh.PartialCorrelator_reg("MF", Adisc, ωdisc, ωs_ext, ωconv)
+    Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; T, flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
+    K1ts    = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "Q34"]; T, flavor_idx=i, ωs_ext=(ωbos,), ωconvMat=ωconvMat_K1t, name="SIAM 2pG") for i in 1:2];
+    #Gp = Gs[1].Gps[1]#TCI4Keldysh.PartialCorrelator_reg("MF", Adisc, ωdisc, ωs_ext, ωconv)
 end
+
+using Lehmann
+# partial fraction decomposition of Gp:
+
+begin
+    β = 1/T
+    rtol=1e-8
+    symmetry = :none
+    Euv = D
+    dlr_fer = DLRGrid(Euv, β, rtol, true) #initialize the DLR parameters and basis
+    dlr_bos = DLRGrid(Euv, β, rtol, false) #initialize the DLR parameters and basis
+    @assert maximum(abs.(dlr_fer.ω-dlr_bos.ω)) < 1e-13
+end
+Gp_in = deepcopy(Gs[1].Gps[2])
+
+TCI4Keldysh.discreteLehmannRep4Gp!(Gp_in; dlr_bos, dlr_fer)
+
+
+# check DLR compression:
+vals_Gp_orig = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gs[1].Gps[2]);
+vals_Gp_dlrd = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gp_in);
+maximum(abs.(vals_Gp_dlrd - vals_Gp_orig)) / maximum(abs.(vals_Gp_dlrd))
+
+vals_ano_Gp_orig = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gs[1].Gps[2]);
+vals_ano_Gp_dlrd = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gp_in);
+maximum(abs.(vals_ano_Gp_dlrd - vals_ano_Gp_orig)) / maximum(abs.(vals_ano_Gp_orig))
+
 
 
 

@@ -39,7 +39,7 @@ mutable struct FullCorrelator_MF{D}
     ωconvMat::Matrix{Int}                       
     isBos   ::BitVector                         
 
-    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::String="", is_compactAdisc::Bool=true) where{D}
+    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, T::Float64, name::String="", is_compactAdisc::Bool=true) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if length(Ops) != D+1
@@ -52,11 +52,11 @@ mutable struct FullCorrelator_MF{D}
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
 
-        return FullCorrelator_MF(Adiscs, ωdisc; isBos, ωs_ext, ωconvMat, name=[Ops; name], is_compactAdisc)
+        return FullCorrelator_MF(T, Adiscs, ωdisc; isBos, ωs_ext, ωconvMat, name=[Ops; name], is_compactAdisc)
     end
 
 
-    function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=true) where{D}
+    function FullCorrelator_MF(T::Float64, Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=true) where{D}
         if DEBUG()
             println("Constructing FullCorrelator_MF.")
         end
@@ -79,7 +79,7 @@ mutable struct FullCorrelator_MF{D}
 
         perms = permutations(collect(1:D+1))
         Gp_to_G = _get_Gp_to_G(D, isBos)
-        Gps = [PartialCorrelator_reg("MF", Gp_to_G[i].*Adiscs[i], ωdisc, ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1); is_compactAdisc) for (i,p) in enumerate(perms)]        
+        Gps = [PartialCorrelator_reg(T, "MF", Gp_to_G[i].*Adiscs[i], ωdisc, ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1); is_compactAdisc) for (i,p) in enumerate(perms)]        
 
         return new{D}(name, Gps, Gp_to_G, [perms...], ωs_ext, ωconvMat)
     end
@@ -303,7 +303,7 @@ struct FullCorrelator_KF{D}
         for (i,sp) in enumerate(Aconts)
             sp.center .*= Gp_to_G[i]
         end
-        Gps = [PartialCorrelator_reg("KF", Aconts[i], ntuple(i->ωs_ext[i] .+0im, D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
+        Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i] .+0im, D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
         GR_to_GK = get_GR_to_GK(D)
         end
         return new{D}(name, Gps, Gp_to_G, GR_to_GK, ωs_ext, ωconvMat, isBos)
@@ -360,4 +360,14 @@ function precompute_all_values(G :: FullCorrelator_KF{D}) where{D}
         result += reshape(temp, (prod(size(temp)[1:end-1]),D+1)) * view(G.GR_to_GK, :, :, p)
     end
     return reshape(result, (length.(G.ωs_ext)..., (2*ones(Int, D+1))...))
+end
+
+
+function propagate_ωs_ext!(G::Union{FullCorrelator_MF{D}, FullCorrelator_MF{D}}, ωs_ext_new::NTuple{D,Vector{Float64}}=G.ωs_ext) where{D}
+    G.ωs_ext = ωs_ext_new
+    for (ip, Gp) in enumerate(G.Gps)
+        G.Gps[ip].ωs_ext = ωs_ext_new
+        update_frequency_args!(G.Gps[ip])
+    end
+    return nothing
 end

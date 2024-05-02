@@ -495,7 +495,7 @@ T = 3.
 ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
 
 
-GM = TCI4Keldysh.FullCorrelator_MF("data/PSF_nz=2_conn_zavg/3pt/", ["F1", "F1dag", "Q34"]; flavor_idx=1, ωs_ext=(ω_bos,ω_fer), 
+GM = TCI4Keldysh.FullCorrelator_MF("data/PSF_nz=2_conn_zavg/3pt/", ["F1", "F1dag", "Q34"]; T, flavor_idx=1, ωs_ext=(ω_bos,ω_fer), 
 ωconvMat=[ 0  1 ;
            1  0 ; 
           -1 -1], name="SIAM 3pG");
@@ -548,7 +548,7 @@ T = 3.
 ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
 ωs_ext=(ω_bos,ω_fer,ω_fer)
 
-GM = TCI4Keldysh.FullCorrelator_MF("data/PSF_nz=2_conn_zavg/4pt/", ["F1", "F1dag", "F3", "F3dag"]; flavor_idx=1, ωs_ext, 
+GM = TCI4Keldysh.FullCorrelator_MF("data/PSF_nz=2_conn_zavg/4pt/", ["F1", "F1dag", "F3", "F3dag"]; T, flavor_idx=1, ωs_ext, 
 ωconvMat=[ 0  1  0;
           -1 -1  0; 
            0  0 -1;

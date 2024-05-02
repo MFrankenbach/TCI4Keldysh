@@ -29,6 +29,7 @@ precompute_all_values:
  * "KF": not implemented yet
 """
 mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
+    T           ::Float64
     formalism:: String                          # "MF" or "KF"
     tucker      ::  TuckerDecomposition{ComplexF64,D}
     #Adisc   ::  Array{ComplexF64,D}             # discrete PSF data; best: compactified with compactAdisc(...)
@@ -44,7 +45,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     ####################
     ### Constructors ###
     ####################
-    function PartialCorrelator_reg(formalism::String, Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, ωs_ext::NTuple{D,Vector{Float64}}, ωconv::Matrix{Int}; is_compactAdisc::Bool=true) where {D}
+    function PartialCorrelator_reg(T::Float64, formalism::String, Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}; is_compactAdisc::Bool=true) where {D}
         if !(formalism == "MF" || formalism == "KF")
             throw(ArgumentError("formalism must be MF when unbroadened Adisc is input."))
         end
@@ -52,7 +53,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             println("Constructing PartialCorrelator_reg (WITHOUT broadening).")
         end
 
-        ωs_int, ωconvMat, ωconvOff = _trafo_ω_args(ωs_ext, ωconv)
+        ωs_int, ωconvOff, isFermi = _trafo_ω_args(ωs_ext, ωconvMat)
         if is_compactAdisc
         # Delete rows/columns that contain only zeros
         _, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
@@ -60,14 +61,17 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             ωdiscs, Adisc = [ωdisc for _ in 1:D], Adisc
         end
         @TIME Kernels = [get_regular_1D_MF_Kernel(ωs_int[i], ωdiscs[i]) for i in 1:D] "Precomputing 1D kernels (for MF)."
-        if formalism == "MF"
-            Adisc_anoβ = deepcopy(Adisc)
+        if formalism == "MF" && !all(isFermi)
+            i_ωbos = argmax(.!isFermi)
+            Adisc_anoβ = Adisc[[Colon() for _ in 1:i_ωbos-1]..., abs.(ωdiscs[i_ωbos]) .< 1e-8, [Colon() for _ in i_ωbos+1:D]...]
+        else 
+            Adisc_anoβ = Array{ComplexF64,D}(undef, zeros(Int, D)...)
         end
         tucker = TuckerDecomposition(Adisc, Kernels; ωs_center=ωdiscs, ωs_legs=[ωs_int...])
-        isFermi = mod.(length.(tucker.ωs_legs), 2) .== 0
-        return new{D}(formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff, isFermi)
+        
+        return new{D}(T, formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff, isFermi)
     end
-    function PartialCorrelator_reg(formalism::String, Acont::AbstractTuckerDecomp{D}, ωs_ext::NTuple{D,Vector{Float64}}, ωconv::Matrix{Int}) where {D}
+    function PartialCorrelator_reg(T::Float64, formalism::String, Acont::AbstractTuckerDecomp{D}, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}) where {D}
         if !(formalism == "MF" || formalism == "KF")
             throw(ArgumentError("formalism must be MF or KF."))
         end
@@ -75,7 +79,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             println("Constructing PartialCorrelator_reg (WITH broadening).")
         end
 
-        ωs_int, ωconvMat, ωconvOff = _trafo_ω_args(ωs_ext, ωconv)
+        ωs_int, ωconvOff, isFermi = _trafo_ω_args(ωs_ext, ωconvMat)
         #println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
         δωcont = get_ω_binwidths(Acont.ωconts[1])
         tucker = deepcopy(Acont)
@@ -83,7 +87,6 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             # 1.: rediscretization of broadening kernel
             # 2.: contraction with regular kernel
             @TIME tucker.legs = [get_regular_1D_MF_Kernel(ωs_int[i], Acont.ωcont) * (get_ω_binwidths(Acont.ωconts[i]) .* Acont.legs[i]) for i in 1:D] "Constructing 1D Kernels (for MF)."
-            Adisc_anoβ = deepcopy(Acont.center)
         else
             # check that grid is equidistant:
             if maximum(abs.(diff(δωcont) )) > 1e-10
@@ -91,14 +94,27 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             end
             # compute retarded 1D kernels
             @TIME tucker.legs = [-im * π * hilbert_fft(Acont.legs[i]; dims=1) for i in 1:D] "Hilbert trafo (for KF)."
-            Adisc_anoβ = Array{ComplexF64,D}(undef, ones(Int,D))
         end
-        isFermi = mod.(length.(tucker.ωs_legs), 2) .== 0
-        return new{D}(formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff, isFermi)
+        Adisc_anoβ = Array{ComplexF64,D}(undef, zeros(Int, D)...)
+
+        return new{D}(T, formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff, isFermi)
     end
 
 end
 
+
+function update_frequency_args!(Gp::PartialCorrelator_reg{D}) where{D}
+    Gp.tucker.ωs_legs, Gp.ωconvOff, Gp.isFermi = _trafo_ω_args(Gp.ωs_ext, Gp.ωconvMat)
+
+    update_kernels!(Gp)
+
+    return nothing
+end
+
+function update_kernels!(Gp::PartialCorrelator_reg{D}) where{D}
+    @TIME Gp.tucker.legs = [get_regular_1D_MF_Kernel(Gp.tucker.ωs_legs[i], Gp.tucker.ωs_center[i]) for i in 1:D] "Precomputing 1D kernels (for MF)."
+    return nothing
+end
 
 """
 _trafo_ω_args
@@ -112,7 +128,7 @@ Internal indices have the ranges OneTo.(length.(ωs_new))
 
 
 """
-function _trafo_ω_args(ωs::NTuple{D,Vector{T}}, ωconv::Matrix{Int}) where{D,T}
+function _trafo_ω_args(ωs::NTuple{D,Vector{T}}, ωconvMat::AbstractMatrix{Int}) where{D,T}
     function grids_are_fine(grids)
         Δgrids = [diff(g) for g in grids]
         is_equidistant_symmetric = [(grids[i][1] == -grids[i][end]) && (maximum(abs.(diff(Δgrids[i]))) < 1.e-10) for i in eachindex(ωs)]
@@ -127,16 +143,17 @@ function _trafo_ω_args(ωs::NTuple{D,Vector{T}}, ωconv::Matrix{Int}) where{D,T
 
     Δω = diff(ωs[1])[1]
     ωs_max = [ωs[i][end] for i in eachindex(ωs)]
-    ωs_int_max = abs.(ωconv) * ωs_max
-    ωs_int = ntuple(i -> collect(LinRange(-ωs_int_max[i], ωs_int_max[i], 1 + trunc(Int, real(2. * ωs_int_max[i] / Δω) + 0.1   ))), D)
+    ωs_int_max = abs.(ωconvMat) * ωs_max
+    ωs_int = [collect(LinRange(-ωs_int_max[i], ωs_int_max[i], 1 + trunc(Int, real(2. * ωs_int_max[i] / Δω) + 0.1   ))) for i in 1:D]
     # check spacing of ωs_int:
     @assert all( [ωs_int[i][2] - ωs_int[i][1] ≈ Δω for i in eachindex(ωs)])
 
     Nωs_ext = length.(ωs)
-    ωconvMat = trunc.(Int, ωconv)
     ωconvOff = ntuple(i -> sum([ωconvMat[i,j] == -1 ? Nωs_ext[j] : -ωconvMat[i,j] for j in 1:D]) + 1, D)
 
-    return ωs_int, ωconvMat, ωconvOff
+    isFermi = mod.(length.(ωs_int), 2) .== 0
+
+    return ωs_int, ωconvOff, isFermi
 end
 
 function get_regular_1D_MF_Kernel(ωs::Vector{Float64}, ωdisc::Vector{Float64})
@@ -196,31 +213,33 @@ end
 #### precomputing all values (WITH frequency rotation): ####
 ##################################
 
-function precompute_all_values_MF(
+
+function precompute_reg_values_MF_without_ωconv(
     Gp :: PartialCorrelator_reg{D},
 ) ::Array{ComplexF64,D} where{D}
     
     @assert Gp.formalism == "MF"
 
+
     data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)  # contributions from regular kernel
+
     
     # compute anomalous contribution for Matsubara formalism
     ## check for ω=0 entries in ωs_int:
-    for d in 1:D
+    if !all(Gp.isFermi)    # if bosonic frequencies exist
+        d = argmax(.!Gp.isFermi) # find bosonic direction
+        
         is_zero_ωs_int = abs.(Gp.tucker.ωs_legs[d]) .< 1.e-10
         is_zero_ωdisc = abs.(Gp.tucker.ωs_center[d]) .< 1.e-10
         if any(is_zero_ωs_int) && any(is_zero_ωdisc)  ## currently only support single bosonic frequency
             #println("Has anomalous contribution: ")
             Adisc_ano = dropdims(Gp.tucker.center[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
 
-            Adisc_anoβ_temp = dropdims(Gp.Adisc_anoβ[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
             #println("size of Adisc_ano: ", size(Adisc_ano))
             # compute anomalous contribution:
             Kernels_ano = [Gp.tucker.legs[1:d-1]..., Gp.tucker.legs[d+1:D]...]
-            # add β/2 contribution?
-            β = 2. * π / abs(Gp.tucker.ωs_legs[1][2]-Gp.tucker.ωs_legs[1][1])
-            #println("β: ", β)
-            values_ano = β* contract_1D_Kernels_w_Adisc_mp(Kernels_ano, Adisc_anoβ_temp)
+        
+            values_ano = zeros(ComplexF64, size.(Kernels_ano, 1)...)
             for dd in 1:D-1
                 Kernels_tmp = [Kernels_ano...]
                 #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
@@ -236,6 +255,77 @@ function precompute_all_values_MF(
             view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...) .+= values_ano
         end
     end
+    
+
+    return data_unrotated
+end
+
+
+function precompute_ano_values_MF_without_ωconv(
+    Gp :: PartialCorrelator_reg{D}
+) ::Array{ComplexF64, D} where{D}
+    
+    @assert Gp.formalism == "MF"
+
+    values_ano = Array{ComplexF64, D}(undef, zeros(Int, D)...)
+
+    # compute anomalous contribution for Matsubara formalism
+    ## check for ω=0 entries in ωs_int:
+    if length(Gp.Adisc_anoβ) > 0 && !all(Gp.isFermi)    # if bosonic frequencies and anomalous PSF exist
+        d = argmax(.!Gp.isFermi) # find bosonic direction
+    
+        is_zero_ωs_int = abs.(Gp.tucker.ωs_legs[d]) .< 1.e-10
+        #is_zero_ωdisc = abs.(Gp.tucker.ωs_center[d]) .< 1.e-10
+        if any(is_zero_ωs_int)  ## currently only support single bosonic frequency
+            println("Has anomalous contribution: ")
+            
+            #Adisc_anoβ_temp = dropdims(Gp.Adisc_anoβ[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
+            #println("size of Adisc_ano: ", size(Adisc_ano))
+            # compute anomalous contribution:
+            Kernels_ano = [Gp.tucker.legs[1:d-1]..., Gp.tucker.legs[d+1:D]...]
+            # add β/2 contribution?
+            β = 1/Gp.T
+            #println("β: ", β)
+            values_ano = -0.5 * β* contract_1D_Kernels_w_Adisc_mp(Kernels_ano, dropdims(Gp.Adisc_anoβ, dims=d))
+            values_ano = reshape(values_ano, (size(values_ano)[1:d-1]..., 1, size(values_ano)[d:end]...))
+    
+            #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
+            #println("size of view: ", size(myview))
+            #println("size of values_ano = ", size(values_ano))
+            #view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...) .+= values_ano
+        end
+    end
+    
+
+    return values_ano
+end
+
+function precompute_all_values_MF_without_ωconv(
+    Gp :: PartialCorrelator_reg{D},
+) ::Array{ComplexF64,D} where{D}
+    
+    @assert Gp.formalism == "MF"
+
+    data_unrotated = precompute_reg_values_MF_without_ωconv(Gp)
+    data_ano = precompute_ano_values_MF_without_ωconv(Gp)
+    if length(data_ano) > 0
+        d = argmax(.!Gp.isFermi) # find bosonic direction
+        is_zero_ωs_int = abs.(Gp.tucker.ωs_legs[d]) .< 1.e-10
+        i_ωbos = argmax(is_zero_ωs_int)
+        view(data_unrotated, [Colon() for _ in 1:d-1]..., i_ωbos:i_ωbos, [Colon() for _ in d+1:D]...) .+= data_ano
+    end
+
+    return data_unrotated
+end
+
+
+function precompute_all_values_MF(
+    Gp :: PartialCorrelator_reg{D},
+) ::Array{ComplexF64,D} where{D}
+    
+    @assert Gp.formalism == "MF"
+
+    data_unrotated = precompute_all_values_MF_without_ωconv(Gp)
     
 
     ## perform frequency rotation:
@@ -278,20 +368,61 @@ function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGri
     @assert  dlr_fer.isFermi
 
     dlrgrids_here = [Gp_in.isFermi[i] ? dlr_fer : dlr_bos for i in 1:D]
-    Nωs_legs_div2 = div.(length.(Gp_in.tucker.ωs_legs).+2, D)
+    #Nωs_legs_div2 = div.(length.(Gp_in.tucker.ωs_legs).+2, D)
+    #idxs = [dlrgrids_here[d].n .+ Nωs_legs_div2[d] for d in 1:D]
+    #Gp_data_before = Gp_in.tucker[idxs...]
+    
+    ωs_legs_before = deepcopy(Gp_in.tucker.ωs_legs)
+    Gp_data_before = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+    Gp_ano_data_before = precompute_ano_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
 
-    idxs = [dlrgrids_here[d].n .+ Nωs_legs_div2[d] for d in 1:D]
-    Gp_data = Gp_in.tucker[idxs...]
+    # overwrite Matsubara frequencies with those necessary for the DLR fit
+    for d in 1:D
+        Gp_in.tucker.ωs_legs[d] = dlrgrids_here[d].ωn
+    end
+    update_kernels!(Gp_in)
+    Gp_data = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+    Gp_ano_data = precompute_ano_values_MF_without_ωconv(Gp_in) / (-0.5*dlrgrids_here[1].β) # .tucker[[Colon() for _ in 1:D]...]
+    #println("max dev:\t", maximum(abs.(Gp_data - Gp_data_before)))
     for d in 1:D
         #d = 1
         #println("d = $d")
-        coeffs = matfreq2dlr(dlrgrids_here[d], Gp_data; axis=d)
-        compare = d == 1 ? dlrgrids_here[d].kernel_nc * coeffs : coeffs * transpose(dlrgrids_here[d].kernel_nc)
+        Gp_in.tucker.legs[d] = TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d], dlrgrids_here[d].ω)
+        #Gp_in.tucker.legs[d] = Lehmann.Spectral.kernelΩ(Float64, Val(Gp_in.isFermi[d]), Val(:none), collect(-Nωs_legs_div2[d]+1:Nωs_legs_div2[d]-1-Gp_in.isFermi[d]), dlrgrids_here[d].ω, dlrgrids_here[d].β, true)#-    dlrgrids_here[d].kernel_nc
+        #Gp_in.tucker.legs[d] = Lehmann.Spectral.kernelΩ(Float64, Val(Gp_in.isFermi[d]), Val(:none), dlrgrids_here[d].n, dlrgrids_here[d].ω, dlrgrids_here[d].β, true)#-    dlrgrids_here[d].kernel_nc
+        
+        g, partialsize = Lehmann._tensor2matrix(Gp_data, Val(d))
+        println()
+        coeffs_t = Gp_in.tucker.legs[d] \ g
+        coeffs = Lehmann._matrix2tensor(coeffs_t, partialsize, Val(d))
+        #coeffs = matfreq2dlr(dlrgrids_here[d], Gp_data; axis=d)
+
+        # check validity of fit:
+        compare = d == 1 ? Gp_in.tucker.legs[d] * coeffs : coeffs * transpose(Gp_in.tucker.legs[d])
         @assert maximum(abs.(Gp_data - compare)) < 1e-13
-        @assert maximum(abs.(Gp_in.tucker.ωs_legs[d][idxs[d]] - dlrgrids_here[d].ωn)) < 1e-13
+        @assert maximum(abs.(Gp_in.tucker.ωs_legs[d] - dlrgrids_here[d].ωn)) < 1e-13
         Gp_data = coeffs
-        #Gp_in.tucker.legs[d] = TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d], dlrgrids_here[d].ω)
-        Gp_in.tucker.legs[d] = Lehmann.Spectral.kernelΩ(Float64, Val(Gp_in.isFermi[d]), Val(:none), collect(-Nωs_legs_div2[d]+1:Nωs_legs_div2[d]-1-Gp_in.isFermi[d]), dlrgrids_here[d].ω, dlrgrids_here[d].β, true)#-    dlrgrids_here[d].kernel_nc
+        
+
+        if size(Gp_ano_data, d) > 1
+            
+            println("anomalous term in d=$d:")
+
+            g_ano, partialsize_ano = Lehmann._tensor2matrix(Gp_ano_data, Val(d))
+            coeffs_ano_t = Gp_in.tucker.legs[d] \ g_ano
+            coeffs_ano = Lehmann._matrix2tensor(coeffs_ano_t, partialsize_ano, Val(d))
+
+            compare_ano = d == 1 ? Gp_in.tucker.legs[d] * coeffs_ano : coeffs_ano * transpose(Gp_in.tucker.legs[d])
+            @assert maximum(abs.(Gp_ano_data - compare_ano)) < 1e-13
+            @assert maximum(abs.(Gp_in.tucker.ωs_legs[d] - dlrgrids_here[d].ωn)) < 1e-13
+            Gp_ano_data = coeffs_ano 
+        
+        end
+
+
+        Gp_in.tucker.ωs_center[d] = dlrgrids_here[d].ω
+
+        
         #maximum(abs.(TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d][idxs[d]], dlrgrids_here[d].ω) +    dlrgrids_here[d].kernel_nc .* sign.(dlrgrids_here[d].ω)'))
         #Lehmann.Spectral.kernelΩ(Float64, Val(Gp.isFerm[d]), Val(:none), dlrgrids_here[d].n, dlrgrids_here[d].ω, dlrgrids_here[d].β, false)-    dlrgrids_here[d].kernel_nc.* sign.(dlrgrids_here[d].ω)'
         #Gp_in.tucker.ωs_legs[d][idxs[d]] - dlrgrids_here[d].n*2*π*T#- dlrgrids_here[d].ωn
@@ -300,6 +431,15 @@ function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGri
         #dlrgrids_here[d].ωn[29]
     end
     Gp_in.tucker.center = Gp_data
+    Gp_in.Adisc_anoβ = Gp_ano_data
+    Gp_in.tucker.ωs_legs = ωs_legs_before
+    update_frequency_args!(Gp_in)
+    Gp_data_after = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+    Gp_ano_data_after = precompute_ano_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+
+    @VERBOSE "abs dev of Gp due to DLR compression (reg): $(maximum(abs.(Gp_data_after - Gp_data_before)) / maximum(abs.(Gp_data_before)))\n"
+    @VERBOSE "abs dev of Gp due to DLR compression (ano): $(maximum(abs.(Gp_ano_data_after - Gp_ano_data_before)) / maximum(abs.(Gp_ano_data_before)))\n"
 
     return nothing
 end
+

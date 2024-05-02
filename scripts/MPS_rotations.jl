@@ -58,7 +58,7 @@ begin
          1  0;
          -1  -1
     ]
-    Gp = TCI4Keldysh.PartialCorrelator_reg("MF", Adisc, ωdisc, ωs_ext, ωconv)
+    Gp = TCI4Keldysh.PartialCorrelator_reg(T, "MF", Adisc, ωdisc, ωs_ext, ωconv)
 end
 
 qtt = TCI4Keldysh.TDtoQTCI(Gp)                  # convert Tucker decomposition to QTT

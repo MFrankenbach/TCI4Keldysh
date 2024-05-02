@@ -3,6 +3,7 @@ function compute_K2r_symmetric_estimator(
     op_labels::NTuple{3,String},
     Σ_calc_aIE  ::Vector{ComplexF64}
     ;
+    T :: Float64,
     flavor_idx::Int,
     ωs_ext  ::NTuple{2,Vector{Float64}},
     ωconvMat::Matrix{Int}
@@ -26,7 +27,7 @@ function compute_K2r_symmetric_estimator(
 
     for letts in letter_combinations#[2:end]
 
-        K2a_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; flavor_idx, ωs_ext, ωconvMat);
+        K2a_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; T, flavor_idx, ωs_ext, ωconvMat);
         K2a_data_tmp = TCI4Keldysh.precompute_all_values(K2a_tmp)
         #println("max dat 1 ", letts," : ", maxabs(K2a_data_tmp))
         # multiply Σ if necessary:
@@ -48,6 +49,7 @@ function compute_Γcore_symmetric_estimator(
     PSFpath::String,
     Σ_calc_aIE  ::Vector{ComplexF64}
     ;
+    T::Float64,
     flavor_idx::Int,
     ωs_ext  ::NTuple{3,Vector{Float64}},
     ωconvMat::Matrix{Int}
@@ -78,7 +80,7 @@ function compute_Γcore_symmetric_estimator(
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
 
-        Γcore_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; flavor_idx, ωs_ext, ωconvMat);
+        Γcore_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx, ωs_ext, ωconvMat);
         Γcore_data_tmp = TCI4Keldysh.precompute_all_values(Γcore_tmp)
         println("max dat 1 ", letts," : ", maxabs(Γcore_data_tmp))
         # multiply Σ if necessary:

@@ -63,6 +63,8 @@ function contract_1D_Kernels_w_Adisc_mp(Kernels, Adisc)
     sz = [size(Adisc)...]
     D = ndims(Adisc)
 
+    @DEBUG all(sz .== size.(Kernels, 2)) "Incompatible sizes for Adisc ($sz) and Kernels ($(size.(Kernels, 2)))"
+
     ##########################################################
     ### EFFICIENCY IN TERMS OF   CPU TIME: 🙈     RAM: 😄  ###
     ##########################################################

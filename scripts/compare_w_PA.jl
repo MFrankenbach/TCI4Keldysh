@@ -237,9 +237,9 @@ end
 
 
 G0_inv   = ω_fer .+ im*Δ*sign.(imag.(ω_fer)) .+ U/2
-G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-G_aux    = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-G_QQ_aux = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "Q1dag"]; flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+G_aux    = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+G_QQ_aux = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
 
 G_data      = TCI4Keldysh.precompute_all_values(G)
 G_aux_data  = TCI4Keldysh.precompute_all_values(G_aux)
@@ -269,9 +269,9 @@ K1t_PA = read(file_PA, "K1_t")[:] / Δ_PA
 N_MF = div(length(K1a_PA)-1, 2)
 ω_bos = (collect(-N_MF:N_MF  ) * (2.)      ) * π * T
 
-K1a      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q14", "Q23"]; flavor_idx=i, ωs_ext=(ω_bos,), ωconvMat=ωconvMat_K1a, name="SIAM K1a") for i in 1:2];
-K1p      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q13", "Q24"]; flavor_idx=i, ωs_ext=(ω_bos,), ωconvMat=ωconvMat_K1p, name="SIAM K1p") for i in 1:2];
-K1t      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "Q34"]; flavor_idx=i, ωs_ext=(ω_bos,), ωconvMat=ωconvMat_K1t, name="SIAM K1t") for i in 1:2];
+K1a      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q14", "Q23"]; T, flavor_idx=i, ωs_ext=(ω_bos,), ωconvMat=ωconvMat_K1a, name="SIAM K1a") for i in 1:2];
+K1p      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q13", "Q24"]; T, flavor_idx=i, ωs_ext=(ω_bos,), ωconvMat=ωconvMat_K1p, name="SIAM K1p") for i in 1:2];
+K1t      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "Q34"]; T, flavor_idx=i, ωs_ext=(ω_bos,), ωconvMat=ωconvMat_K1t, name="SIAM K1t") for i in 1:2];
 K1a_data = [ TCI4Keldysh.precompute_all_values(K1a[i]) for i in 1:2]
 K1p_data = [-TCI4Keldysh.precompute_all_values(K1p[i]) for i in 1:2]
 K1t_data = [-TCI4Keldysh.precompute_all_values(K1t[i]) for i in 1:2]
@@ -357,11 +357,11 @@ N_K2_bos, N_K2_fer = div.(size(K2a_PA), 2) .* 4
 
 #K2′a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q14", "3", "1dag"), Σ_calc_aIE   ; ωs_ext, ωconvMat=ωconvMat_K2′a, flavor_idx=i) for i in 1:2]
 #K2′p_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q13", "1dag", "3dag"), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2′p, flavor_idx=i) for i in 1:2]
-K2′t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q12", "3", "3dag"), Σ_calc_aIE   ; ωs_ext, ωconvMat=ωconvMat_K2′t, flavor_idx=i) for i in 1:2]
+K2′t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q12", "3", "3dag"), Σ_calc_aIE   ; T, ωs_ext, ωconvMat=ωconvMat_K2′t, flavor_idx=i) for i in 1:2]
 
-K2a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q23", "1", "3dag"), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2a, flavor_idx=i) for i in 1:2]
-K2p_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q24", "1", "3"   ), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2p, flavor_idx=i) for i in 1:2]
-K2t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q34", "1", "1dag"), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2t, flavor_idx=i) for i in 1:2]
+K2a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q23", "1", "3dag"), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2a, flavor_idx=i) for i in 1:2]
+K2p_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q24", "1", "3"   ), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2p, flavor_idx=i) for i in 1:2]
+K2t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q34", "1", "1dag"), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2t, flavor_idx=i) for i in 1:2]
 
 
 begin

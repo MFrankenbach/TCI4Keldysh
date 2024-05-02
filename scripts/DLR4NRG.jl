@@ -39,7 +39,7 @@ ngrid_bos = collect(-Niω_bos:Niω_bos)
 
 ## check DLR for 1D function:
 PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
-G     = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+G     = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
 Gdata = TCI4Keldysh.precompute_all_values(G)
 spectral_from_Gω = matfreq2dlr(dlr_fer, Gdata, ngrid_fer)
 kernel = Lehmann.Spectral.kernelΩ(Float64, Val(dlr_fer.isFermi), Val(symmetry), ngrid_fer, dlr_fer.ω, dlr_fer.β, true)
@@ -48,7 +48,7 @@ Gdata_rec = kernel * spectral_from_Gω
 maximum(abs.(Gdata - Gdata_rec)) / maximum(abs.(Gdata))
 
 ωconvMat_K2′t = [ 1   0; -1  -1; 0   1]
-G2D      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; flavor_idx=1, ωs_ext=(ω_bos,ω_fer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false);
+G2D      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; T, flavor_idx=1, ωs_ext=(ω_bos,ω_fer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false);
 
 Gp2D_1 = G2D.Gps[1]
 Gp2D_1_data = Gp2D_1[[1,2,5,6],]

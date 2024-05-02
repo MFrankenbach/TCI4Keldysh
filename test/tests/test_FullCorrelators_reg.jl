@@ -23,7 +23,7 @@
     ωsconvMat = reshape([1 ; -1], (2,1))
     isBos = [false, false] .== true
 
-    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom propagator"])
+    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; T, isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom propagator"])
     G_data = G.(collect(1:length(ω_fer)))
     G_expec=  HA_exact_corr_F1_F1dag.(ω_fer; u=u)
     @test maximum(abs.(G_data - G_expec)) < 1.e-13
@@ -44,7 +44,7 @@
     ωs_ext = (ω_bos, ω_fer)
     ωsconvMat = [-1 -1; 0 1; 1 0]
     isBos = [false, false, true] .== true
-    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom 3pt correlator"])
+    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; T, isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom 3pt correlator"])
     data_axes = ntuple(i -> reshape(collect(axes(ωs_ext[i])[1]), (ones(Int,i-1)..., length(ωs_ext[i]))), D)
 
     #@time G_data = G.(data_axes...);    # this data is generated via on-the-fly computation of correlator values (WITHOUT anomalous terms!)
@@ -94,7 +94,7 @@
                   0  0 -1; 
                   1  0  1]
     isBos = [false, false, false, false] .== true
-    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom 4pt correlator"])
+    G = TCI4Keldysh.FullCorrelator_MF(Adiscs, ωdisc; T, isBos=isBos, ωs_ext=ωs_ext, ωconvMat=ωsconvMat, name=["Hubbard atom 4pt correlator"])
     data_axes = ntuple(i -> reshape(collect(axes(ωs_ext[i])[1]), (ones(Int,i-1)..., length(ωs_ext[i]))), D)
 
     ## missing:
@@ -151,7 +151,7 @@ end
         ωs_ext = (ωbos, ωfer)
         
         PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
-        Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
+        Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; T, flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
     end
 
     G_in = deepcopy(Gs[1])
