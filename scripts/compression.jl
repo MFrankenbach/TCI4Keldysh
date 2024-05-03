@@ -230,7 +230,7 @@ begin
     β = 1/T
     rtol=1e-8
     symmetry = :none
-    Euv = D
+    Euv = D*5
     dlr_fer = DLRGrid(Euv, β, rtol, true) #initialize the DLR parameters and basis
     dlr_bos = DLRGrid(Euv, β, rtol, false) #initialize the DLR parameters and basis
     @assert maximum(abs.(dlr_fer.ω-dlr_bos.ω)) < 1e-13
@@ -248,6 +248,42 @@ maximum(abs.(vals_Gp_dlrd - vals_Gp_orig)) / maximum(abs.(vals_Gp_dlrd))
 vals_ano_Gp_orig = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gs[1].Gps[2]);
 vals_ano_Gp_dlrd = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gp_in);
 maximum(abs.(vals_ano_Gp_dlrd - vals_ano_Gp_orig)) / maximum(abs.(vals_ano_Gp_orig))
+
+
+
+
+
+
+idx1 = 1
+idx2 = 2
+
+Gp_in.isFermi
+Gp_in.Adisc_anoβ
+Gp_out1, Gp_out2 = TCI4Keldysh.partial_fraction_decomp(Gp_in; idx1, idx2, dlr_bos, dlr_fer)
+size(Gp_in.Adisc_anoβ)
+size(Gp_out1.Adisc_anoβ)
+size(Gp_out2.Adisc_anoβ)
+Gp_out1.isFermi
+Gp_out2.isFermi
+size.(Gp_out1.tucker.ωs_legs)
+size.(Gp_out2.tucker.ωs_legs)
+
+vals_orig = TCI4Keldysh.precompute_all_values_MF(Gp_in);
+vals_pfd1 = TCI4Keldysh.precompute_all_values_MF(Gp_out1)
+vals_pfd2 = TCI4Keldysh.precompute_all_values_MF(Gp_out2)
+diff = vals_pfd1+vals_pfd2-vals_orig
+maximum(abs.(diff))
+
+
+
+# replace Gp with its partial fraction decomposition
+G_out = deepcopy(Gs[1])
+G_out.Gps[2] = Gp_out1
+push!(G_out.Gps, Gp_out2)
+
+vals_orig = TCI4Keldysh.precompute_all_values(Gs[1])
+vals_pfrd = TCI4Keldysh.precompute_all_values(G_out)
+maximum(abs.(vals_orig- vals_pfrd))
 
 
 
