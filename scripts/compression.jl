@@ -200,7 +200,7 @@ begin
      Δ = U / (π * u)
      T = 0.01*U
 
-    Rpos = 10
+    Rpos = 6
     R = Rpos + 1
     Nωcont_pos = 2^Rpos # 512#
     ωcont = get_ωcont(D*0.5, Nωcont_pos)
@@ -220,6 +220,7 @@ begin
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
     Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; T, flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
     K1ts    = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "Q34"]; T, flavor_idx=i, ωs_ext=(ωbos,), ωconvMat=ωconvMat_K1t, name="SIAM 2pG") for i in 1:2];
+    G3D     = TCI4Keldysh.FullCorrelator_MF(PSFpath*"/4pt/", ["F1","F1dag", "F3", "F3dag"]; T, flavor_idx=1, ωs_ext=(ωbos,ωfer,ωfer), ωconvMat=ωconvMat_t, name="SIAM 4pG", is_compactAdisc=false)
     #Gp = Gs[1].Gps[1]#TCI4Keldysh.PartialCorrelator_reg("MF", Adisc, ωdisc, ωs_ext, ωconv)
 end
 
@@ -239,6 +240,9 @@ Gp_in = deepcopy(Gs[1].Gps[2])
 
 TCI4Keldysh.discreteLehmannRep4Gp!(Gp_in; dlr_bos, dlr_fer)
 
+Gp3D_in = deepcopy(G3D.Gps[2])
+TCI4Keldysh.discreteLehmannRep4Gp!(Gp3D_in; dlr_bos, dlr_fer)
+
 
 # check DLR compression:
 vals_Gp_orig = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gs[1].Gps[2]);
@@ -249,6 +253,14 @@ vals_ano_Gp_orig = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gs[1].Gps
 vals_ano_Gp_dlrd = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gp_in);
 maximum(abs.(vals_ano_Gp_dlrd - vals_ano_Gp_orig)) / maximum(abs.(vals_ano_Gp_orig))
 
+# same for 3D: 
+vals_Gp_3D_orig = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(G3D.Gps[2]);
+vals_Gp_3D_dlrd = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gp3D_in);
+maximum(abs.(vals_Gp_3D_dlrd - vals_Gp_3D_orig)) / maximum(abs.(vals_Gp_3D_dlrd))
+
+vals_ano_Gp_3D_orig = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(G3D.Gps[2]);
+vals_ano_Gp_3D_dlrd = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gp3D_in);
+maximum(abs.(vals_ano_Gp_3D_dlrd - vals_ano_Gp_3D_orig)) / maximum(abs.(vals_ano_Gp_3D_orig))
 
 
 
@@ -257,24 +269,38 @@ maximum(abs.(vals_ano_Gp_dlrd - vals_ano_Gp_orig)) / maximum(abs.(vals_ano_Gp_or
 idx1 = 1
 idx2 = 2
 
-Gp_in.isFermi
-Gp_in.Adisc_anoβ
 Gp_out1, Gp_out2 = TCI4Keldysh.partial_fraction_decomp(Gp_in; idx1, idx2, dlr_bos, dlr_fer)
-size(Gp_in.Adisc_anoβ)
-size(Gp_out1.Adisc_anoβ)
-size(Gp_out2.Adisc_anoβ)
-Gp_out1.isFermi
-Gp_out2.isFermi
-size.(Gp_out1.tucker.ωs_legs)
-size.(Gp_out2.tucker.ωs_legs)
 
+# check whether partial fraction decomposition worked:
 vals_orig = TCI4Keldysh.precompute_all_values_MF(Gp_in);
 vals_pfd1 = TCI4Keldysh.precompute_all_values_MF(Gp_out1)
 vals_pfd2 = TCI4Keldysh.precompute_all_values_MF(Gp_out2)
 diff = vals_pfd1+vals_pfd2-vals_orig
 maximum(abs.(diff))
+imax = argmax(abs.(diff))
+plot(real.([vals_orig[imax[1],:], (vals_pfd1)[imax[1],:], vals_pfd2[imax[1],:]]), labels=["orig" "new" "zero"])
 
+# check whether partial fraction decomposition worked for 3D:
 
+idx1 = 2
+idx2 = 3
+
+Gp3D_out1, Gp3D_out2 = TCI4Keldysh.partial_fraction_decomp(Gp3D_in; idx1, idx2, dlr_bos, dlr_fer);
+vals_3D_orig = TCI4Keldysh.precompute_all_values_MF(Gp3D_in);
+vals_3D_pfd1 = TCI4Keldysh.precompute_all_values_MF(Gp3D_out1);
+vals_3D_pfd2 = TCI4Keldysh.precompute_all_values_MF(Gp3D_out2);
+diff_3D = vals_pfd1+vals_pfd2-vals_orig;
+maximum(abs.(diff_3D))
+
+Gp3D_in.ωconvMat
+Gp3D_out1.ωconvMat
+Gp3D_out2.ωconvMat
+Gp3D_in.isFermi
+Gp3D_out2.isFermi
+
+Gp3D_in.Adisc_anoβ
+
+Gp3D_out2.Adisc_anoβ
 
 # replace Gp with its partial fraction decomposition
 G_out = deepcopy(Gs[1])

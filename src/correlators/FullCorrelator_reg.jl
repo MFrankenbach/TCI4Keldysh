@@ -52,11 +52,11 @@ mutable struct FullCorrelator_MF{D}
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
 
-        return FullCorrelator_MF(T, Adiscs, ωdisc; isBos, ωs_ext, ωconvMat, name=[Ops; name], is_compactAdisc)
+        return FullCorrelator_MF(Adiscs, ωdisc; T, isBos, ωs_ext, ωconvMat, name=[Ops; name], is_compactAdisc)
     end
 
 
-    function FullCorrelator_MF(T::Float64, Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=true) where{D}
+    function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; T::Float64, isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=true) where{D}
         if DEBUG()
             println("Constructing FullCorrelator_MF.")
         end

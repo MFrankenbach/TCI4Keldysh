@@ -307,7 +307,7 @@ function precompute_all_values_MF_without_ωconv(
     @assert Gp.formalism == "MF"
 
     data_unrotated = precompute_reg_values_MF_without_ωconv(Gp)
-    data_ano = precompute_ano_values_MF_without_ωconv(Gp)*0
+    data_ano = precompute_ano_values_MF_without_ωconv(Gp)
     if length(data_ano) > 0
         d = argmax(.!Gp.isFermi) # find bosonic direction
         is_zero_ωs_int = abs.(Gp.tucker.ωs_legs[d]) .< 1.e-10
@@ -327,6 +327,7 @@ function precompute_all_values_MF(
 
     data_unrotated = precompute_all_values_MF_without_ωconv(Gp)
     maxval1 = maximum(abs.(data_unrotated))
+    #println("Gp val before rotation: ", maxval1)
 
     ## perform frequency rotation:
     strides_internal = [stride(data_unrotated, i) for i in 1:D]'
@@ -336,7 +337,8 @@ function precompute_all_values_MF(
     res = Array{ComplexF64,D}(sv[[Colon() for _ in 1:D]...])
     maxval2 = maximum(abs.(res))
 
-    println("dev in maxvals due to rotation: $(maxval1 - maxval2)")
+    #println("Gp val after rotation: ", maxval2)
+    #println("dev in maxvals due to rotation: $(maxval1 - maxval2)")
 
 
     return res
@@ -377,8 +379,11 @@ function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGri
     #Gp_data_before = Gp_in.tucker[idxs...]
     
     ωs_legs_before = deepcopy(Gp_in.tucker.ωs_legs)
-    Gp_data_before = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
-    Gp_ano_data_before = precompute_ano_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+
+    if DEBUG()
+        Gp_data_before = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+        Gp_ano_data_before = precompute_ano_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...] 
+    end
 
     # overwrite Matsubara frequencies with those necessary for the DLR fit
     for d in 1:D
@@ -402,9 +407,11 @@ function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGri
         #coeffs = matfreq2dlr(dlrgrids_here[d], Gp_data; axis=d)
 
         # check validity of fit:
-        compare = d == 1 ? Gp_in.tucker.legs[d] * coeffs : coeffs * transpose(Gp_in.tucker.legs[d])
-        @assert maximum(abs.(Gp_data - compare)) < 1e-13
-        @assert maximum(abs.(Gp_in.tucker.ωs_legs[d] - dlrgrids_here[d].ωn)) < 1e-13
+        if D ≤ 2
+            compare = d == 1 ? Gp_in.tucker.legs[d] * coeffs : coeffs * transpose(Gp_in.tucker.legs[d])
+            @assert maximum(abs.(Gp_data - compare)) < 1e-13
+            @assert maximum(abs.(Gp_in.tucker.ωs_legs[d] - dlrgrids_here[d].ωn)) < 1e-13
+        end
         Gp_data = coeffs
         
 
@@ -416,9 +423,11 @@ function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGri
             coeffs_ano_t = Gp_in.tucker.legs[d] \ g_ano
             coeffs_ano = Lehmann._matrix2tensor(coeffs_ano_t, partialsize_ano, Val(d))
 
-            compare_ano = d == 1 ? Gp_in.tucker.legs[d] * coeffs_ano : coeffs_ano * transpose(Gp_in.tucker.legs[d])
-            @assert maximum(abs.(Gp_ano_data - compare_ano)) < 1e-13
-            @assert maximum(abs.(Gp_in.tucker.ωs_legs[d] - dlrgrids_here[d].ωn)) < 1e-13
+            if D ≤ 2
+                compare_ano = d == 1 ? Gp_in.tucker.legs[d] * coeffs_ano : coeffs_ano * transpose(Gp_in.tucker.legs[d])
+                @assert maximum(abs.(Gp_ano_data - compare_ano)) < 1e-13
+                @assert maximum(abs.(Gp_in.tucker.ωs_legs[d] - dlrgrids_here[d].ωn)) < 1e-13
+            end
             Gp_ano_data = coeffs_ano 
         
         end
@@ -438,14 +447,17 @@ function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGri
     Gp_in.Adisc_anoβ = Gp_ano_data
     Gp_in.tucker.ωs_legs = ωs_legs_before
     update_frequency_args!(Gp_in)
-    Gp_data_after = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
-    Gp_ano_data_after = precompute_ano_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
 
-    @VERBOSE "abs dev of Gp due to DLR compression (reg): $(maximum(abs.(Gp_data_after - Gp_data_before)) / maximum(abs.(Gp_data_before)))\n"
-    if length(Gp_ano_data_before) > 0
-        @VERBOSE "abs dev of Gp due to DLR compression (ano): $(maximum(abs.(Gp_ano_data_after - Gp_ano_data_before)) / maximum(abs.(Gp_ano_data_before)))\n"
-    end
+    if DEBUG()
+        Gp_data_after = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+        Gp_ano_data_after = precompute_ano_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
 
+        @VERBOSE "abs dev of Gp due to DLR compression (reg): $(maximum(abs.(Gp_data_after - Gp_data_before)) / maximum(abs.(Gp_data_before)))\n"
+        if length(Gp_ano_data_before) > 0
+            @VERBOSE "abs dev of Gp due to DLR compression (ano): $(maximum(abs.(Gp_ano_data_after - Gp_ano_data_before)) / maximum(abs.(Gp_ano_data_before)))\n"
+        end
+        
+    end 
     return nothing
 end
 
@@ -466,6 +478,19 @@ function permute_Adisc_indices!(Gp_in::PartialCorrelator_reg{D}, idx_order_new::
 end
 
 
+"""
+    set_DLR_MFfreqs!(Gp::TCI4Keldysh.PartialCorrelator_reg{D}; dlr_bos, dlr_fer)
+
+Set Matsubara frequencies in tucker.ωs_legs to sparse DLR frequencies.
+"""
+function set_DLR_MFfreqs!(Gp::TCI4Keldysh.PartialCorrelator_reg{D}; dlr_bos::DLRGrid, dlr_fer::DLRGrid) where{D}
+    for d in 1:D
+        Gp.tucker.ωs_legs[d] = Gp.isFermi[d] ? dlr_fer.ωn : dlr_bos.ωn
+    end 
+    return nothing
+end
+
+
 function partial_fraction_decomp(Gp_in::PartialCorrelator_reg{D}; idx1::Int, idx2::Int, dlr_bos::DLRGrid, dlr_fer::DLRGrid) where{D}
 
     @assert 1 ≤ idx1 ≤ idx2 ≤ D
@@ -481,22 +506,13 @@ function partial_fraction_decomp(Gp_in::PartialCorrelator_reg{D}; idx1::Int, idx
 
     Gp_out2 = deepcopy(Gp_out1)
 
+    # decide whether the new frequency should be (v1 - v2) or (v2 - v1)
+    # ==> make sure that the direction of fermionic frequency directions don't flip for anomalous contributions ∝ β
+    prefac = Gp_in.isFermi[2] ? -1 : 1
     # frequencies for new PartialCorrelators from partial fraction decomposition
-    Gp_out1.ωconvMat = vcat(vcat(Gp_in.ωconvMat[1:1,:]-Gp_in.ωconvMat[2:2,:], Gp_in.ωconvMat[1:1,:]), Gp_in.ωconvMat[3:D,:])
-    Gp_out2.ωconvMat = vcat(vcat(Gp_in.ωconvMat[1:1,:]-Gp_in.ωconvMat[2:2,:], Gp_in.ωconvMat[2:2,:]), Gp_in.ωconvMat[3:D,:])
+    Gp_out1.ωconvMat = vcat(vcat(prefac.*(Gp_in.ωconvMat[1:1,:]-Gp_in.ωconvMat[2:2,:]), Gp_in.ωconvMat[1:1,:]), Gp_in.ωconvMat[3:D,:])
+    Gp_out2.ωconvMat = vcat(vcat(prefac.*(Gp_in.ωconvMat[1:1,:]-Gp_in.ωconvMat[2:2,:]), Gp_in.ωconvMat[2:2,:]), Gp_in.ωconvMat[3:D,:])
 
-
-    """
-        set_DLR_MFfreqs!(Gp::TCI4Keldysh.PartialCorrelator_reg{D}; dlr_bos, dlr_fer)
-
-    Set Matsubara frequencies in tucker.ωs_legs to sparse DLR frequencies.
-    """
-    function set_DLR_MFfreqs!(Gp::TCI4Keldysh.PartialCorrelator_reg{D}; dlr_bos::DLRGrid, dlr_fer::DLRGrid) where{D}
-        for d in 1:D
-            Gp.tucker.ωs_legs[d] = Gp.isFermi[d] ? dlr_fer.ωn : dlr_bos.ωn
-        end 
-        return nothing
-    end
 
     # prepare frequency arguments to compute Kernel_t (see below) on sparse sampling points
     TCI4Keldysh.update_frequency_args!(Gp_out1)
@@ -509,39 +525,52 @@ function partial_fraction_decomp(Gp_in::PartialCorrelator_reg{D}; idx1::Int, idx
     @assert sum(.!Gp_out1.isFermi) ≤ 1 # it is not allowed to have more than one bosonic frequency!
     @assert sum(.!Gp_out2.isFermi) ≤ 1 # it is not allowed to have more than one bosonic frequency!
     
+
+    # construct Kernel_{n,i,j} := K(i ωₙ - ϵᵢ + ϵⱼ)
+    sz_center = size(Gp_out1.tucker.center)
+    ωn1 = (Gp_out1.isFermi[1] ? dlr_fer : dlr_bos).ωn
+    Kernel_t = 1. ./ (ωn1*im .- Gp_in.tucker.ωs_center[1]' .+ reshape(Gp_in.tucker.ωs_center[2], (1,1,sz_center[2])))
+    is_nan = .!isfinite.(Kernel_t)
+    @assert sum(is_nan) == 0     # for DLR-compressed Gp there should be no divergent ϵ=0-contribution
+
+    # re-fit DLR-coefficients along free dimension for each partial fraction
+    G_1 = dropdims(sum(reshape(Gp_out1.tucker.center, (1, sz_center...)) .* Kernel_t, dims=3), dims=3)
+    G_2 = dropdims(sum(reshape(Gp_out1.tucker.center, (1, sz_center...)) .* Kernel_t, dims=2), dims=2)
+    Adisc_shift1 = reshape(Gp_out1.tucker.legs[1] \ reshape(G_1, (length(ωn1), div(length(G_1), length(ωn1)))), sz_center)
+    Adisc_shift2 = reshape(Gp_out1.tucker.legs[1] \ reshape(G_2, (length(ωn1), div(length(G_2), length(ωn1)))), sz_center)
+    # maximum(abs.(G_1 - Gp_out1.tucker.legs[1] * Adisc_shift1))
+    # maximum(abs.(G_2 - Gp_out1.tucker.legs[1] * Adisc_shift2))
+    Gp_out1.tucker.center = Adisc_shift1
+    Gp_out2.tucker.center = Adisc_shift2
+    if prefac == 1
+        Gp_out1.tucker.center *= -1
+    else
+        Gp_out2.tucker.center *= -1
+    end
+
     ## treat anomalous Adisc:
     if sum(.!Gp_in.isFermi) == 1 # if there is a bosonic frequency in the original Gp
+        println("Pling!")
         if sum(.!Gp_out1.isFermi)==0 && sum(.!Gp_out2.isFermi)==1 
+            println("Beep! ")
             Gp_out1.Adisc_anoβ = Array{ComplexF64,D}(undef, zeros(Int, D)...) # delete Adisc_anoβ
-            if Gp_out2.isFermi != Gp_in.isFermi
-                Gp_out2.Adisc_anoβ = permutedims(Gp_in.Adisc_anoβ, (2,1,collect(3:D)...)) # permute dims if bosonic directions don't match
+            imax = argmax(.!Gp_out2.isFermi)
+            isin = argmax(size(Gp_out2.Adisc_anoβ) .== 1)
+            if imax != isin
+                println("Bupp! ")
+                Gp_out2.Adisc_anoβ = permutedims(Gp_out2.Adisc_anoβ, (2,1,collect(3:D)...)) # permute dims if bosonic directions don't match
             end
         elseif sum(.!Gp_out1.isFermi)==1 && sum(.!Gp_out2.isFermi)==0 
             Gp_out2.Adisc_anoβ = Array{ComplexF64,D}(undef, zeros(Int, D)...) # delete Adisc_anoβ
-            if Gp_out1.isFermi != Gp_in.isFermi
-                Gp_out1.Adisc_anoβ = permutedims(Gp_in.Adisc_anoβ, (2,1,collect(3:D)...)) # permute dims if bosonic directions don't match
+            imax = argmax(.!Gp_out1.isFermi)
+            isin = argmax(size(Gp_out1.Adisc_anoβ) .== 1)
+            if imax != isin
+                Gp_out1.Adisc_anoβ = permutedims(Gp_out1.Adisc_anoβ, (2,1,collect(3:D)...)) # permute dims if bosonic directions don't match
             end
         else
             @assert false
         end
     end
-
-    # construct Kernel_{n,i,j} := K(i ωₙ - ϵᵢ + ϵⱼ)
-    ωn1 = (Gp_out1.isFermi[1] ? dlr_fer : dlr_bos).ωn
-    Kernel_t = 1. ./ (reshape(ωn1*im, (1,1,length(ωn1))) .- Gp_in.tucker.ωs_center[1] .+ Gp_in.tucker.ωs_center[2]')
-    is_nan = .!isfinite.(Kernel_t)
-    @assert sum(is_nan) == 0     # for DLR-compressed Gp there should be no divergent ϵ=0-contribution
-
-    # re-fit DLR-coefficients along free dimension for each partial fraction
-    G_1 = transpose(dropdims(sum(Gp_out1.tucker.center .* Kernel_t, dims=2), dims=2))
-    G_2 = transpose(dropdims(sum(Gp_out1.tucker.center .* Kernel_t, dims=1), dims=1))
-    Adisc_shift1 = Gp_out1.tucker.legs[1] \ G_1
-    Adisc_shift2 = Gp_out1.tucker.legs[1] \ G_2
-    # maximum(abs.(G_1 - Gp_out1.tucker.legs[1] * Adisc_shift1))
-    # maximum(abs.(G_2 - Gp_out1.tucker.legs[1] * Adisc_shift2))
-    Gp_out1.tucker.center =-Adisc_shift1
-    Gp_out2.tucker.center =+Adisc_shift2
-
 
     TCI4Keldysh.update_frequency_args!(Gp_out1)
     TCI4Keldysh.update_frequency_args!(Gp_out2)
