@@ -99,6 +99,8 @@ function contract_1D_Kernels_w_Adisc_mp(Kernels, Adisc)
         #GC.gc()
     end
 
+    @assert sum(size(Acont) .- size.(Kernels, 1)) == 0
+
     return Acont
 end
 

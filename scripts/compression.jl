@@ -9,7 +9,7 @@ import TensorCrossInterpolation as TCI
 using Plots
 
 TCI4Keldysh.VERBOSE() = true
-TCI4Keldysh.DEBUG() = false
+TCI4Keldysh.DEBUG() = true
 
 
 begin
@@ -236,27 +236,206 @@ begin
     dlr_bos = DLRGrid(Euv, β, rtol, false) #initialize the DLR parameters and basis
     @assert maximum(abs.(dlr_fer.ω-dlr_bos.ω)) < 1e-13
 end
-Gp_in = deepcopy(Gs[1].Gps[2])
+sum(abs.(dlr_bos.ω) .< 1e-10)
+dlr_bos.ω[30:40]
 
-TCI4Keldysh.discreteLehmannRep4Gp!(Gp_in; dlr_bos, dlr_fer)
+#begin
+    #ip = 3
+for ip in 1:6
+    Gp_in = deepcopy(Gs[1].Gps[ip])
+    TCI4Keldysh.discreteLehmannRep4Gp!(Gp_in; dlr_bos, dlr_fer)
+    #abs.(Gp_in.tucker.ωs_center[1])[25:35]
 
+
+    #reg(x) = expm1(x*100) / (exp(x*100)+1)
+    #plot(Gp_in.tucker.ωs_legs[1], reg.(Gp_in.tucker.ωs_legs[1]))
+    #plot(Gp_in.tucker.ωs_legs[1], tanh.(reg.(Gp_in.tucker.ωs_legs[1])))
+
+    # check DLR compression:
+    vals_Gp_orig = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gs[1].Gps[ip]);
+    vals_Gp_orig2= TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gs[1].Gps[ip]);
+
+    vals_Gp_dlrd = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gp_in);
+    vals_Gp_dlrd2 = Gp_in.tucker[:,:];
+    @assert maximum(abs.(vals_Gp_dlrd - vals_Gp_orig)) / maximum(abs.(vals_Gp_dlrd)) < rtol
+    maximum(abs.(vals_Gp_dlrd2 - vals_Gp_orig)) / maximum(abs.(vals_Gp_dlrd2))
+    maximum(abs.(vals_Gp_dlrd2 - vals_Gp_dlrd)) / maximum(abs.(vals_Gp_dlrd2))
+
+    vals_ano_Gp_orig = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gs[1].Gps[ip]);
+    vals_ano_Gp_dlrd = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gp_in);
+    #maximum(abs.(vals_ano_Gp_dlrd - vals_ano_Gp_orig)) / maximum(abs.(vals_ano_Gp_orig))
+#end
+
+#Gp_in.Adisc_anoβ
+
+
+
+idx1 = 1
+idx2 = 2
+
+#dlr_bos.ωn#[25:35]
+
+#dlr_bos.n[25:35]
+Gp_out1, Gp_out2 = TCI4Keldysh.partial_fraction_decomp(Gp_in; idx1, idx2, dlr_bos, dlr_fer);
+end
+#heatmap(real.(Gp_in.tucker.center))
+#heatmap(real.(Gp_out1.tucker.center))
+#heatmap(real.(Gp_out2.tucker.center))
+# check whether partial fraction decomposition worked:
+vals_orig = TCI4Keldysh.precompute_all_values_MF(Gp_in);
+vals_pfd1 = TCI4Keldysh.precompute_all_values_MF(Gp_out1)
+vals_pfd2 = TCI4Keldysh.precompute_all_values_MF(Gp_out2)
+diff = vals_pfd1+vals_pfd2-vals_orig
+maximum(abs.(diff))
+imax = Tuple(argmax(abs.(diff))) 
+#plot(real.([vals_orig[imax[1],:], (vals_pfd1)[imax[1],:], vals_pfd2[imax[1],:]]), labels=["orig" "new" "zero"])
+plot(real.([vals_orig[imax[1],:], ((vals_pfd1)[imax[1],:] + vals_pfd2[imax[1],:])]), labels=["orig" "new" "zero"])
+plot(real.([vals_orig[:,imax[2]]- (vals_pfd1)[:,imax[2]] + vals_pfd2[:,imax[2]]]), labels=["orig" "new" "zero"])
+
+Gp_out2.ωconvMat
+# check whether partial fraction decomposition worked for 3D:
+
+
+
+
+
+
+#@assert 1 ≤ idx1 ≤ idx2 ≤ D
+
+Gp_out1 = deepcopy(Gp_in)
+
+# reorder internal frequencies to bring idx1 and idx2 to the front
+begin
+    idxs_rest = Vector{Int}([collect(1:idx1-1); collect(idx1+1:idx2-1); collect(idx2+1:D)])
+    idx_order_new = [[idx1, idx2]; idxs_rest]
+    TCI4Keldysh.permute_Adisc_indices!(Gp_out1, idx_order_new)
+end
+
+Gp_out2 = deepcopy(Gp_out1)
+
+# decide whether the new frequency should be (v1 - v2) or (v2 - v1)
+# ==> make sure that the direction of fermionic frequency directions don't flip for anomalous contributions ∝ β
+prefac = Gp_in.isFermi[2] ? 1 : -1
+# frequencies for new PartialCorrelators from partial fraction decomposition
+Gp_out1.ωconvMat = vcat(vcat(prefac.*(Gp_in.ωconvMat[1:1,:]-Gp_in.ωconvMat[2:2,:]), Gp_in.ωconvMat[1:1,:]), Gp_in.ωconvMat[3:D,:])
+Gp_out2.ωconvMat = vcat(vcat(prefac.*(Gp_in.ωconvMat[1:1,:]-Gp_in.ωconvMat[2:2,:]), Gp_in.ωconvMat[2:2,:]), Gp_in.ωconvMat[3:D,:])
+
+
+# prepare frequency arguments to compute Kernel_t (see below) on sparse sampling points
+TCI4Keldysh.update_frequency_args!(Gp_out1)
+TCI4Keldysh.update_frequency_args!(Gp_out2)
+TCI4Keldysh.set_DLR_MFfreqs!(Gp_out1; dlr_bos, dlr_fer)
+TCI4Keldysh.set_DLR_MFfreqs!(Gp_out2; dlr_bos, dlr_fer)
+TCI4Keldysh.update_kernels!(Gp_out1)
+TCI4Keldysh.update_kernels!(Gp_out2)
+@assert maximum(abs.(Gp_out1.tucker.ωs_legs[1] - Gp_out2.tucker.ωs_legs[1])) < 1e-14
+@assert sum(.!Gp_out1.isFermi) ≤ 1 # it is not allowed to have more than one bosonic frequency!
+@assert sum(.!Gp_out2.isFermi) ≤ 1 # it is not allowed to have more than one bosonic frequency!
+
+
+# construct Kernel_{n,i,j} := K(i ωₙ - ϵᵢ + ϵⱼ)
+sz_center = size(Gp_out1.tucker.center)
+ωn1 = (Gp_out1.isFermi[1] ? dlr_fer : dlr_bos).ωn
+Kernel_t = 1. ./ (ωn1*im .- Gp_in.tucker.ωs_center[1]' .+ reshape(Gp_in.tucker.ωs_center[2], (1,1,sz_center[2])))
+is_nan = .!isfinite.(Kernel_t)
+Kernel_t[is_nan] .= 0.
+iω0 = argmax(is_nan)[1]
+println("nan at", argmax(is_nan))
+
+
+####Adisc_ano_temp = Gp_in.tucker.center[is_nan[iω0,:,:]]
+####
+####Gp_ano = TCI4Keldysh.precompute_reg_div_values_MF_without_ωconv(1, Adisc_ano_temp, Gp_in.tucker.legs)
+####
+####Gp_in.Adisc_anoβ = fit_tucker_center(Gp_ano_data, Gp_in.tucker.legs)
+
+####D= 2
+####d = 1
+####
+####Kernels_ano = [Gp_in.tucker.legs[1:d-1]..., Gp_in.tucker.legs[d+1:D]...]
+####        
+####            values_ano = zeros(ComplexF64, size.(Kernels_ano, 1)...)
+####            for dd in 1:D-1
+####                Kernels_tmp = [Kernels_ano...]
+####                #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
+####                Kernels_tmp[dd] = Kernels_tmp[dd].^2
+####                #println("maxima after: ", maximum(abs.(Kernels_tmp[dd])))
+####                values_ano .+= TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(Kernels_tmp, Adisc_ano_temp)
+####            end
+####            values_ano .*= -0.5
+
+sum(is_nan) > 0
+#if sum(is_nan) > 0
+    is_ωbos0 = is_nan[:,1,1]
+    iω0 = argmax(is_nan)[1]
+    #Adisc_ano_temp = Gp_in.tucker.center[is_ωbos0, [Colon() for _ in 2:D]...]
+    Adisc_ano_temp = Gp_in.tucker.center[is_nan[iω0,:,:], [Colon() for _ in 3:D]...]
+    println("size of Adisc_ano_temp: ", size(Adisc_ano_temp))
+
+#    TCI4Keldysh.update_frequency_args!(Gp_out1)
+    G_ano = TCI4Keldysh.precompute_reg_div_values_MF_without_ωconv(1, Adisc_ano_temp, Gp_out1.tucker.legs)
+    #G_ano = reshape(G_ano, (1, size(G_ano)...))
+    
+    println("size of G_ano: ", size(G_ano))
+
+    A_ano = TCI4Keldysh.fit_tucker_center(G_ano, Gp_out1.tucker.legs[2:end])
+
+    view(G_1, iω0, [Colon() for _ in 2:D]...) .+= A_ano
+    view(G_2, iω0, [Colon() for _ in 2:D]...) .+= A_ano
+
+end
+D = 2
+G_ano
+A_ano
+view(G_1, iω0, [Colon() for _ in 2:D]...)
+plot(dlr_fer.ωn[2:end], 2*reverse(-real.(G_ano))[1:end-1], xlims=[-0.2,0.2])
+plot!(Gs[1].Gps[ip].tucker.ωs_legs[2], real.([vals_orig[imax[1],:]- ((vals_pfd1)[imax[1],:] + vals_pfd2[imax[1],:])]), labels=["orig" "new" "zero"])
+plot(-real.(G_ano))
+dlr_fer.ωn
+
+
+# re-fit DLR-coefficients along free dimension for each partial fraction
+G_1 = dropdims(sum(reshape(Gp_out1.tucker.center, (1, sz_center...)) .* Kernel_t, dims=3), dims=3)
+G_2 = dropdims(sum(reshape(Gp_out1.tucker.center, (1, sz_center...)) .* Kernel_t, dims=2), dims=2)
+Adisc_shift1 = reshape(Gp_out1.tucker.legs[1] \ reshape(G_1, (length(ωn1), div(length(G_1), length(ωn1)))), sz_center)
+Adisc_shift2 = reshape(Gp_out1.tucker.legs[1] \ reshape(G_2, (length(ωn1), div(length(G_2), length(ωn1)))), sz_center)
+# maximum(abs.(G_1 - Gp_out1.tucker.legs[1] * Adisc_shift1))
+# maximum(abs.(G_2 - Gp_out1.tucker.legs[1] * Adisc_shift2))
+Gp_out1.tucker.center = Adisc_shift1
+Gp_out2.tucker.center = Adisc_shift2
+if prefac == 1
+    Gp_out1.tucker.center *= -1
+else
+    Gp_out2.tucker.center *= -1
+end
+
+
+
+
+
+
+
+
+
+# same for 3D: 
+
+using Random
+
+G3D.Gps[2].isFermi
+G3D.Gps[2].tucker.ωs_center[1][12]
+G3D.Gps[2].tucker.ωs_center[1][88]
+vals = LinRange(-D,D,100)
+view(G3D.Gps[2].tucker.center, 12:88, 12:88, 12:88)
+randn!(view(G3D.Gps[2].tucker.center, 12:88, 12:88, 12:88))
 Gp3D_in = deepcopy(G3D.Gps[2])
 TCI4Keldysh.discreteLehmannRep4Gp!(Gp3D_in; dlr_bos, dlr_fer)
 
 
-# check DLR compression:
-vals_Gp_orig = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gs[1].Gps[2]);
-vals_Gp_dlrd = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gp_in);
-maximum(abs.(vals_Gp_dlrd - vals_Gp_orig)) / maximum(abs.(vals_Gp_dlrd))
-
-vals_ano_Gp_orig = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gs[1].Gps[2]);
-vals_ano_Gp_dlrd = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gp_in);
-maximum(abs.(vals_ano_Gp_dlrd - vals_ano_Gp_orig)) / maximum(abs.(vals_ano_Gp_orig))
-
-# same for 3D: 
 vals_Gp_3D_orig = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(G3D.Gps[2]);
 vals_Gp_3D_dlrd = TCI4Keldysh.precompute_reg_values_MF_without_ωconv(Gp3D_in);
+vals_Gp_3D_dlrd2= Gp3D_in.tucker[:,:,:];
 maximum(abs.(vals_Gp_3D_dlrd - vals_Gp_3D_orig)) / maximum(abs.(vals_Gp_3D_dlrd))
+maximum(abs.(vals_Gp_3D_dlrd2 - vals_Gp_3D_orig)) / maximum(abs.(vals_Gp_3D_dlrd))
 
 vals_ano_Gp_3D_orig = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(G3D.Gps[2]);
 vals_ano_Gp_3D_dlrd = TCI4Keldysh.precompute_ano_values_MF_without_ωconv(Gp3D_in);
@@ -264,23 +443,6 @@ maximum(abs.(vals_ano_Gp_3D_dlrd - vals_ano_Gp_3D_orig)) / maximum(abs.(vals_ano
 
 
 
-
-
-idx1 = 1
-idx2 = 2
-
-Gp_out1, Gp_out2 = TCI4Keldysh.partial_fraction_decomp(Gp_in; idx1, idx2, dlr_bos, dlr_fer)
-
-# check whether partial fraction decomposition worked:
-vals_orig = TCI4Keldysh.precompute_all_values_MF(Gp_in);
-vals_pfd1 = TCI4Keldysh.precompute_all_values_MF(Gp_out1)
-vals_pfd2 = TCI4Keldysh.precompute_all_values_MF(Gp_out2)
-diff = vals_pfd1+vals_pfd2-vals_orig
-maximum(abs.(diff))
-imax = argmax(abs.(diff))
-plot(real.([vals_orig[imax[1],:], (vals_pfd1)[imax[1],:], vals_pfd2[imax[1],:]]), labels=["orig" "new" "zero"])
-
-# check whether partial fraction decomposition worked for 3D:
 
 idx1 = 2
 idx2 = 3

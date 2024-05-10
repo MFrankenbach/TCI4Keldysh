@@ -213,6 +213,26 @@ end
 #### precomputing all values (WITH frequency rotation): ####
 ##################################
 
+function precompute_reg_div_values_MF_without_ωconv(d::Int, Adisc_ano::Array{ComplexF64,D}, legs::Vector{Matrix{ComplexF64}}) where{D}
+
+
+    @assert D == length(legs)-1 "Incompatible D=$D and length(legs)=$(length(legs))"
+    #println("size of Adisc_ano: ", size(Adisc_ano))
+    # compute anomalous contribution:
+    Kernels_ano = [legs[1:d-1]..., legs[d+1:D+1]...]
+
+    values_ano = zeros(ComplexF64, size.(Kernels_ano, 1)...)
+    for dd in 1:D
+        Kernels_tmp = [Kernels_ano...]
+        #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
+        Kernels_tmp[dd] = Kernels_tmp[dd].^2
+        #println("maxima after: ", maximum(abs.(Kernels_tmp[dd])))
+        values_ano .+= contract_1D_Kernels_w_Adisc_mp(Kernels_tmp, Adisc_ano)
+    end
+    values_ano .*= -0.5
+
+    return values_ano
+end
 
 function precompute_reg_values_MF_without_ωconv(
     Gp :: PartialCorrelator_reg{D},
@@ -235,19 +255,11 @@ function precompute_reg_values_MF_without_ωconv(
             #println("Has anomalous contribution: ")
             Adisc_ano = dropdims(Gp.tucker.center[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
 
-            #println("size of Adisc_ano: ", size(Adisc_ano))
-            # compute anomalous contribution:
-            Kernels_ano = [Gp.tucker.legs[1:d-1]..., Gp.tucker.legs[d+1:D]...]
-        
-            values_ano = zeros(ComplexF64, size.(Kernels_ano, 1)...)
-            for dd in 1:D-1
-                Kernels_tmp = [Kernels_ano...]
-                #println("maxima before: ", maximum(abs.(Kernels_tmp[dd])))
-                Kernels_tmp[dd] = Kernels_tmp[dd].^2
-                #println("maxima after: ", maximum(abs.(Kernels_tmp[dd])))
-                values_ano .+= contract_1D_Kernels_w_Adisc_mp(Kernels_tmp, Adisc_ano)
-            end
-            values_ano .*= -0.5
+            values_ano = precompute_reg_div_values_MF_without_ωconv(d, Adisc_ano, Gp.tucker.legs)
+            #println("diff between the two value_ano's: ", maximum(abs.(values_ano - values_ano2)))
+            #println("magnitude of values_ano = ", maximum(abs.(values_ano)))
+            #println("magnitude of rest = ", maximum(abs.(data_unrotated)))
+
     
             #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
             #println("size of view: ", size(myview))
@@ -277,7 +289,6 @@ function precompute_ano_values_MF_without_ωconv(
         is_zero_ωs_int = abs.(Gp.tucker.ωs_legs[d]) .< 1.e-10
         #is_zero_ωdisc = abs.(Gp.tucker.ωs_center[d]) .< 1.e-10
         if any(is_zero_ωs_int)  ## currently only support single bosonic frequency
-            println("Has anomalous contribution: ")
             
             #Adisc_anoβ_temp = dropdims(Gp.Adisc_anoβ[[Colon() for _ in 1:d-1]..., is_zero_ωdisc, [Colon() for _ in d+1:D]...], dims=d)
             #println("size of Adisc_ano: ", size(Adisc_ano))
@@ -364,6 +375,37 @@ function precompute_all_values_KF(
 end
 
 
+function fit_tucker_center(Gp_data::Array{T,D}, legs::Vector{Matrix{T}}) where {T,D}
+    @assert length(legs) == D "The number of legs ($(length(legs))) must match the dimensions of Gp_data (D=$D)"
+
+    center = deepcopy(Gp_data)
+    for d in 1:D
+
+        if size(center, d) > 1 # dummy dimensions need no fitting
+            # transform array to matrix:
+            g, partialsize = Lehmann._tensor2matrix(center, Val(d))
+            # fit coeffients by solving matrix equation:
+            coeffs_t = legs[d] \ g
+            # update center:
+            center = Lehmann._matrix2tensor(coeffs_t, partialsize, Val(d))           
+        end 
+        
+    end
+
+
+    # check validity of fit:
+    if DEBUG() && length(Gp_data) > 0 && all(size(Gp_data).>1)
+        compare = contract_1D_Kernels_w_Adisc_mp(legs, center)
+        absdev = maximum(abs.(Gp_data - compare))
+        #println("deviation in fit: ", absdev)
+        @assert absdev < 1e-10
+    end
+
+
+    return center
+end
+
+
 """
     discreteLehmannRep4Gp!(Gp_in::TCI4Keldysh.PartialCorrelator_reg{D}; kwargs...)
 
@@ -374,10 +416,6 @@ function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGri
     @assert  dlr_fer.isFermi
 
     dlrgrids_here = [Gp_in.isFermi[i] ? dlr_fer : dlr_bos for i in 1:D]
-    #Nωs_legs_div2 = div.(length.(Gp_in.tucker.ωs_legs).+2, D)
-    #idxs = [dlrgrids_here[d].n .+ Nωs_legs_div2[d] for d in 1:D]
-    #Gp_data_before = Gp_in.tucker[idxs...]
-    
     ωs_legs_before = deepcopy(Gp_in.tucker.ωs_legs)
 
     if DEBUG()
@@ -390,66 +428,25 @@ function discreteLehmannRep4Gp!(Gp_in::PartialCorrelator_reg{D}; dlr_bos::DLRGri
         Gp_in.tucker.ωs_legs[d] = dlrgrids_here[d].ωn
     end
     update_kernels!(Gp_in)
-    Gp_data = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+    Gp_data = precompute_reg_values_MF_without_ωconv(Gp_in) # Gp_in.tucker[[Colon() for _ in 1:D]...]
     Gp_ano_data = precompute_ano_values_MF_without_ωconv(Gp_in) / (-0.5*dlrgrids_here[1].β) # .tucker[[Colon() for _ in 1:D]...]
     #println("max dev:\t", maximum(abs.(Gp_data - Gp_data_before)))
+
+    # update internal frequencies and kernels:
     for d in 1:D
-        #d = 1
-        #println("d = $d")
         Gp_in.tucker.legs[d] = TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d], dlrgrids_here[d].ω)
         #Gp_in.tucker.legs[d] = Lehmann.Spectral.kernelΩ(Float64, Val(Gp_in.isFermi[d]), Val(:none), collect(-Nωs_legs_div2[d]+1:Nωs_legs_div2[d]-1-Gp_in.isFermi[d]), dlrgrids_here[d].ω, dlrgrids_here[d].β, true)#-    dlrgrids_here[d].kernel_nc
         #Gp_in.tucker.legs[d] = Lehmann.Spectral.kernelΩ(Float64, Val(Gp_in.isFermi[d]), Val(:none), dlrgrids_here[d].n, dlrgrids_here[d].ω, dlrgrids_here[d].β, true)#-    dlrgrids_here[d].kernel_nc
-        
-        g, partialsize = Lehmann._tensor2matrix(Gp_data, Val(d))
-        println()
-        coeffs_t = Gp_in.tucker.legs[d] \ g
-        coeffs = Lehmann._matrix2tensor(coeffs_t, partialsize, Val(d))
-        #coeffs = matfreq2dlr(dlrgrids_here[d], Gp_data; axis=d)
-
-        # check validity of fit:
-        if D ≤ 2
-            compare = d == 1 ? Gp_in.tucker.legs[d] * coeffs : coeffs * transpose(Gp_in.tucker.legs[d])
-            @assert maximum(abs.(Gp_data - compare)) < 1e-13
-            @assert maximum(abs.(Gp_in.tucker.ωs_legs[d] - dlrgrids_here[d].ωn)) < 1e-13
-        end
-        Gp_data = coeffs
-        
-
-        if size(Gp_ano_data, d) > 1
-            
-            println("anomalous term in d=$d:")
-
-            g_ano, partialsize_ano = Lehmann._tensor2matrix(Gp_ano_data, Val(d))
-            coeffs_ano_t = Gp_in.tucker.legs[d] \ g_ano
-            coeffs_ano = Lehmann._matrix2tensor(coeffs_ano_t, partialsize_ano, Val(d))
-
-            if D ≤ 2
-                compare_ano = d == 1 ? Gp_in.tucker.legs[d] * coeffs_ano : coeffs_ano * transpose(Gp_in.tucker.legs[d])
-                @assert maximum(abs.(Gp_ano_data - compare_ano)) < 1e-13
-                @assert maximum(abs.(Gp_in.tucker.ωs_legs[d] - dlrgrids_here[d].ωn)) < 1e-13
-            end
-            Gp_ano_data = coeffs_ano 
-        
-        end
-
-
         Gp_in.tucker.ωs_center[d] = dlrgrids_here[d].ω
-
-        
-        #maximum(abs.(TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d][idxs[d]], dlrgrids_here[d].ω) +    dlrgrids_here[d].kernel_nc .* sign.(dlrgrids_here[d].ω)'))
-        #Lehmann.Spectral.kernelΩ(Float64, Val(Gp.isFerm[d]), Val(:none), dlrgrids_here[d].n, dlrgrids_here[d].ω, dlrgrids_here[d].β, false)-    dlrgrids_here[d].kernel_nc.* sign.(dlrgrids_here[d].ω)'
-        #Gp_in.tucker.ωs_legs[d][idxs[d]] - dlrgrids_here[d].n*2*π*T#- dlrgrids_here[d].ωn
-        #1 ./ TCI4Keldysh.get_regular_1D_MF_Kernel(Gp_in.tucker.ωs_legs[d][idxs[d]], dlrgrids_here[d].ω)[:,28] ./ (1 ./ dlrgrids_here[d].kernel_nc[:,28])
-        #1 ./ Lehmann.Spectral.kernelΩ(Float64, Val(Gp.isFerm[d]), Val(:none), dlrgrids_here[d].n, dlrgrids_here[d].ω, dlrgrids_here[d].β, false)
-        #dlrgrids_here[d].ωn[29]
     end
-    Gp_in.tucker.center = Gp_data
-    Gp_in.Adisc_anoβ = Gp_ano_data
+
+    Gp_in.tucker.center = fit_tucker_center(Gp_data, Gp_in.tucker.legs)
+    Gp_in.Adisc_anoβ = fit_tucker_center(Gp_ano_data, Gp_in.tucker.legs)
     Gp_in.tucker.ωs_legs = ωs_legs_before
     update_frequency_args!(Gp_in)
 
     if DEBUG()
-        Gp_data_after = precompute_reg_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
+        Gp_data_after = precompute_reg_values_MF_without_ωconv(Gp_in) # Gp_in.tucker[[Colon() for _ in 1:D]...]  # 
         Gp_ano_data_after = precompute_ano_values_MF_without_ωconv(Gp_in) # .tucker[[Colon() for _ in 1:D]...]
 
         @VERBOSE "abs dev of Gp due to DLR compression (reg): $(maximum(abs.(Gp_data_after - Gp_data_before)) / maximum(abs.(Gp_data_before)))\n"
@@ -529,13 +526,29 @@ function partial_fraction_decomp(Gp_in::PartialCorrelator_reg{D}; idx1::Int, idx
     # construct Kernel_{n,i,j} := K(i ωₙ - ϵᵢ + ϵⱼ)
     sz_center = size(Gp_out1.tucker.center)
     ωn1 = (Gp_out1.isFermi[1] ? dlr_fer : dlr_bos).ωn
-    Kernel_t = 1. ./ (ωn1*im .- Gp_in.tucker.ωs_center[1]' .+ reshape(Gp_in.tucker.ωs_center[2], (1,1,sz_center[2])))
+    Kernel_t = 1. ./ (ωn1*im .- prefac * (Gp_in.tucker.ωs_center[1]' .- reshape(Gp_in.tucker.ωs_center[2], (1,1,sz_center[2]))))
     is_nan = .!isfinite.(Kernel_t)
-    @assert sum(is_nan) == 0     # for DLR-compressed Gp there should be no divergent ϵ=0-contribution
+    Kernel_t[is_nan] .= 0.
+
+
 
     # re-fit DLR-coefficients along free dimension for each partial fraction
     G_1 = dropdims(sum(reshape(Gp_out1.tucker.center, (1, sz_center...)) .* Kernel_t, dims=3), dims=3)
     G_2 = dropdims(sum(reshape(Gp_out1.tucker.center, (1, sz_center...)) .* Kernel_t, dims=2), dims=2)
+
+    if sum(is_nan) > 0
+        iω0 = argmax(is_nan)[1]
+        Adisc_ano_temp = Gp_in.tucker.center[is_nan[iω0,:,:], [Colon() for _ in 3:D]...]
+        
+        G_ano = precompute_reg_div_values_MF_without_ωconv(1, Adisc_ano_temp, Gp_out1.tucker.legs)
+        A_ano = fit_tucker_center(G_ano, Gp_out1.tucker.legs[2:end])
+        view(G_1, iω0, [Colon() for _ in 2:D]...) .+= (+prefac)*A_ano
+        view(G_2, iω0, [Colon() for _ in 2:D]...) .+= (-prefac)*A_ano
+
+    end
+
+#    println("max1: ", maximum(abs.(view(G_1, iω0, [Colon() for _ in 2:D]...))))
+
     Adisc_shift1 = reshape(Gp_out1.tucker.legs[1] \ reshape(G_1, (length(ωn1), div(length(G_1), length(ωn1)))), sz_center)
     Adisc_shift2 = reshape(Gp_out1.tucker.legs[1] \ reshape(G_2, (length(ωn1), div(length(G_2), length(ωn1)))), sz_center)
     # maximum(abs.(G_1 - Gp_out1.tucker.legs[1] * Adisc_shift1))
@@ -550,14 +563,11 @@ function partial_fraction_decomp(Gp_in::PartialCorrelator_reg{D}; idx1::Int, idx
 
     ## treat anomalous Adisc:
     if sum(.!Gp_in.isFermi) == 1 # if there is a bosonic frequency in the original Gp
-        println("Pling!")
         if sum(.!Gp_out1.isFermi)==0 && sum(.!Gp_out2.isFermi)==1 
-            println("Beep! ")
             Gp_out1.Adisc_anoβ = Array{ComplexF64,D}(undef, zeros(Int, D)...) # delete Adisc_anoβ
             imax = argmax(.!Gp_out2.isFermi)
             isin = argmax(size(Gp_out2.Adisc_anoβ) .== 1)
             if imax != isin
-                println("Bupp! ")
                 Gp_out2.Adisc_anoβ = permutedims(Gp_out2.Adisc_anoβ, (2,1,collect(3:D)...)) # permute dims if bosonic directions don't match
             end
         elseif sum(.!Gp_out1.isFermi)==1 && sum(.!Gp_out2.isFermi)==0 
@@ -570,10 +580,23 @@ function partial_fraction_decomp(Gp_in::PartialCorrelator_reg{D}; idx1::Int, idx
         else
             @assert false
         end
+
+    else    # if there are no bosonic frequencies in the original Gp, there is one in the new Gps:
+
     end
 
     TCI4Keldysh.update_frequency_args!(Gp_out1)
     TCI4Keldysh.update_frequency_args!(Gp_out2)
+
+    if DEBUG()
+        vals_orig = TCI4Keldysh.precompute_all_values_MF(Gp_in);
+        vals_pfd1 = TCI4Keldysh.precompute_all_values_MF(Gp_out1)
+        vals_pfd2 = TCI4Keldysh.precompute_all_values_MF(Gp_out2)
+        diff = vals_pfd1+vals_pfd2-vals_orig
+        maxdev = maximum(abs.(diff))
+        println("Sup-norm deviation of original to decomposed Gps: \t", maxdev)
+        
+    end
 
     return Gp_out1, Gp_out2
 end
