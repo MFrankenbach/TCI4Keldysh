@@ -114,12 +114,13 @@ end
 
 
 function precompute_all_values(G :: FullCorrelator_MF{D}) ::Array{ComplexF64,D} where{D}
-    #result = precompute_all_values_MF(G.Gps[1]) .* G.Gp_to_G[1]
-    #for i in 2:length(G.Gps)
-    #    result .+= precompute_all_values_MF(G.Gps[i]) .* G.Gp_to_G[i]
-    #end
-    #return result
-    return  sum(gp -> precompute_all_values_MF(gp), G.Gps)
+    result = precompute_all_values_MF(G.Gps[1]) .* G.Gp_to_G[1]
+    @show (size(result), eltype(result))
+    for i in 2:length(G.Gps)
+       result .+= precompute_all_values_MF(G.Gps[i]) .* G.Gp_to_G[i]
+    end
+    return result
+    # return  sum(gp -> precompute_all_values_MF(gp), G.Gps)
 end
 
 

@@ -776,3 +776,11 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     # siteinds(res)
     return res
 end
+
+function worstcase_bonddim(localdims::Vector{Int})
+    bonddims = fill(0, length(localdims)-1)
+    for i in eachindex(bonddims)
+        bonddims[i] = min(reduce(*, localdims[1:i]), reduce(*, localdims[i+1:end]))
+    end
+    return bonddims
+end

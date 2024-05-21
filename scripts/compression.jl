@@ -181,13 +181,13 @@ begin
     
     
 
-    filename = "test/tests/data_PSF_2D.h5"
-    f = h5open(filename, "r")
-    Adisc = read(f, "Adisc")
-    ωdisc = read(f, "ωdisc")
-    close(f)
+    # filename = "test/tests/data_PSF_2D.h5"
+    # f = h5open(filename, "r")
+    # Adisc = read(f, "Adisc")
+    # ωdisc = read(f, "ωdisc")
+    # close(f)
 
-    Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
+    # Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
 
     ### System parameters of SIAM ### 
     D = 1.
@@ -217,9 +217,17 @@ begin
     
          ]
     
+    # build full correlator HERE
+    # flavor_idx : spin, flavor 1: upup, flavor 2: updown
+    # ωconvMat : frequency parametrization
+    # these are 4pt Greens functions
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    # asymptotic classes
+    # two-point
     Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; T, flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
+    # one-point
     K1ts    = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "Q34"]; T, flavor_idx=i, ωs_ext=(ωbos,), ωconvMat=ωconvMat_K1t, name="SIAM 2pG") for i in 1:2];
+    # three-point
     G3D     = TCI4Keldysh.FullCorrelator_MF(PSFpath*"/4pt/", ["F1","F1dag", "F3", "F3dag"]; T, flavor_idx=1, ωs_ext=(ωbos,ωfer,ωfer), ωconvMat=ωconvMat_t, name="SIAM 4pG", is_compactAdisc=false)
     #Gp = Gs[1].Gps[1]#TCI4Keldysh.PartialCorrelator_reg("MF", Adisc, ωdisc, ωs_ext, ωconv)
 end
