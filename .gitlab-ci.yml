@@ -29,7 +29,7 @@
     - julia --project=.ci -e 'using Pkg; Pkg.instantiate()'
     # Let's run the tests. Substitute `coverage = false` below, if you do not
     # want coverage results.
-    - julia -e 'using Pkg; Pkg.develop(pwd()); Pkg.build("TCI4Keldysh"); Pkg.test("TCI4Keldysh"; coverage = true)'
+    - julia -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.build("TCI4Keldysh"); Pkg.test("TCI4Keldysh"; coverage = true)'
     # Comment out below if you do not want coverage results.
     - julia -e 'using Pkg; Pkg.add("Coverage");
       import TCI4Keldysh; cd(joinpath(dirname(pathof(TCI4Keldysh)), ".."));
@@ -74,7 +74,7 @@ pages:
   stage: deploy
   script:
     - apt-get update -qq && apt-get install -y git  # needed by Documenter
-    - julia -e 'using Pkg; Pkg.develop(pwd()); Pkg.build("TCI4Keldysh");'  # rebuild Julia (can be put somewhere else I'm sure
+    - julia -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.build("TCI4Keldysh");'  # rebuild Julia (can be put somewhere else I'm sure
     - julia -e 'using Pkg; import TCI4Keldysh; Pkg.add("Documenter")'  # install Documenter
     - julia --color=yes docs/make.jl  # make documentation
     - mv docs/build public  # move to the directory picked up by Gitlab pages
