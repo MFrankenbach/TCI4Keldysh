@@ -229,6 +229,7 @@ struct FullCorrelator_KF{D}
         path::String, 
         Ops::Vector{String}
         ; 
+        T::Float64,
         flavor_idx::Int, 
         ωs_ext::NTuple{D,Vector{Float64}}, 
         ωconvMat::Matrix{Int}, 
@@ -251,22 +252,22 @@ struct FullCorrelator_KF{D}
         print("Loading stuff: ")
         @time begin
         perms = permutations(collect(1:D+1))
-        isBos = (o -> o[1] == 'Q').(Ops)
+        isBos = (o -> o[1] == 'Q' && length(o) == 3).(Ops)
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
         end
         print("Creating Broadened PSFs: ")
         function get_Acont_p(i, p)
             ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
-            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=ωs_int, broadening_kwargs...)
+            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
         end
         @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
 
-        return FullCorrelator_KF(Aconts; isBos, ωs_ext, ωconvMat, name=[Ops; name])
+        return FullCorrelator_KF(Aconts; T, isBos, ωs_ext, ωconvMat, name=[Ops; name])
     end
 
 
-    function FullCorrelator_KF(Aconts::Vector{<:AbstractTuckerDecomp{D}}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
+    function FullCorrelator_KF(Aconts::Vector{<:AbstractTuckerDecomp{D}}; T::Float64, isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if size(ωconvMat) != (D+1, D)
@@ -303,7 +304,7 @@ struct FullCorrelator_KF{D}
         for (i,sp) in enumerate(Aconts)
             sp.center .*= Gp_to_G[i]
         end
-        Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i] .+0im, D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
+        Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
         GR_to_GK = get_GR_to_GK(D)
         end
         return new{D}(name, Gps, Gp_to_G, GR_to_GK, ωs_ext, ωconvMat, isBos)

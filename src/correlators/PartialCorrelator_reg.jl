@@ -81,12 +81,12 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
 
         ωs_int, ωconvOff, isFermi = _trafo_ω_args(ωs_ext, ωconvMat)
         #println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
-        δωcont = get_ω_binwidths(Acont.ωconts[1])
-        tucker = deepcopy(Acont)
+        δωcont = get_ω_binwidths(Acont.ωs_legs[1])
+        tucker = TuckerDecomposition(Acont.center .+ 0im, Acont.legs; ωs_center=Acont.ωs_center, ωs_legs=Acont.ωs_legs)#deepcopy(Acont)
         if formalism == "MF"
             # 1.: rediscretization of broadening kernel
             # 2.: contraction with regular kernel
-            @TIME tucker.legs = [get_regular_1D_MF_Kernel(ωs_int[i], Acont.ωcont) * (get_ω_binwidths(Acont.ωconts[i]) .* Acont.legs[i]) for i in 1:D] "Constructing 1D Kernels (for MF)."
+            @TIME tucker.legs = [get_regular_1D_MF_Kernel(ωs_int[i], Acont.ωs_legs) * (get_ω_binwidths(Acont.ωs_legs[i]) .* Acont.legs[i]) for i in 1:D] "Constructing 1D Kernels (for MF)."
         else
             # check that grid is equidistant:
             if maximum(abs.(diff(δωcont) )) > 1e-10
@@ -369,7 +369,7 @@ function precompute_all_values_KF(
     strides4rot = ((strides_internal * Gp.ωconvMat)...,)
     offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
     sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)..., D+1), (strides4rot..., strides(data_unrotated)[D+1]), offset4rot)
-    res = Array{ComplexF64,D}(sv[[Colon() for _ in 1:D+1]...])
+    res = Array{ComplexF64,D+1}(sv[[Colon() for _ in 1:D+1]...])
 
     return res
 end
