@@ -297,8 +297,8 @@ function precompute_ano_values_MF_without_ωconv(
             # add β/2 contribution?
             β = 1/Gp.T
             #println("β: ", β)
-            values_ano = -0.5 * β* contract_1D_Kernels_w_Adisc_mp(Kernels_ano, dropdims(Gp.Adisc_anoβ, dims=d))
-            values_ano = reshape(values_ano, (size(values_ano)[1:d-1]..., 1, size(values_ano)[d:end]...))
+            values_ano = -0.5 * β* (D == 1 ? Gp.Adisc_anoβ : contract_1D_Kernels_w_Adisc_mp(Kernels_ano, dropdims(Gp.Adisc_anoβ, dims=d)))
+            values_ano = reshape(values_ano, (size(values_ano)[1:d-1]..., 1, size(values_ano)[d:D-1]...))
     
             #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
             #println("size of view: ", size(myview))

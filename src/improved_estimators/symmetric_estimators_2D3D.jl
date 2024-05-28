@@ -1,20 +1,27 @@
 function compute_K2r_symmetric_estimator(
+    formalism ::String,
     PSFpath::String,
     op_labels::NTuple{3,String},
-    Σ_calc_aIE  ::Vector{ComplexF64}
+    Σ_calc_aIE  ::Array{ComplexF64,N}
     ;
     T :: Float64,
     flavor_idx::Int,
     ωs_ext  ::NTuple{2,Vector{Float64}},
-    ωconvMat::Matrix{Int}
-    )
+    ωconvMat::Matrix{Int},
+    broadening_kwargs...
+    ) where{N}
+    if formalism == "MF"
+        @assert N == 1
+    else
+        @assert N == 3
+    end
 
     letters = ["F", "Q"]
     letter_combinations = kron(letters, letters)
 
 
     #K2a      = TCI4Keldysh.FullCorrelator_MF(PSFpath, [op_labels[1], "F"*op_labels[2], "F"*op_labels[3]]; flavor_idx, ωs_ext, ωconvMat);
-    K2a_data = zeros(ComplexF64, length.(ωs_ext))
+    K2a_data = zeros(ComplexF64, length.(ωs_ext)..., (formalism == "MF" ? [] : 2 .*ones(Int, 3))...)
     #println("max dat 0: ", maxabs(K2a_data))
 
     # precompute Σs:
@@ -27,18 +34,35 @@ function compute_K2r_symmetric_estimator(
 
     for letts in letter_combinations#[2:end]
 
+        if formalism == "MF"
         K2a_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; T, flavor_idx, ωs_ext, ωconvMat);
         K2a_data_tmp = TCI4Keldysh.precompute_all_values(K2a_tmp)
-        #println("max dat 1 ", letts," : ", maxabs(K2a_data_tmp))
-        # multiply Σ if necessary:
+
         for il in eachindex(letts)
             if letts[il] == 'F'
                 K2a_data_tmp = -K2a_data_tmp .* Σs[il]
             end
         end
+        else
+            K2a_tmp      = TCI4Keldysh.FullCorrelator_KF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; T, flavor_idx, ωs_ext, ωconvMat, broadening_kwargs...);
+
+            K2a_data_tmp = TCI4Keldysh.precompute_all_values(K2a_tmp)
+
+            for il in eachindex(letts)
+                if letts[il] == 'F'
+                    #K2a_data_tmp[:,:,] = -K2a_data_tmp .* Σs[il]
+                    K2a_data_tmp = _mult_Σ_KF(-K2a_data_tmp, Σs[il]; idim=3+il, is_incoming=is_incoming[il])
+                else
+                    reverse!(K2a_data_tmp, dims=3+il)
+                end
+            end
+        end
+        #println("max dat 1 ", letts," : ", maxabs(K2a_data_tmp))
+        # multiply Σ if necessary:
+        
 
         #println("max dat 2 ", letts," : ", maxabs(K2a_data_tmp))
-
+        #println("size of K2a_data: ", size(K2a_data), "\t size of K2a_data_tmp: ", size(K2a_data_tmp))
         K2a_data += K2a_data_tmp
     end
 
@@ -46,20 +70,28 @@ function compute_K2r_symmetric_estimator(
 end
 
 function compute_Γcore_symmetric_estimator(
+    formalism ::String,
     PSFpath::String,
-    Σ_calc_aIE  ::Vector{ComplexF64}
+    Σ_calc_aIE  ::Array{ComplexF64,N}
     ;
     T::Float64,
     flavor_idx::Int,
     ωs_ext  ::NTuple{3,Vector{Float64}},
-    ωconvMat::Matrix{Int}
-    )
+    ωconvMat::Matrix{Int},
+    broadening_kwargs...
+    ) where {N}
+    if formalism == "MF"
+        @assert N == 1
+    else
+        @assert N == 3
+    end
 
     letters = ["F", "Q"]
     letter_combinations = kron(kron(letters, letters), kron(letters, letters))
     op_labels = ("1", "1dag", "3", "3dag")
 
-    Γcore_data = zeros(ComplexF64, length.(ωs_ext))
+    Γcore_data = zeros(ComplexF64, length.(ωs_ext)..., (formalism == "MF" ? [] : 2 .*ones(Int, 4))...)
+
     #println("max dat 0: ", maxabs(Γcore))
 
     # precompute Σs:
@@ -80,6 +112,7 @@ function compute_Γcore_symmetric_estimator(
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
 
+        if formalism == "MF"
         Γcore_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx, ωs_ext, ωconvMat);
         Γcore_data_tmp = TCI4Keldysh.precompute_all_values(Γcore_tmp)
         println("max dat 1 ", letts," : ", maxabs(Γcore_data_tmp))
@@ -90,10 +123,41 @@ function compute_Γcore_symmetric_estimator(
             end
         end
 
+        else
+
+            Γcore_tmp      = TCI4Keldysh.FullCorrelator_KF(PSFpath, ops; T, flavor_idx, ωs_ext, ωconvMat, broadening_kwargs...);
+            Γcore_data_tmp = TCI4Keldysh.precompute_all_values(Γcore_tmp)
+
+            for il in eachindex(letts)
+                if letts[il] == 'F'
+                    #K2a_data_tmp[:,:,] = -K2a_data_tmp .* Σs[il]
+                    Γcore_data_tmp = _mult_Σ_KF(-Γcore_data_tmp, Σs[il]; idim=3+il, is_incoming=is_incoming[il])
+                else
+                    reverse!(Γcore_data_tmp, dims=3+il)
+                end
+            end
+
+        end
         println("max dat 2 ", letts," : ", maxabs(Γcore_data_tmp))
 
         Γcore_data += Γcore_data_tmp
     end
 
     return Γcore_data
+end
+
+
+
+function _mult_Σ_KF(G_data::Array{ComplexF64,N}, Σ::Array{ComplexF64,NΣ}; idim::Int, is_incoming::Bool) where{N,NΣ}
+    G_out = zeros(ComplexF64, size(G_data))
+    Ndims_freqs = ndims(Σ) - 2
+
+    for i in 1:2, j in 1:2
+        if is_incoming
+            G_out[[Colon() for _ in 1:(idim-1)]..., j, [Colon() for _ in (idim+1):N]...] += G_data[[Colon() for _ in 1:(idim-1)]..., i, [Colon() for _ in (idim+1):N]...] .* Σ[[Colon() for _ in 1:Ndims_freqs]..., i, j]
+        else
+            G_out[[Colon() for _ in 1:(idim-1)]..., j, [Colon() for _ in (idim+1):N]...] += G_data[[Colon() for _ in 1:(idim-1)]..., i, [Colon() for _ in (idim+1):N]...] .* Σ[[Colon() for _ in 1:Ndims_freqs]..., j, i]
+        end
+    end
+    return G_out
 end
