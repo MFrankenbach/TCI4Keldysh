@@ -29,28 +29,32 @@ precompute_Σs_MF(
 Precomputes the selfenergies needed for the symmetric estimators of K2 and 4p core vertex.
 """
 function precompute_Σs(
-    Σ_vec       ::Vector{ComplexF64},   # vector of Σ data
-    sizeK23     ::NTuple{N1,Int},        # size of K2/core data
+    Σ_vec       ::Array{ComplexF64,N},   # vector of Σ data (convention: first dimension is fermionic frequency, trailing dimensions can be other stuff such as Keldysh indices)
+    sizeK23     ::NTuple{N1,Int},        # size of K2/core data (convention: sizeK23[1] is bosonic frequency, sizeK23[2/3] is fermionic frequency if defined)
     ωconvMat    ::Matrix{Int},           # The rows describe how the fermionic frequencies depend on the frequency parametrization.
                                         # Convention: The first row always corresponds to a bosonic frequency. The other rows to fermionic ones.
     is_incoming ::NTuple{N2,Bool}        # True if the fermionic leg is incoming aka daggered
-    ) where{N1, N2}
+    ) where{N,N1, N2}
+    println("size of Σ_vec:" , size(Σ_vec))
     # prepare stuff to return:
-    Σs_return = Vector{Array{ComplexF64,size(ωconvMat)[2]}}(undef, size(ωconvMat)[1])
+    N_out = size(ωconvMat, 2) + ndims(Σ_vec)-1 # dims of Σs_return
+    Σs_return = Vector{Array{ComplexF64,N_out}}(undef, size(ωconvMat)[1])
 
     # precompute a normal and a slanted version:
-    N_Σ = length(Σ_vec)
+    N_Σ = size(Σ_vec, 1)
     N_bos = sizeK23[1]
     N_fer = sizeK23[2]
     i_Σ_straight_l = div(N_Σ - N_fer, 2) + 1
     i_Σ_straight_h = N_Σ - i_Σ_straight_l + 1
-    Σ_straight = Σ_vec[i_Σ_straight_l:i_Σ_straight_h]
+    Σ_straight = Σ_vec[i_Σ_straight_l:i_Σ_straight_h, [Colon() for _ in 2:N]...]
     #println("size of Σ_straight", size(Σ_straight))
-    Σ_slanted = Matrix{ComplexF64}(undef, N_bos, N_fer)
+    Σ_slanted = Array{ComplexF64,2+ndims(Σ_vec)-1}(undef, N_bos, N_fer, size(Σ_vec)[2:end]...)
+    println("size of Σ_slanted: ", size(Σ_slanted))
     iωbos0 = div(N_bos+1,2)
     for iωbos in 1:N_bos
         shift = -iωbos0+iωbos
-        Σ_slanted[iωbos,:] .= Σ_vec[i_Σ_straight_l+shift:i_Σ_straight_h+shift]
+        #println("size of Σ_vec[i_Σ_straight_l+shift:i_Σ_straight_h+shift, [Colon() for _ in 2:N]...]: ", size(Σ_vec[i_Σ_straight_l+shift:i_Σ_straight_h+shift, [Colon() for _ in 2:N]...]))
+        Σ_slanted[iωbos,[Colon() for _ in 1:N]...] .= Σ_vec[i_Σ_straight_l+shift:i_Σ_straight_h+shift, [Colon() for _ in 2:N]...]
     end
 
     # iterate through ωconvMat and compute the correct thing:
@@ -59,11 +63,14 @@ function precompute_Σs(
         if ωconvMat[i,:1] == 0 # the i-th column directly corresponds to ONE fermionic frequency
             Σtmp = deepcopy(Σ_straight)
             if ωconvMat[i,pos_ferm_freq] == -1
-                reverse!(Σtmp)
+                reverse!(Σtmp, dims=1)
             end
-            new_shape = ones(Int, size(ωconvMat)[2])
+            new_shape = [ones(Int, size(ωconvMat)[2])..., size(Σ_vec)[2:end]...]
             new_shape[pos_ferm_freq] = N_fer
             
+            if is_incoming[i]
+                reverse!(Σtmp, dims=1)
+            end 
         else                   # the i-th column is a combination of ONE fermionic and ONE bosonic frequency 
             Σtmp = deepcopy(Σ_slanted)
             if ωconvMat[i,pos_ferm_freq] == -1
@@ -72,13 +79,13 @@ function precompute_Σs(
             if ωconvMat[i,1] == -1
                 Σtmp = reverse(Σtmp, dims=1)
             end
-            new_shape = ones(Int, size(ωconvMat)[2])
+            new_shape = [ones(Int, size(ωconvMat)[2])..., size(Σ_vec)[2:end]...]
             new_shape[1] = N_bos
             new_shape[pos_ferm_freq] = N_fer
-            
-        end
-        if is_incoming[i]
-            reverse!(Σtmp)
+           
+            if is_incoming[i]
+                reverse!(Σtmp, dims=(1,2))
+            end 
         end
         Σtmp = reshape(Σtmp, (new_shape...,))
         Σs_return[i] = Σtmp

@@ -85,7 +85,7 @@ include("improved_estimators/symmetric_estimators_2D3D.jl")
     ω_bos = (collect(-N_K2_bos:N_K2_bos) * (2.)      ) * π * T
     ω_fer = (collect(-N_K2_fer:N_K2_fer-1) * (2.) .+ 1.) * π * T
     ωs_ext=(ω_bos, ω_fer)
-    K2a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q23", "1", "3dag"), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2a, flavor_idx=i) for i in 1:2]
+    K2a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator("MF", PSFpath, ("Q23", "1", "3dag"), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2a, flavor_idx=i) for i in 1:2]
 
     
 end

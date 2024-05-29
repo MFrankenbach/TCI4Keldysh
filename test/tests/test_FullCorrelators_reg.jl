@@ -150,7 +150,7 @@ end
         ωfer = π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
         ωs_ext = (ωbos, ωfer)
         
-        PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+        PSFpath = joinpath(dirname(@__FILE__), "../../data/SIAM_u=0.50/PSF_nz=2_conn_zavg/")
         Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; T, flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
     end
 

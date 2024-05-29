@@ -81,12 +81,12 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
 
         ωs_int, ωconvOff, isFermi = _trafo_ω_args(ωs_ext, ωconvMat)
         #println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
-        δωcont = get_ω_binwidths(Acont.ωconts[1])
-        tucker = deepcopy(Acont)
+        δωcont = get_ω_binwidths(Acont.ωs_legs[1])
+        tucker = TuckerDecomposition(Acont.center .+ 0im, Acont.legs; ωs_center=Acont.ωs_center, ωs_legs=Acont.ωs_legs)#deepcopy(Acont)
         if formalism == "MF"
             # 1.: rediscretization of broadening kernel
             # 2.: contraction with regular kernel
-            @TIME tucker.legs = [get_regular_1D_MF_Kernel(ωs_int[i], Acont.ωcont) * (get_ω_binwidths(Acont.ωconts[i]) .* Acont.legs[i]) for i in 1:D] "Constructing 1D Kernels (for MF)."
+            @TIME tucker.legs = [get_regular_1D_MF_Kernel(ωs_int[i], Acont.ωs_legs) * (get_ω_binwidths(Acont.ωs_legs[i]) .* Acont.legs[i]) for i in 1:D] "Constructing 1D Kernels (for MF)."
         else
             # check that grid is equidistant:
             if maximum(abs.(diff(δωcont) )) > 1e-10
@@ -297,8 +297,8 @@ function precompute_ano_values_MF_without_ωconv(
             # add β/2 contribution?
             β = 1/Gp.T
             #println("β: ", β)
-            values_ano = -0.5 * β* contract_1D_Kernels_w_Adisc_mp(Kernels_ano, dropdims(Gp.Adisc_anoβ, dims=d))
-            values_ano = reshape(values_ano, (size(values_ano)[1:d-1]..., 1, size(values_ano)[d:end]...))
+            values_ano = -0.5 * β* (D == 1 ? Gp.Adisc_anoβ : contract_1D_Kernels_w_Adisc_mp(Kernels_ano, dropdims(Gp.Adisc_anoβ, dims=d)))
+            values_ano = reshape(values_ano, (size(values_ano)[1:d-1]..., 1, size(values_ano)[d:D-1]...))
     
             #myview = view(data_unrotated, [Colon() for _ in 1:d-1]..., argmax(is_zero_ωs_int), [Colon() for _ in d+1:D]...)
             #println("size of view: ", size(myview))
@@ -369,7 +369,7 @@ function precompute_all_values_KF(
     strides4rot = ((strides_internal * Gp.ωconvMat)...,)
     offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
     sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)..., D+1), (strides4rot..., strides(data_unrotated)[D+1]), offset4rot)
-    res = Array{ComplexF64,D}(sv[[Colon() for _ in 1:D+1]...])
+    res = Array{ComplexF64,D+1}(sv[[Colon() for _ in 1:D+1]...])
 
     return res
 end
