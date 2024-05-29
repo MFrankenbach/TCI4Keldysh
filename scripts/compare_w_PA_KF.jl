@@ -191,12 +191,10 @@ end
 PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"     # directory with all PSFs
 
 
+# load data for comparison (generated in Matlab by Jeongmin):
 f = matopen("data/SIAM_u=0.50/V_KF_ph/V_KF_U2_1.mat")
-#keys(f)
 K1t_NRG = read(f, "CFdat")["Ggrid"][1][1,1,:,:,:,:,:]
 ω_K1t_NRG = read(f, "CFdat")["ogrid"][1][:]
-#K1_CF = read(f, "CF")
-#T
 
 #N_MF = 200+1# * 4*4*2
 #ω_fer = collect(LinRange(-1,1,N_MF))
@@ -215,6 +213,55 @@ plot([ω_bos, ω_bos, ω_bos, ω_bos, ω_K1t_NRG, ω_K1t_NRG, ω_K1t_NRG, ω_K1t
 
 
 
+f = matopen("data/SIAM_u=0.50/V_KF_ph/SE_KF_1.mat")
+
+Σ_NRG1 = read(f,"CFdat")["Ggrid"][1]
+ω_NRG1 = read(f,"CFdat")["ogrid"][1][:]
+
+begin
+    fac = 8
+    N_MF = (length(ω_K1t_NRG)-1)*fac+1 #*4*2
+    ωmax_NRG = ω_K1t_NRG[end]
+    ω_fer_Σ = collect(LinRange(-fac*ωmax_NRG,fac*ωmax_NRG,N_MF));
+    #ω_fer = ω_NRG1
+    #ω_bos = ω_NRG1
+
+    #sigmak = [0.4]
+    #γ = 1*T
+    G_FF_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "F1dag"]; T, flavor_idx=1, ωs_ext=ω_fer_Σ, sigmak, γ, estep=2000)
+    G_FQ_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=1, ωs_ext=ω_fer_Σ, sigmak, γ, estep=2000)
+    G_QF_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=1, ωs_ext=ω_fer_Σ, sigmak, γ, estep=2000)
+    G_QQ_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=1, ωs_ext=ω_fer_Σ, sigmak, γ, estep=2000)
+
+
+    Σ_H = matopen("data/SIAM_u=0.50/PSF_nz=4_conn_zavg_new/PSF_((Q12)).mat") do f
+        read(f, "Adisc")[1]
+    end
+    ΣR_aIE = TCI4Keldysh.calc_Σ_MF_aIE(G_FQ_R, G_FF_R)
+    ΣR_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_R, G_QF_R, G_FQ_R, G_FF_R, Σ_H)
+
+
+    function construct_Σ_from_ΣR(ΣR::Vector{ComplexF64}, ω_fer::Vector{Float64}, T)
+        Σ = reshape(hcat(2*im*tanh.(ω_fer/2/T).*imag.(ΣR),conj.(ΣR),ΣR,0 .*ΣR), length(ω_fer),2,2)
+        return Σ
+    end
+    Σ_aIE = construct_Σ_from_ΣR(ΣR_aIE, ω_fer_Σ, T)
+    Σ_sIE = construct_Σ_from_ΣR(ΣR_sIE, ω_fer_Σ, T)
+
+end
+
+
+begin
+    kindex = [1,1]
+    foo(z) = [real.(z), imag.(z)]
+    l = @layout([a ;  b])
+    plot([ω_fer_Σ, ω_fer_Σ, ω_fer_Σ, ω_fer_Σ, ω_NRG1, ω_NRG1], [foo(Σ_aIE[:,kindex...]);foo(Σ_sIE[:,kindex...]);foo(Σ_NRG1[:,kindex...])], label=["Re(my aIE)" "Im(my aIE)" "Re(my sIE)" "Im(my sIE)" "Re(Mat)" "Im(Mat)"], layout=l, xlims=[-0.8,0.8], ylims=[-0.01,0.03]) 
+end
+
+
+
+
+
 K2t_NRG = matopen("data/SIAM_u=0.50/V_KF_ph/V_KF_U3_1.mat") do f
     read(f, "CFdat")["Ggrid"][1][1,:,:,:,:,:,:]
 end
@@ -228,11 +275,11 @@ end
 
 
 ### load selfenergies from Matlab code:
-f = matopen("data/SIAM_u=0.50/V_KF_ph/SE_KF_1.mat")
-keys(f)
+#f = matopen("data/SIAM_u=0.50/V_KF_ph/SE_KF_1.mat")
+#keys(f)
 #CF = read(f, "CF")["Hwidth"]
-Σ_NRG1 = read(f,"CFdat")["Ggrid"][1]
-ω_NRG1 = read(f,"CFdat")["ogrid"][1]
+#Σ_NRG1 = read(f,"CFdat")["Ggrid"][1]
+#ω_NRG1 = read(f,"CFdat")["ogrid"][1]
 #f = matopen("data/SIAM_u=0.50/V_KF_ph/SE_KF_2.mat")
 #keys(f)
 #Σ_NRG2 = read(f,"CFdat")["Ggrid"][1]
@@ -320,32 +367,3 @@ end
 
 
 
-
-########################################################################################################
-### Yet to be implemented:
-### compute selfenergy via (a)symmetric estimators
-
-G0_inv   = ω_fer #.+ im*Δ*sign.(imag.(ω_fer)) .+ U/2
-G        = TCI4Keldysh.FullCorrelator_KF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG", sigmak, γ, estep=2000);
-G_aux    = TCI4Keldysh.FullCorrelator_KF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG", sigmak, γ, estep=2000);
-G_QQ_aux = TCI4Keldysh.FullCorrelator_KF(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG", sigmak, γ, estep=2000);
-
-G_data      = TCI4Keldysh.precompute_all_values(G)
-
-plot(-1/π*imag.(G_data[:,2,1]))
-plot(real.(G_data[:,2,1]))
-@assert maximum(abs.(G_data[:,2,1] - conj.(G_data[:,1,2]))) < 1e-14
-@assert maximum(abs.(real.(G_data[:,2,2]))) < 1e-14
-
-G_aux_data  = TCI4Keldysh.precompute_all_values(G_aux)
-G_QQ_aux_data=TCI4Keldysh.precompute_all_values(G_QQ_aux)
-
-
-
-function calc_Σ_KF_aIE(G_aux::Array{ComplexF64,3}, G::Array{ComplexF64,3}) ::Vector{ComplexF64}
-    return TCI4Keldysh.calc_Σ_MF_aIE(G_aux[:,2,1], G[:,2,1])     # retarded
-end
-
-Σ_aIE = calc_Σ_KF_aIE(G_aux_data, G_data)
-plot(real.(Σ_aIE))
-plot(imag.(Σ_aIE))

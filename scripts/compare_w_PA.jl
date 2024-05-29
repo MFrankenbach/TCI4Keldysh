@@ -357,11 +357,11 @@ N_K2_bos, N_K2_fer = div.(size(K2a_PA), 2) .* 4
 
 #K2′a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q14", "3", "1dag"), Σ_calc_aIE   ; ωs_ext, ωconvMat=ωconvMat_K2′a, flavor_idx=i) for i in 1:2]
 #K2′p_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q13", "1dag", "3dag"), Σ_calc_aIE; ωs_ext, ωconvMat=ωconvMat_K2′p, flavor_idx=i) for i in 1:2]
-K2′t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q12", "3", "3dag"), Σ_calc_aIE   ; T, ωs_ext, ωconvMat=ωconvMat_K2′t, flavor_idx=i) for i in 1:2]
+K2′t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator("MF", PSFpath, ("Q12", "3", "3dag"), Σ_calc_aIE   ; T, ωs_ext, ωconvMat=ωconvMat_K2′t, flavor_idx=i) for i in 1:2]
 
-K2a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q23", "1", "3dag"), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2a, flavor_idx=i) for i in 1:2]
-K2p_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q24", "1", "3"   ), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2p, flavor_idx=i) for i in 1:2]
-K2t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator(PSFpath, ("Q34", "1", "1dag"), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2t, flavor_idx=i) for i in 1:2]
+K2a_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator("MF", PSFpath, ("Q23", "1", "3dag"), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2a, flavor_idx=i) for i in 1:2]
+K2p_data = [ TCI4Keldysh.compute_K2r_symmetric_estimator("MF", PSFpath, ("Q24", "1", "3"   ), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2p, flavor_idx=i) for i in 1:2]
+K2t_data = [-TCI4Keldysh.compute_K2r_symmetric_estimator("MF", PSFpath, ("Q34", "1", "1dag"), Σ_calc_aIE; T, ωs_ext, ωconvMat=ωconvMat_K2t, flavor_idx=i) for i in 1:2]
 
 
 begin

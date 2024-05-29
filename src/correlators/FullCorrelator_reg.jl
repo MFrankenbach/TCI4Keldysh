@@ -372,3 +372,43 @@ function propagate_ωs_ext!(G::Union{FullCorrelator_MF{D}, FullCorrelator_MF{D}}
     end
     return nothing
 end
+
+
+
+
+function get_GR(
+    path::String, 
+    Ops::Vector{String}
+    ; 
+    T::Float64,
+    flavor_idx::Int, 
+    ωs_ext::Vector{Float64} ,
+    sigmak  ::Vector{Float64},              
+    γ       ::Float64,                      
+    broadening_kwargs...                    
+    ) #where{D}
+    ##########################################################################
+    ############################## check inputs ##############################
+    if length(Ops) != 2
+        throw(ArgumentError("Ops must contain "*string(2)*" elements."))
+    end
+    ##########################################################################
+    
+    print("Loading stuff: ")
+    @time begin
+    #perms = permutations(collect(1:D+1))
+    isBos = (o -> o[1] == 'Q' && length(o) == 3).(Ops)
+    @assert all(isBos) || all(.!isBos)
+    isBos = isBos[1]
+    ωdisc = load_ωdisc(path, Ops)
+    Adisc = load_Adisc(path, Ops, flavor_idx) + reverse(load_Adisc(path, reverse(Ops), flavor_idx)) * (isBos ? -1 : 1)
+    end
+    #print("Creating Broadened PSFs: ")
+    #function get_Acont_p(i, p)
+    #    ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+    #    return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
+    #end
+    #@time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
+    _, Acont = getAcont(ωdisc, reshape(Adisc, length(Adisc), 1), sigmak, γ; ωcont = ωs_ext, broadening_kwargs...)
+    return -im * π * hilbert_fft(Acont; dims=1)[:]
+end
