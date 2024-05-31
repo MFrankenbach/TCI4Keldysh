@@ -39,7 +39,7 @@ mutable struct FullCorrelator_MF{D}
     ωconvMat::Matrix{Int}                       
     isBos   ::BitVector                         
 
-    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, T::Float64, name::String="", is_compactAdisc::Bool=true) where{D}
+    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, T::Float64, name::String="", is_compactAdisc::Bool=true, nested_ωdisc::Bool=false) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if length(Ops) != D+1
@@ -49,7 +49,7 @@ mutable struct FullCorrelator_MF{D}
         
         perms = permutations(collect(1:D+1))
         isBos = (o -> length(o) == 3).(Ops)
-        ωdisc = load_ωdisc(path, Ops)
+        ωdisc = load_ωdisc(path, Ops; nested_ωdisc)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
 
         return FullCorrelator_MF(Adiscs, ωdisc; T, isBos, ωs_ext, ωconvMat, name=[Ops; name], is_compactAdisc)
@@ -86,6 +86,9 @@ mutable struct FullCorrelator_MF{D}
 end
 
 
+"""
+Maps a permutation to its parity, neglecting bosonic operators.
+"""
 function _get_Gp_to_G(D::Int, isBos::BitVector) ::Vector{Float64}
     N_fermions = D + 1 - sum(isBos)
     i_Fer = zeros(Int, D+1)

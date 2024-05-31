@@ -328,14 +328,18 @@ function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
 end
 
 
-function load_ωdisc(path::String, Ops::Vector{String})
+function load_ωdisc(path::String, Ops::Vector{String}; nested_ωdisc::Bool=false)
     f = matopen(joinpath(path, "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"), "r")
     try 
         keys(f)
     catch
         keys(f)
     end
-    ωdisc  = read(f, "odisc")[:]
+    ωdisc  = if !nested_ωdisc
+        read(f, "odisc")[:]
+    else
+        read(f, "PSF")["odisc_info"]["odisc"][:]
+    end
     return ωdisc 
 end
 

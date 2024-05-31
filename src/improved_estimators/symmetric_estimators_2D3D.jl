@@ -1,3 +1,4 @@
+# 2d
 function compute_K2r_symmetric_estimator(
     PSFpath::String,
     op_labels::NTuple{3,String},
@@ -45,6 +46,7 @@ function compute_K2r_symmetric_estimator(
     return K2a_data
 end
 
+# 3d
 function compute_Γcore_symmetric_estimator(
     PSFpath::String,
     Σ_calc_aIE  ::Vector{ComplexF64}
