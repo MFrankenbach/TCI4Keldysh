@@ -145,11 +145,12 @@ function contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc)
         Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1] * it1))
         Acont = Kernels[it1] * Acont
         sz[it1] = size(Kernels[it1])[1]
-        Acont = reshape(Acont, ((sz[it1], prod(sz) ÷ sz[it1], it1)))
-        Acont = cat(Acont, conj.(Acont[:,:,1]), dims=3)
+        Acont = reshape(Acont, ((sz[it1], sz[[it1+1:end; 1:it1-1]]..., it1)))
+        Acont = cat(Acont, conj.(Acont[[Colon() for _ in 1:D]...,1]), dims=D+1)
 
         #println(Dates.format(Dates.now(), "HH:MM:SS"), ":\tconvolution [done]")
         #Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
+        #println("size of Acont: ", size(Acont))
         if D>1
             Acont = permutedims(Acont, (collect(2:D)..., 1, D+1))
         end

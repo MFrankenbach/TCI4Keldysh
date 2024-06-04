@@ -233,6 +233,7 @@ struct FullCorrelator_KF{D}
         path::String, 
         Ops::Vector{String}
         ; 
+        T::Float64,
         flavor_idx::Int, 
         ωs_ext::NTuple{D,Vector{Float64}}, 
         ωconvMat::Matrix{Int}, 
@@ -255,22 +256,22 @@ struct FullCorrelator_KF{D}
         print("Loading stuff: ")
         @time begin
         perms = permutations(collect(1:D+1))
-        isBos = (o -> o[1] == 'Q').(Ops)
+        isBos = (o -> o[1] == 'Q' && length(o) == 3).(Ops)
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
         end
         print("Creating Broadened PSFs: ")
         function get_Acont_p(i, p)
             ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
-            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=ωs_int, broadening_kwargs...)
+            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
         end
         @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
 
-        return FullCorrelator_KF(Aconts; isBos, ωs_ext, ωconvMat, name=[Ops; name])
+        return FullCorrelator_KF(Aconts; T, isBos, ωs_ext, ωconvMat, name=[Ops; name])
     end
 
 
-    function FullCorrelator_KF(Aconts::Vector{<:AbstractTuckerDecomp{D}}; isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
+    function FullCorrelator_KF(Aconts::Vector{<:AbstractTuckerDecomp{D}}; T::Float64, isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if size(ωconvMat) != (D+1, D)
@@ -307,7 +308,7 @@ struct FullCorrelator_KF{D}
         for (i,sp) in enumerate(Aconts)
             sp.center .*= Gp_to_G[i]
         end
-        Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i] .+0im, D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
+        Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
         GR_to_GK = get_GR_to_GK(D)
         end
         return new{D}(name, Gps, Gp_to_G, GR_to_GK, ωs_ext, ωconvMat, isBos)
@@ -374,4 +375,44 @@ function propagate_ωs_ext!(G::Union{FullCorrelator_MF{D}, FullCorrelator_MF{D}}
         update_frequency_args!(G.Gps[ip])
     end
     return nothing
+end
+
+
+
+
+function get_GR(
+    path::String, 
+    Ops::Vector{String}
+    ; 
+    T::Float64,
+    flavor_idx::Int, 
+    ωs_ext::Vector{Float64} ,
+    sigmak  ::Vector{Float64},              
+    γ       ::Float64,                      
+    broadening_kwargs...                    
+    ) #where{D}
+    ##########################################################################
+    ############################## check inputs ##############################
+    if length(Ops) != 2
+        throw(ArgumentError("Ops must contain "*string(2)*" elements."))
+    end
+    ##########################################################################
+    
+    print("Loading stuff: ")
+    @time begin
+    #perms = permutations(collect(1:D+1))
+    isBos = (o -> o[1] == 'Q' && length(o) == 3).(Ops)
+    @assert all(isBos) || all(.!isBos)
+    isBos = isBos[1]
+    ωdisc = load_ωdisc(path, Ops)
+    Adisc = load_Adisc(path, Ops, flavor_idx) + reverse(load_Adisc(path, reverse(Ops), flavor_idx)) * (isBos ? -1 : 1)
+    end
+    #print("Creating Broadened PSFs: ")
+    #function get_Acont_p(i, p)
+    #    ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+    #    return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
+    #end
+    #@time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
+    _, Acont = getAcont(ωdisc, reshape(Adisc, length(Adisc), 1), sigmak, γ; ωcont = ωs_ext, broadening_kwargs...)
+    return -im * π * hilbert_fft(Acont; dims=1)[:]
 end
