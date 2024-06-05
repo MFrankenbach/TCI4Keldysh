@@ -61,6 +61,9 @@ include("correlators/FullCorrelator_reg.jl")
 include("improved_estimators/calc_SE.jl")
 include("improved_estimators/symmetric_estimators_2D3D.jl")
 
+# TCI
+include("correlators/PartialCorrelator_TCI.jl")
+
 @compile_workload begin
     T = 1.
     N_MF = 100

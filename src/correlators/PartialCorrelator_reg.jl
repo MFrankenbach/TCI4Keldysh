@@ -60,9 +60,12 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
         else
             ωdiscs, Adisc = [ωdisc for _ in 1:D], Adisc
         end
+        @VERBOSE "Size ωs_int: $(length.(ωs_int))\n"
+        @VERBOSE "Size ωdisc: $(length.(ωdiscs))\n"
         @TIME Kernels = [get_regular_1D_MF_Kernel(ωs_int[i], ωdiscs[i]) for i in 1:D] "Precomputing 1D kernels (for MF)."
         if formalism == "MF" && !all(isFermi)
             i_ωbos = argmax(.!isFermi)
+            # all entries where bosonic frequency is (almost) zero
             Adisc_anoβ = Adisc[[Colon() for _ in 1:i_ωbos-1]..., abs.(ωdiscs[i_ωbos]) .< 1e-8, [Colon() for _ in i_ωbos+1:D]...]
         else 
             Adisc_anoβ = Array{ComplexF64,D}(undef, zeros(Int, D)...)

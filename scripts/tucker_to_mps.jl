@@ -8,6 +8,7 @@ TCI4Keldysh.DEBUG() = true
 TCI4Keldysh.VERBOSE() = true
 using QuanticsTCI
 using Quantics
+using ITensors
 
 
 
@@ -18,16 +19,16 @@ end
 
 
 
-# 2p function
-PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
-Ops = ["Q12", "Q34"  ]
+# # 2p function
+# PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+# Ops = ["Q12", "Q34"  ]
 
 # 3p function
-#PSFpath = "data/PSF_nz=2_conn_zavg/"
-Ops = ["F1", "F1dag", "Q34"]
-#Ops = ["F1dag", "F1", "Q34"]
+# PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+# Ops = ["F1", "F1dag", "Q34"]
+# Ops = ["F1dag", "F1", "Q34"]
 
-# 4p function
+# # 4p function
 PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt/"
 Ops = ["F1", "F1dag", "F3", "F3dag"]
 
@@ -80,39 +81,39 @@ end;
 
 
 #@time ωcont, Acont = TCI4Keldysh.getAcont_mp(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
+ITensors.disable_warn_order()
 broadenedPsf = TCI4Keldysh.BroadenedPSF(ωdisc, Adisc, sigmab, g; ωconts, emin=emin, emax=emax, estep=estep, tol=tol, Lfun=Lfun, verbose=verbose, is2sum);
 
 
-# check 3D version:
 mps_broadenedPsf = TCI4Keldysh.TD_to_MPS_via_TTworld(broadenedPsf)
 
 broadened_via_TT_world = TCI4Keldysh.MPS_to_fatTensor(mps_broadenedPsf; tags=("ω1", "ω2", "ω3"))
-
+@show size(broadened_via_TT_world)
 broadened_oldschool = broadenedPsf[:,:,:]
+@show size(broadened_oldschool)
 diff = broadened_via_TT_world - broadened_oldschool[1:end-1,1:end-1,1:end-1]
-
 using Plots
 heatmap(broadened_via_TT_world[65,:,:])
+savefig("TT_heatmap3D.png")
 heatmap(broadened_oldschool[65,:,:])
-
+savefig("oldschool_heatmap3D.png")
 plot([broadened_oldschool[65,65,:], broadened_via_TT_world[65,65,:], diff[65,65,:]], labels=["old" "MPS" "diff"])
+savefig("oldschool_vs_TT_13D.png")
 plot([broadened_oldschool[65,66,:], broadened_via_TT_world[65,66,:], diff[65,66,:]], labels=["old" "MPS" "diff"])
-
+savefig("oldschool_vs_TT_23D.png")
 
 
 # check 2D version: 
-mps_broadenedPsf = TCI4Keldysh.TD_to_MPS_via_TTworld(broadenedPsf; tolerance=1e-4)
 
-broadened_via_TT_world = TCI4Keldysh.MPS_to_fatTensor(mps_broadenedPsf; tags=("ω1", "ω2"))
-
-broadened_oldschool = broadenedPsf[:,:]
-diff = broadened_via_TT_world - broadened_oldschool[1:end-1,1:end-1]
-maximum(abs.(diff))
-
-using Plots
-heatmap(broadened_via_TT_world[:,:])
-heatmap(broadened_oldschool[:,:])
-
-plot([broadened_oldschool[65,:], broadened_via_TT_world[65,:], diff[65,:]], labels=["old" "MPS" "diff"])
-
-
+# broadened_via_TT_world = TCI4Keldysh.MPS_to_fatTensor(mps_broadenedPsf; tags=("ω1", "ω2"))
+# broadened_oldschool = broadenedPsf[:,:]
+# diff = broadened_via_TT_world - broadened_oldschool[1:end-1,1:end-1]
+# @show maximum(abs.(diff))
+# @show sum(abs.(diff)) / reduce(*, size(diff))
+# using Plots
+# heatmap(broadened_via_TT_world[:,:])
+# savefig("TT_heatmap_2D.png")
+# heatmap(broadened_oldschool[:,:])
+# savefig("oldschool_heatmap_2D.png")
+# plot([broadened_oldschool[65,:], broadened_via_TT_world[65,:], diff[65,:]], labels=["old" "MPS" "diff"])
+# savefig("oldschool_vs_TT_2D.png")
