@@ -613,13 +613,13 @@ end
 function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-14, alg="tci2")
     D = 2
 
-    # kwargs = Dict(:alg=>"densitymatrix")
-
     # crashes because of index search in contract_fit: siteinds on an MPS does not catch all non-link indices
     # also, while the first contraction for D=2 runs through it contracs omega1 (of the kernel) instead of eps1 with the eps1 of Adisc
     # OR DOES IT? the indices after the first contraction are fine...
     # -> try to modify the index replacement part in fitalgorithm.jl in FastMPOContractions
     kwargs = Dict(:alg=>"fit")
+
+    kwargs = Dict(:alg=>"densitymatrix")
 
     R = maximum(grid_R.([size(leg, 1) for leg in broadenedPsf.legs]))
     @show R

@@ -67,16 +67,16 @@ TCI4Keldysh.DEBUG() = true
 
 function test_TCI_precompute_reg_values_MF_without_ωconv()
 
-
     ITensors.disable_warn_order()
 
     # load data
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    # PSFpath = "data/SIAM_u=1.00/PSF_nz=4_conn_zavg_new/"
     npt = 3
     Ops = npt==3 ? ["F1", "F1dag", "Q34"] : ["F1", "F1dag", "F3", "F3dag"]
     ωconvMat = dummy_frequency_convention(npt)
     R = 7
-    GFs = load_npoint(PSFpath, Ops, npt, R, ωconvMat)
+    GFs = load_npoint(PSFpath, Ops, npt, R, ωconvMat; nested_ωdisc=false)
 
     # pick PSF
     spin = 1
@@ -132,10 +132,55 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
     end
 end
 
+function test_TCI_frequency_rotation_reg_values()
+
+    # load data
+    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    npt = 3
+    Ops = npt==3 ? ["F1", "F1dag", "Q34"] : ["F1", "F1dag", "F3", "F3dag"]
+    ωconvMat = dummy_frequency_convention(npt)
+    R = 7
+    GFs = load_npoint(PSFpath, Ops, npt, R, ωconvMat)
+
+    # pick PSF
+    spin = 1
+    perm_idx = 2
+    Gp = GFs[spin].Gps[perm_idx]
+    @show Gp.ωconvOff
+    display(cumsum(ωconvMat[GFs[spin].ps[perm_idx][1:npt-1],:], dims=1))
+
+    # compute reference data for selected PSF
+    data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
+
+    # TCI frequency kernel convolution
+    Gp_mps = TD_to_MPS_via_TTworld(Gp.tucker)
+
+    # ===== frequency rotation @ TCI =====
+    tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
+    is_ferm_new = vcat([0], fill(1, npt-2))
+    @TIME Gp_mps_rot = affine_freq_transform(Gp_mps; tags=tags, ωconvMat=convert(Matrix{Int}, Gp.ωconvMat), isferm_ωnew=is_ferm_new) "Frequency rotation:"
+    # ===== frequency rotation END
+
+    # comparison
+    D = npt-1
+    strides_internal = [stride(data_unrotated, i) for i in 1:D]'
+    strides4rot = ((strides_internal * Gp.ωconvMat)...,)
+    offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
+    sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)...,), strides4rot, offset4rot)
+    compare_values = Array{ComplexF64,D}(sv[[Colon() for _ in 1:D]...])
+    @show Gp.ωconvMat
+    @show strides_internal
+    @show strides4rot
+    @show offset4rot
+    @show size(data_unrotated)
+    @show size(compare_values)
+    @show (length.(Gp.ωs_ext))
+end
+
 """
 Load spin up and down of a given 2 or 3 point function.
 """
-function load_npoint(PSFpath::String, ops::Vector{String}, npt::Int, R, ωconvMat, nested_ωdisc=false)
+function load_npoint(PSFpath::String, ops::Vector{String}, npt::Int, R, ωconvMat; nested_ωdisc=false)
     # parameters
     U = 0.05
     T = 0.01*U
