@@ -1,4 +1,4 @@
 using TCI4Keldysh
 
-TCI4Keldysh.test_TCI_precompute_reg_values_MF_without_ωconv()
-# TCI4Keldysh.test_TCI_frequency_rotation_reg_values()
+# TCI4Keldysh.test_TCI_precompute_reg_values_MF_without_ωconv()
+TCI4Keldysh.test_TCI_frequency_rotation_reg_values()

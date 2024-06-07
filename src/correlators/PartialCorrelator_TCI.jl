@@ -80,10 +80,16 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
 
     # pick PSF
     spin = 1
-    perm_idx = 1
+    perm_idx = 4
     Gp = GFs[spin].Gps[perm_idx]
-    @show Gp.ωconvOff
-    display(cumsum(ωconvMat[GFs[spin].ps[perm_idx][1:npt-1],:], dims=1))
+
+    # # plot leg of Gp
+    # leg_id = 1
+    # leg = Gp.tucker.legs[leg_id]
+    # display(log.(abs.(leg)))
+    # @show size(leg)
+    # heatmap(log.(abs.(leg)))
+    # savefig("kernel_heatmap_index.png")
 
     # compute reference data for selected PSF
     data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
@@ -112,27 +118,37 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
     @show TCIslice
     diff = fatGpTCI[TCIslice...] - data_unrotated[unrotated_slice...]
 
-    @show norm(fatGpTCI[:,end])
-    @show argmax(abs.(data_unrotated[:,end]))
-    @show norm(data_unrotated[:,end])
-    for i in 0:2
-        @show i
-        @show maximum(abs.(diff[:,1:end-i]))
-        @show sum(abs.(diff[:,1:end-i]))/reduce(*,size(diff[:,1:end-i]))
-    end
+    inds = fill(Colon(), npt-1)
+    @show maximum(abs.(diff[inds...]))
+    @show sum(abs.(diff[inds...]))/reduce(*,size(diff[inds...]))
+    # @show maximum(abs.(diff[70:end,65,:]))
+    # @show sum(abs.(diff[70:end,65, :]))/reduce(*,size(diff[70:end,65,:]))
+    @show norm(fatGpTCI[:,128])
 
     if npt==3
         scalefun = log
-        heatmap(scalefun.(abs.(fatGpTCI[TCIslice...])))
+        heatmap(scalefun.(abs.(fatGpTCI)))
         savefig("TT_heatmap_2D.png")
-        heatmap(scalefun.(abs.(data_unrotated[unrotated_slice...])))
+        heatmap(scalefun.(abs.(data_unrotated)))
         savefig("data_unrotated_2D.png")
         heatmap(scalefun.(abs.(diff[:,:])))
         savefig("logdiff_2D.png")
+    elseif npt==4
+        scalefun = log
+        complexfun = abs
+        slice_idx = 65
+        heatmap(scalefun.(complexfun.(fatGpTCI[TCIslice[1], slice_idx, TCIslice[3]])))
+        savefig("TT_heatmap_3D.png")
+        heatmap(scalefun.(complexfun.(data_unrotated[unrotated_slice[1], slice_idx, unrotated_slice[3]])))
+        savefig("data_unrotated_3D.png")
+        heatmap(scalefun.(complexfun.(diff[:,slice_idx,:])))
+        savefig("logdiff_3D.png")
     end
 end
 
 function test_TCI_frequency_rotation_reg_values()
+
+    ITensors.disable_warn_order()
 
     # load data
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
@@ -144,7 +160,7 @@ function test_TCI_frequency_rotation_reg_values()
 
     # pick PSF
     spin = 1
-    perm_idx = 2
+    perm_idx = 4 # perm_idx four has one row of zeros...
     Gp = GFs[spin].Gps[perm_idx]
     @show Gp.ωconvOff
     display(cumsum(ωconvMat[GFs[spin].ps[perm_idx][1:npt-1],:], dims=1))
@@ -159,6 +175,8 @@ function test_TCI_frequency_rotation_reg_values()
     tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
     is_ferm_new = vcat([0], fill(1, npt-2))
     @TIME Gp_mps_rot = affine_freq_transform(Gp_mps; tags=tags, ωconvMat=convert(Matrix{Int}, Gp.ωconvMat), isferm_ωnew=is_ferm_new) "Frequency rotation:"
+    printstyled("-- Rotation matrix\n"; color=:blue)
+    display(convert(Matrix{Int}, Gp.ωconvMat))
     # ===== frequency rotation END
 
     # comparison
@@ -168,13 +186,40 @@ function test_TCI_frequency_rotation_reg_values()
     offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
     sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)...,), strides4rot, offset4rot)
     compare_values = Array{ComplexF64,D}(sv[[Colon() for _ in 1:D]...])
-    @show Gp.ωconvMat
-    @show strides_internal
-    @show strides4rot
-    @show offset4rot
     @show size(data_unrotated)
     @show size(compare_values)
     @show (length.(Gp.ωs_ext))
+    @show Gp.ωconvOff
+
+    tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
+    fatGpTCI = TCI4Keldysh.MPS_to_fatTensor(Gp_mps_rot; tags=tags)
+    @show size(fatGpTCI)
+    # tci_slice = [1:2^grid_R(sc) for sc in size(compare_values)]
+    # tci_slice = [1:128, Colon()]
+    # tci_slice = fill(Colon(), npt-1)
+    # tci_slice = [1:128, 129:256]
+    # bosonic grid is not symmetric for tci, last point is missing to get a power of two as grid size
+    # this means that the frequency transform is shifted by one in the bosonic direction compared to the reference
+    tci_slice = [129:256, 1:128]
+    @show norm(fatGpTCI[129,:])
+    @show norm(fatGpTCI[2,:])
+    @show norm(fatGpTCI[1,:])
+
+    @show maximum(abs.(compare_values[129,1:128] - fatGpTCI[1,1:128]))
+    @show maximum(abs.(compare_values[2:128,1:128] - fatGpTCI[130:end,1:128]))
+    plot(1:128, abs.(compare_values[129,1:128] - fatGpTCI[1,1:128]))
+    savefig("foo.png")
+
+    # plot
+    scalefun=log
+    if npt==3
+        heatmap(scalefun.(abs.(compare_values)))
+        savefig("rotated_reference2D.png")
+        heatmap(scalefun.(abs.(fatGpTCI)))
+        savefig("TT_rotated2D.png")
+    elseif npt==4
+        # TODO
+    end
 end
 
 """
