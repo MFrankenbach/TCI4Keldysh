@@ -296,6 +296,50 @@ function MPS_to_fatTensor(mps::MPS; tags)
 end
 
 """
+freq_shift(isferm_ωnew::Vector{Int}, isferm_ωold::Vector{Int}, ωconvMat::Matrix{Int})
+
+Determine shift required for correct frequency rotation on tensor train.
+"""
+function freq_shift(isferm_ωnew::Vector{Int}, ωconvMat::Matrix{Int}, R::Int)
+    @assert R>=2
+    N = 2^(R-1)
+    Nhalf = div(N,2)
+    # min frequencies of external grids, measured in units of π/β
+    bos_min = -2*Nhalf
+    ferm_min = -2*Nhalf + 1
+    # 0-based indices in grids of size 2^R
+    bos_min_idx = Nhalf
+    ferm_min_idx = Nhalf
+
+    isferm_ωold = gridtypes_from_freq_rotation(ωconvMat, isferm_ωnew)
+    @show isferm_ωold
+
+    # rotation maps new -> old
+    corner_new = map(x -> (x==1 ? ferm_min : bos_min), isferm_ωnew)
+    @show corner_new
+    corner_new_idx = map(x -> (x==1 ? ferm_min_idx : bos_min_idx), isferm_ωnew)
+    @show corner_new_idx
+
+    # compute image of corner under shiftless rotation
+    idx_img = mod.(ωconvMat * corner_new_idx, 2*N)
+    freq_idx_img = 2*(idx_img .- N) .+ isferm_ωold
+    @show idx_img
+    @show freq_idx_img
+
+    # compute desired image of corner under frequency rotation
+    corner_old = ωconvMat * corner_new
+    @show corner_old
+
+    @assert all(mod.(freq_idx_img - corner_old, 2) .== 0)
+    shift = div.(freq_idx_img - corner_old, 2) # div has no remainder here
+    return mod.(shift, 2*N)
+end
+
+function gridtypes_from_freq_rotation(ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
+    return mod.(ωconvMat * isferm_ωnew, 2)
+end
+
+"""
 affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
 
 Perform an affine frequency transform (i.e. one that combines at most 2 frequencies into a new frequency)
@@ -320,15 +364,25 @@ function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ω
 
     
 
-    isferm_ωold = mod.(ωconvMat * isferm_ωnew, 2)
+    isferm_ωold = mod.(ωconvMat * isferm_ωnew, 2) # abs.(ωconvMat) -> no, should be fine
     begin # parse matrix into dictionary with coefficients for affinetransform
         iωs = [partialsortperm(abs.(ωconvMat[i,:]), 1:2, rev=true)  for i in 1:D] # 
         coeffs_dic = [Dict([tags[iωs[i][j]] => ωconvMat[i,iωs[i][j]] for j in 1:2]...) for i in 1:D]
     end
-    #println("coeffs_dic = ", coeffs_dic)
+    # original shift
     shift = halfN * (sum(abs.(ωconvMat), dims=2)[:] .- 1) + div.(ωconvMat * isferm_ωnew - isferm_ωold, 2)
-    #println("shift = ", shift)
-    
+    # println("  \nOriginal shift: $shift\n")
+    # shift = halfN * (sum(abs.(ωconvMat), dims=2)[:] .- 1) + [0,-1]
+
+    #TODO: Match shift s such that the first index i_ext=firstindex.(ω_ext) is mapped to the correct index in ω_int i_int:
+    # i_int = ωconvMat * (i_ext . -1) + s
+    shift = freq_shift(isferm_ωnew, ωconvMat, R)
+    println("  New shift: $shift\n")
+    # @show isferm_ωold
+
+    shift= [0,0]
+ 
+    @show shift
     bc = ones(Int, D) # boundary condition periodic
     mps_rot = Quantics.affinetransform(
         mps,
@@ -617,9 +671,9 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
     # also, while the first contraction for D=2 runs through it contracts omega1 (of the kernel) instead of eps1 with the eps1 of Adisc
     # OR DOES IT? the indices after the first contraction are fine...
     # -> try to modify the index replacement part in fitalgorithm.jl in FastMPOContractions
-    kwargs = Dict(:alg=>"fit")
+    # kwargs = Dict(:alg=>"fit")
 
-    # kwargs = Dict(:alg=>"densitymatrix")
+    kwargs = Dict(:alg=>"densitymatrix")
 
     R = maximum(grid_R.([size(leg, 1) for leg in broadenedPsf.legs]))
     @show R

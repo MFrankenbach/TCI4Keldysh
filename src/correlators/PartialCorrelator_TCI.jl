@@ -80,7 +80,7 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
 
     # pick PSF
     spin = 1
-    perm_idx = 4
+    perm_idx = 2
     Gp = GFs[spin].Gps[perm_idx]
 
     # # plot leg of Gp
@@ -200,15 +200,16 @@ function test_TCI_frequency_rotation_reg_values()
     # tci_slice = [1:128, 129:256]
     # bosonic grid is not symmetric for tci, last point is missing to get a power of two as grid size
     # this means that the frequency transform is shifted by one in the bosonic direction compared to the reference
-    tci_slice = [129:256, 1:128]
-    @show norm(fatGpTCI[129,:])
-    @show norm(fatGpTCI[2,:])
-    @show norm(fatGpTCI[1,:])
+    tci_slice = [1:128, 129:size(fatGpTCI,2)]
+    # @show norm(fatGpTCI[129,:])
+    # @show norm(fatGpTCI[2,:])
+    # @show norm(fatGpTCI[1,:])
+    # diff1 = fatGpTCI[1:128, 129:end] - compare_values[1:128, :]
+    # diff2 = fatGpTCI[2:129, 129:end] - compare_values[1:128, :]
+    # @show norm(diff1)
+    # @show norm(diff2)
 
-    @show maximum(abs.(compare_values[129,1:128] - fatGpTCI[1,1:128]))
-    @show maximum(abs.(compare_values[2:128,1:128] - fatGpTCI[130:end,1:128]))
-    plot(1:128, abs.(compare_values[129,1:128] - fatGpTCI[1,1:128]))
-    savefig("foo.png")
+    @show is_ferm_new
 
     # plot
     scalefun=log
