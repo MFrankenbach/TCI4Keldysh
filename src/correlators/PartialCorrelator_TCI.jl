@@ -65,14 +65,13 @@ TCI4Keldysh.VERBOSE() = true
 TCI4Keldysh.TIME() = true
 TCI4Keldysh.DEBUG() = true
 
-function test_TCI_precompute_reg_values_MF_without_ωconv()
+function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, perm_idx=1)
 
     ITensors.disable_warn_order()
 
     # load data
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
     # PSFpath = "data/SIAM_u=1.00/PSF_nz=4_conn_zavg_new/"
-    npt = 3
     Ops = npt==3 ? ["F1", "F1dag", "Q34"] : ["F1", "F1dag", "F3", "F3dag"]
     ωconvMat = dummy_frequency_convention(npt)
     R = 7
@@ -80,7 +79,6 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
 
     # pick PSF
     spin = 1
-    perm_idx = 2
     Gp = GFs[spin].Gps[perm_idx]
 
     # # plot leg of Gp
@@ -92,6 +90,7 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
     # savefig("kernel_heatmap_index.png")
 
     # compute reference data for selected PSF
+    display(cumsum(ωconvMat[GFs[spin].ps[perm_idx][1:npt-1],:], dims=1))
     data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
 
     # TCI computation
@@ -114,19 +113,17 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
         off_unrot = 0
     end
     unrotated_slice = [[Colon() for _ in 1:(bosidx-1)]..., 1:size(data_unrotated,bosidx)-off_unrot, [Colon() for _ in bosidx+1:ndims(data_unrotated)]...]
-    TCIslice = [1:2^grid_R(size(leg,1)) for leg in Gp.tucker.legs]
+    TCIslice = Base.OneTo.(ntuple(i -> min(2^grid_R(size(Gp.tucker.legs[i],1)), size(data_unrotated[unrotated_slice...],i)), ndims(data_unrotated)))
     @show TCIslice
     diff = fatGpTCI[TCIslice...] - data_unrotated[unrotated_slice...]
 
-    inds = fill(Colon(), npt-1)
-    @show maximum(abs.(diff[inds...]))
-    @show sum(abs.(diff[inds...]))/reduce(*,size(diff[inds...]))
-    # @show maximum(abs.(diff[70:end,65,:]))
-    # @show sum(abs.(diff[70:end,65, :]))/reduce(*,size(diff[70:end,65,:]))
-    @show norm(fatGpTCI[:,128])
+    max_err = maximum(abs.(diff))
+    mean_err = sum(abs.(diff))/reduce(*,size(diff))
+    @show max_err
+    @show mean_err
 
     if npt==3
-        scalefun = log
+        scalefun = log10
         heatmap(scalefun.(abs.(fatGpTCI)))
         savefig("TT_heatmap_2D.png")
         heatmap(scalefun.(abs.(data_unrotated)))
@@ -134,7 +131,7 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
         heatmap(scalefun.(abs.(diff[:,:])))
         savefig("logdiff_2D.png")
     elseif npt==4
-        scalefun = log
+        scalefun = log10
         complexfun = abs
         slice_idx = 65
         heatmap(scalefun.(complexfun.(fatGpTCI[TCIslice[1], slice_idx, TCIslice[3]])))
@@ -144,6 +141,7 @@ function test_TCI_precompute_reg_values_MF_without_ωconv()
         heatmap(scalefun.(complexfun.(diff[:,slice_idx,:])))
         savefig("logdiff_3D.png")
     end
+    return (mean_err, max_err)
 end
 
 function test_TCI_frequency_rotation_reg_values()

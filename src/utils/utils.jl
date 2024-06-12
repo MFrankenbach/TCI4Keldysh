@@ -163,6 +163,45 @@ end
 
 
 """
+contract_1D_Kernels_w_Adisc_mp(Kernels, Adisc)
+
+Contract given kernels with Adisc. For testing purposes.
+
+For 3p correlators we e.g. get K[i,a] K[j,b] Adisc[a,b]
+"""
+function contract_1D_Kernels_w_Adisc_mp_partial(Kernels, Adisc, n::Int)
+    sz = [size(Adisc)...]
+    D = ndims(Adisc)
+
+    @DEBUG all(sz[1:n] .== size.(Kernels, 2)[1:n]) "Incompatible sizes for Adisc ($sz) and Kernels ($(size.(Kernels, 2)))"
+    @assert n<=D && 1<=n
+
+    ##########################################################
+    ### EFFICIENCY IN TERMS OF   CPU TIME: �😄     RAM: 🙈  ###
+    ##########################################################
+    Acont = copy(Adisc)  # Initialize
+    for it1 in 1:n
+        Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1]))
+        Acont = Kernels[it1] * Acont
+
+        sz[it1] = size(Kernels[it1])[1]
+        Acont = reshape(Acont, (sz[it1], sz[[it1+1:end; 1:it1-1]]...))
+        if D>1
+            Acont = permutedims(Acont, (collect(2:D)..., 1))
+        end
+        #GC.gc()
+    end
+
+    # restore order of dimensions
+    for _ in n+1:D
+        Acont = permutedims(Acont, (collect(2:D)..., 1))
+    end
+
+    return Acont
+end
+
+
+"""
     hilbert(x)
     hilbert(x, n)
 Analytic signal, computed using the Hilbert transform.

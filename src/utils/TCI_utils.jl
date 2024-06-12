@@ -660,25 +660,27 @@ end
 function grid_R(gridsize::Int)
     R = trunc(Int, log2(gridsize))
     # fermionic or bosonic grid
-    @assert (gridsize - 2^R) == 0 || (gridsize - 2^R) == 1 "Invalid gridsize $gridsize"
-    return R
+    # need not be satisfied because three grids may be summed as well, yielding a size of e.g. 3*2^R + 1
+    if (gridsize - 2^R) == 0 || (gridsize - 2^R) == 1 
+        return R
+    else
+        @DEBUG begin
+            @warn "Gridsize $gridsize is not of the form 2^R + 0/1\n"
+            true;
+        end "Gridsize is $gridsize"
+        return R+1
+    end
 end
 
 function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-14, alg="tci2")
     D = 2
 
-    # crashes because of index search in contract_fit: siteinds on an MPS does not catch all non-link indices
-    # also, while the first contraction for D=2 runs through it contracts omega1 (of the kernel) instead of eps1 with the eps1 of Adisc
-    # OR DOES IT? the indices after the first contraction are fine...
-    # -> try to modify the index replacement part in fitalgorithm.jl in FastMPOContractions
+    # fit algorithm works for D=2 (in contrast to D=3...)
     # kwargs = Dict(:alg=>"fit")
 
-    kwargs = Dict(:alg=>"densitymatrix")
+    kwargs = Dict(:alg=>"densitymatrix", :cutoff=>1e-12, :use_absolute_cutoff=>true)
 
     R = maximum(grid_R.([size(leg, 1) for leg in broadenedPsf.legs]))
-    @show R
-    # R_Adisc = padding_R(size(broadenedPsf.center))
-    # @show R_Adisc
 
     TCI4Keldysh.@TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
 
@@ -724,11 +726,6 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
     TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "eps1",  "eps1", R)
     #TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "dummy", "eps3", R)
 
-    if TCI4Keldysh.VERBOSE()
-        mps_idx_info(mps_Adisc_padded)
-        mps_idx_info(mps_Kernel1_exp)
-    end
-
     TCI4Keldysh.@TIME ab = Quantics.automul(
             mps_Kernel1_exp,
             mps_Adisc_padded;
@@ -742,10 +739,23 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
     TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "eps2",  "eps2", R)
     #TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "dummy", "eps3", R)
 
-    if TCI4Keldysh.VERBOSE()
-        mps_idx_info(ab)
-        mps_idx_info(mps_Kernel2_exp)
-    end
+    # compare to partial contraction
+    @DEBUG begin
+        printstyled("  -- Test contraction\n"; color=:blue)
+        @show size(broadenedPsf.center)
+        Acontr1 = contract_1D_Kernels_w_Adisc_mp_partial(broadenedPsf.legs, broadenedPsf.center, 1)
+        @show size(Acontr1)
+        tags = ("ω1", "eps2")
+        fatty = TCI4Keldysh.MPS_to_fatTensor(ab; tags=tags)
+        @show size(fatty)
+        diffslice = [1:2^grid_R(size(Acontr1,1)), 1:size(Acontr1,2)]
+        diff = abs.(fatty[diffslice...] - Acontr1[diffslice...])
+        meandiff = sum(diff)/prod(size(diff))
+        @show meandiff
+        @show maximum(diff)
+        meandiff<=1e-8;
+    end "\n ---- Testing contraction 1 ----\n"
+
     ITensors.truncate!(ab; cutoff=1e-14, use_absolute_cutoff=true)
 
     #findallsiteinds_by_tag(siteinds(); tag="eps2")
@@ -760,10 +770,24 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
             #tolerance=tolerance
         ) "Contraction 2"
 
-    if TCI4Keldysh.VERBOSE()
-        mps_idx_info(res)
-    end
-    ITensors.truncate!(ab; cutoff=1e-14, use_absolute_cutoff=true)
+    # compare to partial contraction
+    @DEBUG begin
+        printstyled("  -- Test contraction\n"; color=:blue)
+        @show size(broadenedPsf.center)
+        Acontr1 = contract_1D_Kernels_w_Adisc_mp_partial(broadenedPsf.legs, broadenedPsf.center, 2)
+        @show size(Acontr1)
+        tags = ("ω1", "ω2")
+        fatty = TCI4Keldysh.MPS_to_fatTensor(res; tags=tags)
+        @show size(fatty)
+        diffslice = [1:2^grid_R(size(Acontr1,1)), 1:size(Acontr1,2)]
+        diff = abs.(fatty[diffslice...] - Acontr1[diffslice...])
+        @show sum(diff)/prod(size(diff))
+        @show maximum(diff)
+        maximum(diff)<=1e-6;
+    end "\n ---- Testing contraction 2 ----\n"
+
+    # truncate res, not ab!
+    ITensors.truncate!(res; cutoff=1e-14, use_absolute_cutoff=true)
     
     # siteinds(res)
     return res
@@ -776,10 +800,187 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     D = 3
     #tolerance = 1e-14
     # scaling for maxbondim(MPS)=m, maxbonddim(MPO)=k: m^3k + m^2k^2
-    kwargs = Dict(:alg=>"fit")
+    # kwargs = Dict(:alg=>"fit", :nsweeps=>10, :cutoff=>1e-15)
 
     # scaling for maxbondim(MPS)=m, maxbonddim(MPO)=k: m^3k^2 + m^2k^3
-    # kwargs = Dict(:alg=>"densitymatrix")
+    # works and improves with increasing cutoff; finite cutoff makes contractions feasible
+    kwargs = Dict(:alg=>"densitymatrix", :cutoff=>1e-5, :use_absolute_cutoff=>true)
+
+
+    @show size.(broadenedPsf.legs,1)
+    R = maximum(grid_R.([size(leg, 1) for leg in broadenedPsf.legs]))
+
+    @TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
+
+    qtt_Adisc, _, _ = quanticscrossinterpolate(
+        zeropad_array(broadenedPsf.center, R); tolerance=tolerance
+        )  
+
+    # pad qtt:
+    # nonzeroinds_left=ones(Int, (R-R_Adisc)*D)
+    # qtt_Adisc_padded = TCI4Keldysh.zeropad_QTCI2(qtt_Adisc; N=R-R_Adisc, nonzeroinds_left)
+    qtt_Adisc_padded = TCI4Keldysh.zeropad_QTCI2(qtt_Adisc; N=0)
+    # all(qtt_Adisc_padded.tci.sitetensors[(R-R_Adisc)*D+1:end] .== qtt_Adisc.tci.sitetensors)
+    # all(getindex.(argmax.(qtt_Adisc_padded.tci.sitetensors[1:(R-R_Adisc)*D]), 2) .== nonzeroinds_left)
+
+
+
+    # convert qtt for Tucker center
+    mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
+
+    #legs = [zeros(eltype(broadenedPsf.legs[1]), 2^R, 2^R) for i in 1:D]
+    #for i in 1:3
+    #    legs[i][:,1:2^R_Adisc] .= broadenedPsf.legs[i][1:end-1,end-2^6+1:end]
+    #end
+    # legs = [zeropad_array(broadenedPsf.legs[i][1:end-residue,:]) for i in 1:D]
+    om_upper_ids = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in broadenedPsf.legs]
+    legs = [zeropad_array(broadenedPsf.legs[i][1:om_upper_ids[i], :], R) for i in eachindex(broadenedPsf.legs)]
+    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=1e-15) for i in 1:D]
+    mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+
+    ### contract Kernel with Tucker center
+
+    # add dummy dimension
+    @TIME begin
+        mps_Kernel1_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[1]; pos=3, D_old=2)
+        mps_Kernel2_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[2]; pos=3, D_old=2)
+        mps_Kernel3_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[3]; pos=1, D_old=2)
+    end "Adding dummy dimensions."
+
+    # adopt shared site indices from Tucker center
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "eps1",  "eps1", R)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "dummy", "eps3", R)
+
+    @DEBUG begin
+        printstyled("  -- Test Tucker\n"; color=:blue)
+        # check center
+        Adisc = broadenedPsf.center
+        @show size(Adisc)
+        tags = ("eps1", "eps2", "eps3")
+        fatty = TCI4Keldysh.MPS_to_fatTensor(mps_Adisc_padded; tags=tags)
+        @show size(fatty)
+        diffslice = size(Adisc)
+        diff = abs.(fatty[diffslice...] - Adisc[diffslice...])
+        @assert maximum(abs.(diff))<=1e-12
+
+        # check kernels
+        fatKernel1 = TCI4Keldysh.MPS_to_fatTensor(mps_Kernel1_exp; tags=("ω1", "eps1", "eps3"))
+        # fatKernel2 = TCI4Keldysh.MPS_to_fatTensor(mps_Kernel2_exp; tags=("ω2", "eps2", "eps3"))
+        # fatKernel3 = TCI4Keldysh.MPS_to_fatTensor(mps_Kernel3_exp; tags=("eps1", "ω3", "eps3"))
+        # fatKernels = [fatKernel1, fatKernel2, fatKernel3]
+        fatKernels = [fatKernel1]
+
+        # invariance across dummy dim
+        for ik in eachindex(fatKernels)
+            dd = ik==3 ? 1 : 3
+            k = fatKernels[ik]
+            for i in 1:size(k, dd)
+                slice = k==3 ? [i, Colon(), Colon()] : [Colon(), Colon(), i]
+                refslice = k==3 ? [1, Colon(), Colon()] : [Colon(), Colon(), 1]
+                @assert norm(k[slice...] - k[refslice...]) <= 1e-10
+            end
+        end
+
+        # comparison to tucker legs
+        refkernel1 = broadenedPsf.legs[1]
+        C = norm(fatKernel1[1:size(refkernel1, 1), 1:size(refkernel1, 2), 1] - refkernel1)
+        @assert C <= 1e-12 "error is $C"
+
+        true;
+    end "\n ---- Check Tucker ----\n"
+
+    @TIME ab = Quantics.automul(
+            mps_Kernel1_exp,
+            mps_Adisc_padded;
+            tag_row = "ω1",
+            tag_shared = "eps1",
+            tag_col = "eps2",
+            kwargs...
+        ) "Contraction 1"
+
+    # compare to partial contraction
+    # WORKS for alg="densitymatrix"
+    @DEBUG begin
+        printstyled("  -- Test contraction\n"; color=:blue)
+        @show dim.(linkinds(mps_Kernel1_exp))
+        @show dim.(linkinds(mps_Adisc_padded))
+        @show size(broadenedPsf.center)
+        Acontr1 = contract_1D_Kernels_w_Adisc_mp_partial(broadenedPsf.legs, broadenedPsf.center, 1)
+        @show size(Acontr1)
+        tags = ("ω1", "eps2", "eps3")
+        fatty = TCI4Keldysh.MPS_to_fatTensor(ab; tags=tags)
+        @show size(fatty)
+        diffslice = [1:2^grid_R(size(Acontr1,1)), 1:size(Acontr1,2), 1:size(Acontr1,3)]
+        diff = abs.(fatty[diffslice...] - Acontr1[diffslice...])
+        @show sum(diff)/prod(size(diff))
+        @show argmax(diff)
+
+        # plot
+        complexfun = abs
+        slice_idx = 5
+        # diffslice[1] = 70:128
+        heatmap(complexfun.(Acontr1[diffslice[1], slice_idx, diffslice[3]]))
+        savefig("contr1_ref.png")
+        # heatmap(complexfun.(fatty[diffslice[1], slice_idx, diffslice[3]]))
+        heatmap(complexfun.(fatty[:, slice_idx, :]))
+        savefig("contr1_tci.png")
+        heatmap(log10.(abs.(complexfun.(diff[diffslice[1], slice_idx, diffslice[3]]))))
+        savefig("contr1_diff.png")
+        true;
+    end "\n ---- Testing contraction 1 ----\n"
+
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "eps2",  "eps2", R)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "dummy", "eps3", R)
+
+    ITensors.truncate!(ab; cutoff=1e-14, use_absolute_cutoff=true)
+    ITensors.truncate!(mps_Kernel2_exp; cutoff=1e-14, use_absolute_cutoff=true)
+
+    #findallsiteinds_by_tag(siteinds(); tag="eps2")
+    @TIME ab2 = Quantics.automul(
+        ab,
+        mps_Kernel2_exp;
+            tag_row = "ω1",
+            tag_shared = "eps2",
+            tag_col = "ω2",
+            kwargs...
+        ) "Contraction 2"
+
+    #siteinds(ab2)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel3_exp, ab2, "eps3",  "eps3", R)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel3_exp, ab2, "dummy", "ω1"  , R)
+
+    ITensors.truncate!(ab2; cutoff=1e-14, use_absolute_cutoff=true)
+    ITensors.truncate!(mps_Kernel3_exp; cutoff=1e-14, use_absolute_cutoff=true)
+
+    @TIME res = Quantics.automul(
+        ab2,
+        mps_Kernel3_exp;
+            tag_row = "ω2",
+            tag_shared = "eps3",
+            tag_col = "ω3",
+            kwargs...
+        ) "Contraction 3"
+
+    ITensors.truncate!(res; cutoff=1e-14, use_absolute_cutoff=true)
+
+    return res
+end
+
+
+"""
+Kernel contractions without elementwise multiplication / dummy indices.
+See whether this makes alg=densitymatrix faster and fixes problem with alg=fit
+"""
+function noewmul_TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}; tolerance::Float64=1e-14, alg="tci2")
+
+    error("Function noewmul_TD_to_MPS_via_TTworld not yet implemented!")
+
+    D = 3
+    #tolerance = 1e-14
+    # scaling for maxbondim(MPS)=m, maxbonddim(MPO)=k: m^3k + m^2k^2
+
+    # scaling for maxbondim(MPS)=m, maxbonddim(MPO)=k: m^3k^2 + m^2k^3
+    alg = "fit"
 
 
     R = maximum(grid_R.([size(leg, 1) for leg in broadenedPsf.legs]))
@@ -811,36 +1012,141 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     #end
     # legs = [zeropad_array(broadenedPsf.legs[i][1:end-residue,:]) for i in 1:D]
     legs = [zeropad_array(leg[1:2^grid_R(size(leg, 1)), :], R) for leg in broadenedPsf.legs]
-    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=1e-15) for i in 1:D]
-    mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+    mps_Kernels = Array{MPS}(undef, D)
+    for i in 1:D
+        function kernel(om::Int, eps::Int, _::Int, _::Int)
+            return legs[i][om, eps]             
+        end
+        qtt, _, _ = quanticscrossinterpolate(R, fill(2^R, 4); tolerance=1e-14, unfoldingscheme=:interleaved)
+        tags = i<3 ? ("ω$i", "eps$i", "eps3", "eps3prime") : ("eps1", "eps1prime", "ω$i", "eps$i")
+        mps_Kernels[i] = TCI4Keldysh.QTCItoMPS(qtt, tags)
+    end
 
-    ### contract Kernel with Tucker center
-
-    # add dummy dimension
-    @TIME begin
-        mps_Kernel1_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[1]; pos=3, D_old=2)
-        mps_Kernel2_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[2]; pos=3, D_old=2)
-        mps_Kernel3_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[3]; pos=1, D_old=2)
-    end "Adding dummy dimensions."
+    mps_Kernel1_exp = mps_Kernels[1]
+    mps_Kernel2_exp = mps_Kernels[2]
+    mps_Kernel3_exp = mps_Kernels[3]
 
     # adopt shared site indices from Tucker center
     TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "eps1",  "eps1", R)
-    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "dummy", "eps3", R)
+    TCI4Keldysh._adoptinds_by_tags!(mps_Kernel1_exp, mps_Adisc_padded, "eps3", "eps3", R)
+
+    @DEBUG begin
+        printstyled("  -- Test Tucker\n"; color=:blue)
+
+        # check center
+        Adisc = broadenedPsf.center
+        @show size(Adisc)
+        tags = ("eps1", "eps2", "eps3")
+        fatty = TCI4Keldysh.MPS_to_fatTensor(mps_Adisc_padded; tags=tags)
+        @show size(fatty)
+        diffslice = size(Adisc)
+        diff = abs.(fatty[diffslice...] - Adisc[diffslice...])
+        @assert maximum(abs.(diff))<=1e-12
+
+        # # check kernels
+        # fatKernel1 = TCI4Keldysh.MPS_to_fatTensor(mps_Kernel1_exp; tags=("ω1", "eps1", "eps3"))
+        # fatKernels = [fatKernel1]
+
+        # # invariance across dummy dim
+        # for ik in eachindex(fatKernels)
+        #     dd = ik==3 ? 1 : 3
+        #     k = fatKernels[ik]
+        #     for i in 1:size(k, dd)
+        #         slice = k==3 ? [i, Colon(), Colon()] : [Colon(), Colon(), i]
+        #         refslice = k==3 ? [1, Colon(), Colon()] : [Colon(), Colon(), 1]
+        #         @assert norm(k[slice...] - k[refslice...]) <= 1e-10
+        #     end
+        # end
+
+        # # comparison to tucker legs
+        # refkernel1 = broadenedPsf.legs[1]
+        # @assert norm(fatKernel1[1:size(refkernel1, 1), 1:size(refkernel1, 2), 1] - refkernel1) <= 1e-12
+
+        true;
+    end "\n ---- Check Tucker ----\n"
 
     if TCI4Keldysh.VERBOSE()
         mps_idx_info(mps_Adisc_padded)
         mps_idx_info(mps_Kernel1_exp)
     end
 
-    @TIME ab = Quantics.automul(
-            mps_Kernel1_exp,
-            mps_Adisc_padded;
-            tag_row = "ω1",
-            tag_shared = "eps1",
-            tag_col = "eps2",
-            kwargs...
-        ) "Contraction 1"
-    #siteinds(ab)
+    error("NYI")
+
+    # MPO-MPO contraction
+    @TIME begin
+
+        # get sites
+        tagr1 = "ω1"
+        tagr2 = "eps3prime"
+        sites_row1 = findallsiteinds_by_tag(siteinds(M1); tag=tagr1)
+        sites_row2 = findallsiteinds_by_tag(siteinds(M1); tag=tagr2)
+        tags1 = "eps1"
+        tags2 = "eps3"
+        sites_shared1 = findallsiteinds_by_tag(siteinds(M1); tag=tag_shared)
+        tagc1 = "eps2"
+        tagc2 = "eps3"
+        sites_col1 = findallsiteinds_by_tag(siteinds(M2); tag=tagc1)
+        sites_col2 = findallsiteinds_by_tag(siteinds(M2); tag=tagc2)
+        sites_col = vcat(sites_col1, sites_col2)
+        sites_row = vcat(sites_row1, sites_row2)
+
+        matmul = MatrixMultiplier(sites_row, sites_shared, sites_col)
+    
+        M1_ = Quantics.asMPO(mps_Kernel1_exp)
+        M2_ = Quantics.asMPO(mps_Adisc_padded)
+        M1_, M2_ = preprocess(matmul, M1_, M2_)
+    
+        # M = FastMPOContractions.contract_mpo_mpo(M1_, M2_; alg=alg, kwargs...)
+        M = Quantics.contract_mpo_mpo(M1_, M2_; alg=alg, kwargs...)
+    
+        printstyled("  Postprocess\n"; color=:blue)
+        M = Quantics.postprocess(matmul, M)
+        M = Quantics.postprocess(ewmul, M)
+        printstyled("  ----------\n"; color=:blue)
+    
+        if in(:maxdim, keys(kwargs))
+            truncate!(M; maxdim=kwargs[:maxdim])
+        end 
+    end "Contraction 1"
+
+    # @TIME ab = Quantics.automul(
+    #         mps_Kernel1_exp,
+    #         mps_Adisc_padded;
+    #         tag_row = "ω1",
+    #         tag_shared = "eps1",
+    #         tag_col = "eps2",
+    #         kwargs...
+    #     ) "Contraction 1"
+
+    # compare to partial contraction
+    # WORKS for alg="densitymatrix"
+    @DEBUG begin
+        printstyled("  -- Test contraction\n"; color=:blue)
+        @show size(broadenedPsf.center)
+        Acontr1 = contract_1D_Kernels_w_Adisc_mp_partial(broadenedPsf.legs, broadenedPsf.center, 1)
+        @show size(Acontr1)
+        tags = ("ω1", "eps2", "eps3")
+        fatty = TCI4Keldysh.MPS_to_fatTensor(ab; tags=tags)
+        @show size(fatty)
+        diffslice = [1:2^grid_R(size(Acontr1,1)), 1:size(Acontr1,2), 1:size(Acontr1,3)]
+        diff = abs.(fatty[diffslice...] - Acontr1[diffslice...])
+        @show sum(diff)/prod(size(diff))
+        @show argmax(diff)
+
+        # plot
+        complexfun = abs
+        slice_idx = 5
+        # diffslice[1] = 70:128
+        heatmap(complexfun.(Acontr1[diffslice[1], slice_idx, diffslice[3]]))
+        savefig("contr1_ref.png")
+        # heatmap(complexfun.(fatty[diffslice[1], slice_idx, diffslice[3]]))
+        heatmap(complexfun.(fatty[:, slice_idx, :]))
+        savefig("contr1_tci.png")
+        heatmap(log10.(abs.(complexfun.(diff[diffslice[1], slice_idx, diffslice[3]]))))
+        savefig("contr1_diff.png")
+        false;
+    end "\n ---- Testing contraction 1 ----\n"
+
     TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "eps2",  "eps2", R)
     TCI4Keldysh._adoptinds_by_tags!(mps_Kernel2_exp, ab, "dummy", "eps3", R)
 
