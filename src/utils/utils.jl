@@ -649,3 +649,26 @@ function interpolDecomp4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rtol
     return td_new#(kernels_new=Kernels_new, adisc_new=Adisc_new, p_iωs=p_iωs, p_ωdiscs=p_ωdiscs)
 
 end
+
+"""
+Evaluate anomalous part of matsubara kernel
+oms, omprimes should not contain the zero frequencies
+"""
+function eval_ano_matsubara_kernel(oms::Vector{Float64}, omprimes::Vector{Float64}, beta::Float64)
+    product = 1.0
+    sum = 0.0
+    for i in eachindex(oms)
+        Ominv = 1/(im*oms[i] - omprimes[i])
+        sum += Ominv
+        product *= Ominv
+    end
+    return -0.5*(beta + sum)*product
+end
+
+function rank(qtt::QuanticsTCI.QuanticsTensorCI2)
+    return maximum(TCI.linkdims(qtt.tci))
+end
+
+function rank(mps::MPS)
+    return maximum(dim.(linkinds(mps)))
+end
