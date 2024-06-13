@@ -7,7 +7,9 @@ for i in 1:1
     TCI4Keldysh.test_TCI_precompute_anomalous_values(;npt=4, perm_idx=i)
 end
 
-
+<<<<<<< HEAD
+=======
+>>>>>>> a7c79cbb72097920873dae3735d60e3984fe23a6
 # # compile
 # TCI4Keldysh.test_TCI_precompute_reg_values_MF_without_ωconv(npt=3, perm_idx=1)
 # TCI4Keldysh.DEBUG() = false
