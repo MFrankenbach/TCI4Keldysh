@@ -672,13 +672,16 @@ function grid_R(gridsize::Int)
     end
 end
 
-function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-14, alg="tci2")
+"""
+cutoff: cutoff for densitymatrix algorithm in MPO-MPO contraction; small cutoff affordable in 2D
+"""
+function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-12, cutoff::Float64=1e-12)
     D = 2
 
     # fit algorithm works for D=2 (in contrast to D=3...)
     # kwargs = Dict(:alg=>"fit")
 
-    kwargs = Dict(:alg=>"densitymatrix", :cutoff=>1e-12, :use_absolute_cutoff=>true)
+    kwargs = Dict(:alg=>"densitymatrix", :cutoff=>cutoff, :use_absolute_cutoff=>true)
 
     R = maximum(grid_R.([size(leg, 1) for leg in broadenedPsf.legs]))
 
@@ -800,15 +803,18 @@ end
 
 
 
-function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}; tolerance::Float64=1e-14, alg="tci2")
+"""
+cutoff: cutoff for densitymatrix algorithm in MPO-MPO contraction
+"""
+function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}; tolerance::Float64=1e-12, cutoff::Float64=1e-5)
+
     D = 3
-    #tolerance = 1e-14
     # scaling for maxbondim(MPS)=m, maxbonddim(MPO)=k: m^3k + m^2k^2
     # kwargs = Dict(:alg=>"fit", :nsweeps=>10, :cutoff=>1e-15)
 
     # scaling for maxbondim(MPS)=m, maxbonddim(MPO)=k: m^3k^2 + m^2k^3
     # works and improves with increasing cutoff; finite cutoff makes contractions feasible
-    kwargs = Dict(:alg=>"densitymatrix", :cutoff=>1e-5, :use_absolute_cutoff=>true)
+    kwargs = Dict(:alg=>"densitymatrix", :cutoff=>cutoff, :use_absolute_cutoff=>true)
 
 
     @show size.(broadenedPsf.legs,1)
