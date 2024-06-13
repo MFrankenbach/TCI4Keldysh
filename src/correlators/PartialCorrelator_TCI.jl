@@ -222,6 +222,69 @@ function test_TCI_frequency_rotation_reg_values()
 end
 
 """
+Test TCI-computation of anomalous term in the presence of a bosonic grid.
+"""
+function test_TCI_precompute_anomalous_values(;npt=3, perm_idx=1)
+    
+    ITensors.disable_warn_order()
+
+    # load data
+    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    # PSFpath = "data/SIAM_u=1.00/PSF_nz=4_conn_zavg_new/"
+    Ops = npt==3 ? ["F1", "F1dag", "Q34"] : ["F1", "F1dag", "F3", "F3dag"]
+    ωconvMat = dummy_frequency_convention(npt)
+    R = 7
+    GFs = load_npoint(PSFpath, Ops, npt, R, ωconvMat; nested_ωdisc=false)
+
+    # pick PSF
+    spin = 1
+    Gp = GFs[spin].Gps[perm_idx]
+
+    if prod(size(Gp.Adisc_anoβ))==0
+        @info "ωdisc does not contain vanishing bosonic frequency"
+    end
+
+    # get reference values
+    reg_values = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
+    full_values = precompute_all_values_MF_without_ωconv(Gp)
+    ano_values = full_values .- reg_values
+
+    if npt==3
+        heatmap(abs.(ano_values))
+        savefig("ano_values_2D.png")
+    end
+
+    if npt==4
+        # find bosonic 0 frequency
+        bos_idx = findfirst(.!Gp.isFermi)
+        ωbos = Gp.tucker.ωs_legs[bos_idx] 
+        zero_inds = [i for i in eachindex(ωbos) if abs(ωbos[i]) < 1.e-10]
+        slice = [[Colon() for _ in 1:bos_idx-1]..., only(zero_inds), [Colon() for _ in bos_idx+1:ndims(ano_values)]...]
+        scalefun = x -> x
+        heatmap(scalefun.(abs.(ano_values[slice...])))
+        savefig("ano_values_3D.png")
+
+        # perform TCI computation
+        Gp_ano_mps = anomalous_TD_to_MPS(Gp; tolerance=1e-3)
+
+        grid_ids = [i for i in 1:npt-1 if i!=bos_idx]
+        fat_ano = TCI4Keldysh.MPS_to_fatTensor(Gp_ano_mps; tags=ntuple(i -> "ω$(grid_ids[i])", npt-2))
+
+        @show size(fat_ano)
+
+        heatmap(scalefun.(abs.(fat_ano)))
+        savefig("ano_values_3D_tci.png")
+
+        diff_slice = [slice[i] for i in grid_ids]
+        diff = abs.(fat_ano[diff_slice...] - ano_values[slice...])
+        heatmap(diff)
+        savefig("ano_values_3D_diff.png")
+        @show sum(diff)/prod(size(diff))
+        @show maximum(diff)
+    end
+end
+
+"""
 Load spin up and down of a given 2 or 3 point function.
 """
 function load_npoint(PSFpath::String, ops::Vector{String}, npt::Int, R, ωconvMat; nested_ωdisc=false)

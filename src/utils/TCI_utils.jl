@@ -772,17 +772,21 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
 
     # compare to partial contraction
     @DEBUG begin
-        printstyled("  -- Test contraction\n"; color=:blue)
+        printstyled("  -- Test contraction 2\n"; color=:blue)
         @show size(broadenedPsf.center)
         Acontr1 = contract_1D_Kernels_w_Adisc_mp_partial(broadenedPsf.legs, broadenedPsf.center, 2)
-        @show size(Acontr1)
         tags = ("ω1", "ω2")
         fatty = TCI4Keldysh.MPS_to_fatTensor(res; tags=tags)
-        @show size(fatty)
-        diffslice = [1:2^grid_R(size(Acontr1,1)), 1:size(Acontr1,2)]
+        diffslice = [1:2^grid_R(size(Acontr1,1)), 1:2^grid_R(size(Acontr1,2))]
         diff = abs.(fatty[diffslice...] - Acontr1[diffslice...])
         @show sum(diff)/prod(size(diff))
         @show maximum(diff)
+        # heatmap(abs.(fatty))
+        # savefig("contr2_tci.png")
+        # heatmap(abs.(Acontr1))
+        # savefig("contr2_ref.png")
+        # heatmap(log10.(abs.(diff)))
+        # savefig("contr2_diff.png")
         maximum(diff)<=1e-6;
     end "\n ---- Testing contraction 2 ----\n"
 
@@ -1193,6 +1197,130 @@ function noewmul_TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerD
     ITensors.truncate!(res; cutoff=1e-14, use_absolute_cutoff=true)
 
     return res
+end
+
+function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{2})
+    @assert sum(map(isf -> isf ? 0 : 1, Gp.isFermi)) == 1 "Gp must have exactly one bosonic frequency to compute anomalous term"
+
+    error("Not yet implemented")
+end
+
+
+function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance=1e-14)::MPS
+    @assert !all(Gp.isFermi) "Gp must have bosonic frequency to compute anomalous term"
+
+    D = 3
+
+    bos_idx = get_bosonic_idx(Gp)
+    @assert !isnothing(bos_idx)
+    grid_ids = [i for i in 1:D if i!=bos_idx]
+
+    # # embed anomalous Adisc into zeros
+    # Adisc_ano = zeros(eltype(Gp.Adisc_anoβ), size(Gp.tucker.center))
+    # @assert !isnothing(bos_freq_idx)
+    # slice = [[Colon() for _ in 1:bos_idx-1]..., bos_freq_idx, [Colon() for _ in bos_idx+1:D]...]
+    # slice_anoβ = [[Colon() for _ in 1:bos_idx-1]..., 1, [Colon() for _ in bos_idx+1:D]...]
+    # @show size(Gp.Adisc_anoβ)
+    # @show size(Adisc_ano[slice...])
+    # Adisc_ano[slice...] .= Gp.Adisc_anoβ[slice_anoβ...]
+    # @show size(Adisc_ano)
+
+    # how many bits are required due to frequency grid?
+    R = maximum(grid_R.([size(leg, 1) for leg in Gp.tucker.legs]))
+
+    Adisc_ano = dropdims(Gp.Adisc_anoβ; dims=(bos_idx,)) # D-1 dimensional
+
+    # compress Adisc_anoβ
+    qtt_Adisc_ano, _, _ = quanticscrossinterpolate(
+        zeropad_array(Adisc_ano, R); tolerance=tolerance
+        )  
+    @show rank(qtt_Adisc_ano)
+    tags_Adisc = tuple(["eps$i" for i in 1:D if i!=bos_idx]...)
+    mps_Adisc_ano = TCI4Keldysh.QTCItoMPS(qtt_Adisc_ano, tags_Adisc)
+    mps_idx_info(mps_Adisc_ano)
+
+    # get kernel
+    kernel_mps = compress_anomalous_kernel(Gp, R; tolerance=tolerance)
+    mps_idx_info(kernel_mps)
+
+    # contract
+    _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[1], tags_Adisc[1], R)
+    _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[2], tags_Adisc[2], R)
+
+    # kernel: ω1, eps1, ω2, eps2...
+    sites_row = siteinds(kernel_mps)[1:2:end]
+    sites_shared = siteinds(kernel_mps)[2:2:end]
+
+    # kernel to MPO
+    kernel_mpo = Quantics.asMPO(kernel_mps)
+    for (s_row, s_shared) in zip(sites_row, sites_shared)
+        kernel_mpo = Quantics.combinesites(kernel_mpo, s_row, s_shared)
+    end
+
+    Gp_ano = contract(mps_Adisc_ano, kernel_mpo; cutoff=tolerance*1e-2, use_absolute_cutoff=true)
+
+    mps_idx_info(Gp_ano)
+
+    return Gp_ano
+end
+
+"""
+Compress anomalous part of Matsubara frequency kernel to MPS.
+"""
+function compress_anomalous_kernel(Gp::TCI4Keldysh.PartialCorrelator_reg{D}, R::Int; tolerance=1e-10)::MPS where {D}
+    # for now, compress in D dimensions to make subsequent addition to regular part trivial...
+    bos_idx = get_bosonic_idx(Gp)
+
+    grid_ids = [i for i in 1:D if i!=bos_idx]
+    leg_sizes = ntuple(i -> length(Gp.tucker.ωs_legs[grid_ids[i]]), D-1)
+    omdisc_sizes = ntuple(i -> length(Gp.tucker.ωs_center[grid_ids[i]]), D-1)
+    @show grid_ids
+
+    kernelfun = if D==3
+        function anomalous_kernel(i1::Int, i1p::Int, i2::Int, i2p::Int)
+            om_ids = (i1, i2)
+            omprime_ids = (i1p, i2p)
+
+            # index out of bounds
+            if any(om_ids .> leg_sizes) || any(omprime_ids .> omdisc_sizes)
+                return zero(ComplexF64)
+            end
+
+            # TODO: This is atrocious...
+            oms = [Gp.tucker.ωs_legs[grid_ids[i]][om_ids[i]] for i in eachindex(grid_ids)]
+            omprimes = [Gp.tucker.ωs_center[grid_ids[i]][omprime_ids[i]] for i in eachindex(grid_ids)]
+
+            return eval_ano_matsubara_kernel(oms, omprimes, 1/Gp.T)
+        end
+    elseif  D==2
+        function anomalous_kernel(i1::Int, i1p::Int)
+            om_ids = (i1,)
+            omprime_ids = (i1p,)
+
+            # if index out of bounds
+            if any(om_ids .> leg_sizes) || any(omprime_ids .> omdisc_sizes)
+                return zero(ComplexF64)
+            end
+
+            oms = [Gp.tucker.ωs_legs[grid_ids[i]][om_ids[i]] for i in eachindex(grid_ids)]
+            omprimes = [Gp.tucker.ωs_center[grid_ids[i]][omprime_ids[i]] for i in eachindex(grid_ids)]
+
+            return eval_ano_matsubara_kernel(oms, omprimes, 1/Gp.T)
+        end
+    end    
+
+    kernel_qtt, _, _ = quanticscrossinterpolate(ComplexF64, kernelfun, ntuple(i -> 2^R, 2*(D-1)); tolerance=tolerance)
+
+
+    println("Before truncation: $(rank(kernel_qtt))")
+
+    tags = tuple(vcat([["ω$i", "eps$i"] for i in grid_ids]...)...)
+    kernel_mps = TCI4Keldysh.QTCItoMPS(kernel_qtt, tags)
+
+    truncate!(kernel_mps; cutoff=1e-14, use_absolute_cutoff=true)
+    println("After truncation: $(rank(kernel_mps))")
+
+    return kernel_mps
 end
 
 function mps_idx_info(mps::Union{MPS,MPO})

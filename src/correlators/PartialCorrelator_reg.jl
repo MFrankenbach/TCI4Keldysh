@@ -603,3 +603,34 @@ function partial_fraction_decomp(Gp_in::PartialCorrelator_reg{D}; idx1::Int, idx
 
     return Gp_out1, Gp_out2
 end
+
+"""
+return nothing if no bosonic index exists
+"""
+function get_bosonic_idx(Gp::PartialCorrelator_reg) :: Union{Int, Nothing}
+    return findfirst(.!Gp.isFermi)
+end
+
+"""
+Get idx of vanishing frequency in PSF grid
+"""
+function get_bosonic_freq_idx_Adisc(Gp::PartialCorrelator_reg) :: Union{Int, Nothing}
+    bos_idx = findfirst(.!Gp.isFermi)
+    if isnothing(bos_idx)
+        return nothing
+    else
+        return findfirst(w -> abs.(w)<=1e-10, Gp.tucker.ωs_center[bos_idx]) 
+    end
+end
+
+"""
+Get idx of vanishing frequency in Greens function grid
+"""
+function get_bosonic_freq_idx_G(Gp::PartialCorrelator_reg) :: Union{Int, Nothing}
+    bos_idx = findfirst(.!Gp.isFermi)
+    if isnothing(bos_idx)
+        return nothing
+    else
+        return findfirst(w -> abs.(w)<=1e-10, Gp.tucker.ωs_legs[bos_idx]) 
+    end
+end
