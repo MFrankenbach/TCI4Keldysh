@@ -2,15 +2,14 @@ using TCI4Keldysh
 using JSON
 using ITensors
 
-# TCI4Keldysh.VERBOSE() = false
-# TCI4Keldysh.DEBUG() = false
-# TCI4Keldysh.TIME() = false
-# for i in 1:1
-#     TCI4Keldysh.test_TCI_precompute_anomalous_values(;npt=4, perm_idx=i)
-# end
-
-
+TCI4Keldysh.VERBOSE() = false
 TCI4Keldysh.DEBUG() = false
+TCI4Keldysh.TIME() = true
+
+for i in 1:6
+    TCI4Keldysh.test_TCI_precompute_anomalous_values(;npt=3, perm_idx=i)
+end
+
 
 """
 Monitor mean and max error of all permutations for 3/4-point functions before frequency rotation
@@ -49,15 +48,18 @@ function time_TCI_precompute_reg_values(;npt=3)
     Gp = GFs[spin].Gps[perm_idx]
 
     # TCI computation
-    cutoffs = 10.0 .^ (-3.0:-0.5:-5.0)
+    cutoffs = 10.0 .^ (-2:-1:-5)
 
     times = []
+    dummy = Vector{MPS}(undef, 1)
+    # for some reason, the second loop with npt=4 takes ages here, also for large cutoffs
     for c in cutoffs
         t = @elapsed begin 
-                _ = TCI4Keldysh.TD_to_MPS_via_TTworld(Gp.tucker; tolerance=1e-12, cutoff=c)
+                dummy[1] = TCI4Keldysh.TD_to_MPS_via_TTworld(Gp.tucker; tolerance=1e-12, cutoff=c)
             end
         @show t
         push!(times, t)
+        GC.gc()
     end
 
     # write to file
@@ -82,4 +84,6 @@ function readJSON(filename::String)
 end
 # utilities END ========== 
 
-time_TCI_precompute_reg_values(;npt=4)
+# time_TCI_precompute_reg_values(;npt=3)
+# TCI4Keldysh.test_TCI_precompute_reg_values_MF_without_ωconv(;npt=4, perm_idx=2, cutoff=1e-3)
+# TCI4Keldysh.test_TCI_frequency_rotation_reg_values()

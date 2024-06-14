@@ -299,40 +299,36 @@ end
 freq_shift(isferm_ωnew::Vector{Int}, isferm_ωold::Vector{Int}, ωconvMat::Matrix{Int})
 
 Determine shift required for correct frequency rotation on tensor train.
+old_gridsizes: sizes of the internal frequency grids, where a size 2^R+1 (bosonic) has been mapped to 2^R
+number of bits in external grid
 """
-function freq_shift(isferm_ωnew::Vector{Int}, ωconvMat::Matrix{Int}, R::Int)
-    @assert R>=2
-    N = 2^(R-1)
-    Nhalf = div(N,2)
+function freq_shift(isferm_ωnew::Vector{Int}, ωconvMat::Matrix{Int}, old_gridsizes::Vector{Int}, new_grid_R::Int)
+    @assert all(old_gridsizes .>= 2^new_grid_R)
+    Nhalf = 2^(new_grid_R - 1)
     # min frequencies of external grids, measured in units of π/β
     bos_min = -2*Nhalf
     ferm_min = -2*Nhalf + 1
-    # 0-based indices in grids of size 2^R
-    bos_min_idx = Nhalf
-    ferm_min_idx = Nhalf
-
-    isferm_ωold = gridtypes_from_freq_rotation(ωconvMat, isferm_ωnew)
-    @show isferm_ωold
 
     # rotation maps new -> old
     corner_new = map(x -> (x==1 ? ferm_min : bos_min), isferm_ωnew)
-    @show corner_new
-    corner_new_idx = map(x -> (x==1 ? ferm_min_idx : bos_min_idx), isferm_ωnew)
-    @show corner_new_idx
-
-    # compute image of corner under shiftless rotation
-    idx_img = mod.(ωconvMat * corner_new_idx, 2*N)
-    freq_idx_img = 2*(idx_img .- N) .+ isferm_ωold
-    @show idx_img
-    @show freq_idx_img
+    # we want the corner at the lower left of the new TT, so we have:
+    # corner_new_idx = zeros(Int, length(isferm_ωnew))
 
     # compute desired image of corner under frequency rotation
     corner_old = ωconvMat * corner_new
-    @show corner_old
 
-    @assert all(mod.(freq_idx_img - corner_old, 2) .== 0)
-    shift = div.(freq_idx_img - corner_old, 2) # div has no remainder here
-    return mod.(shift, 2*N)
+    # find index of corner_old in old grids
+    isferm_ωold = gridtypes_from_freq_rotation(ωconvMat, isferm_ωnew)
+    corner_old_idx = zeros(Int, length(isferm_ωnew))
+    for i in eachindex(isferm_ωold)
+        gridmin = -2*div(old_gridsizes[i], 2)
+        if isferm_ωold[i]==1
+            gridmin += 1
+        end
+        corner_old_idx[i] = div(corner_old[i] - gridmin, 2) # should not have a remainder
+    end
+
+    return corner_old_idx
 end
 
 function gridtypes_from_freq_rotation(ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
@@ -350,7 +346,8 @@ Arguments:
  * ωconvMat     ::Matrix{Int}    matrix M encoding the frequency conversion ω_old = M * ω_new
  * isferm_ωnew  ::Vector{Int}    0 for bosonic, 1 for fermionic
 """
-function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
+function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int}, 
+        new_gridsizes::Vector{Int}, old_grid_R::Int)
 
     D = length(isferm_ωnew) # number of frequencies
     R = div(length(mps), D)
@@ -371,18 +368,12 @@ function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ω
     end
     # original shift
     shift = halfN * (sum(abs.(ωconvMat), dims=2)[:] .- 1) + div.(ωconvMat * isferm_ωnew - isferm_ωold, 2)
-    # println("  \nOriginal shift: $shift\n")
-    # shift = halfN * (sum(abs.(ωconvMat), dims=2)[:] .- 1) + [0,-1]
+    println("  \nOriginal shift: $shift\n")
 
     #TODO: Match shift s such that the first index i_ext=firstindex.(ω_ext) is mapped to the correct index in ω_int i_int:
-    # i_int = ωconvMat * (i_ext . -1) + s
-    shift = freq_shift(isferm_ωnew, ωconvMat, R)
+    shift = freq_shift(isferm_ωnew, ωconvMat, new_gridsizes, old_grid_R)
     println("  New shift: $shift\n")
-    # @show isferm_ωold
 
-    shift= [0,0]
- 
-    @show shift
     bc = ones(Int, D) # boundary condition periodic
     mps_rot = Quantics.affinetransform(
         mps,
@@ -899,6 +890,9 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
         true;
     end "\n ---- Check Tucker ----\n"
 
+    printstyled("\n  Ranks before contraction 1 MPS/Kernel: $(rank(mps_Adisc_padded)) / $(rank(mps_Kernel1_exp))\n"; color=:blue)
+    printstyled("        Cutoff: $cutoff\n"; color=:blue)
+
     @TIME ab = Quantics.automul(
             mps_Kernel1_exp,
             mps_Adisc_padded;
@@ -945,6 +939,8 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     ITensors.truncate!(ab; cutoff=1e-14, use_absolute_cutoff=true)
     ITensors.truncate!(mps_Kernel2_exp; cutoff=1e-14, use_absolute_cutoff=true)
 
+    printstyled("\n  Ranks before contraction 2 MPS/Kernel: $(rank(ab)) / $(rank(mps_Kernel2_exp))\n"; color=:blue)
+
     #findallsiteinds_by_tag(siteinds(); tag="eps2")
     @TIME ab2 = Quantics.automul(
         ab,
@@ -961,6 +957,11 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
 
     ITensors.truncate!(ab2; cutoff=1e-14, use_absolute_cutoff=true)
     ITensors.truncate!(mps_Kernel3_exp; cutoff=1e-14, use_absolute_cutoff=true)
+    # much less accurate, also with use_absolute_cutoff=false
+    # ITensors.truncate!(ab2; cutoff=cutoff*1e-2, use_absolute_cutoff=true)
+    # ITensors.truncate!(mps_Kernel3_exp; cutoff=cutoff*1e-2, use_absolute_cutoff=true)
+
+    printstyled("\n  Ranks before contraction 3 MPS/Kernel: $(rank(ab2)) / $(rank(mps_Kernel3_exp))\n"; color=:blue)
 
     @TIME res = Quantics.automul(
         ab2,
@@ -1206,13 +1207,58 @@ function noewmul_TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerD
 end
 
 function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{2})
+
+    @warn "ANOMALOUS TERM @TCI/3pt-function NOT TESTED; 3pt PSF with 0 bosonic frequency was not available"
+
     @assert sum(map(isf -> isf ? 0 : 1, Gp.isFermi)) == 1 "Gp must have exactly one bosonic frequency to compute anomalous term"
 
-    error("Not yet implemented")
+    D = 2
+
+    bos_idx = get_bosonic_idx(Gp)
+    @assert !isnothing(bos_idx)
+
+    # how many bits are required due to frequency grid?
+    # TODO: Exclude bosonic index here?
+    R = maximum(grid_R.([size(leg, 1) for leg in Gp.tucker.legs]))
+
+    Adisc_ano = dropdims(Gp.Adisc_anoβ; dims=(bos_idx,)) # D-1 dimensional
+
+    # compress Adisc_anoβ
+    qtt_Adisc_ano, _, _ = quanticscrossinterpolate(
+        zeropad_array(Adisc_ano, R); tolerance=tolerance
+        )  
+    @show rank(qtt_Adisc_ano)
+    tags_Adisc = tuple(["eps$i" for i in 1:D if i!=bos_idx]...)
+    mps_Adisc_ano = TCI4Keldysh.QTCItoMPS(qtt_Adisc_ano, tags_Adisc)
+    mps_idx_info(mps_Adisc_ano)
+
+    # get kernel
+    kernel_mps = compress_anomalous_kernel(Gp, R; tolerance=tolerance)
+    mps_idx_info(kernel_mps)
+
+    # contract
+    _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[1], tags_Adisc[1], R)
+    _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[2], tags_Adisc[2], R)
+
+    # kernel: ω1, eps1, ω2, eps2...
+    sites_row = siteinds(kernel_mps)[1:2:end]
+    sites_shared = siteinds(kernel_mps)[2:2:end]
+
+    # kernel to MPO
+    kernel_mpo = Quantics.asMPO(kernel_mps)
+    for (s_row, s_shared) in zip(sites_row, sites_shared)
+        kernel_mpo = Quantics.combinesites(kernel_mpo, s_row, s_shared)
+    end
+
+    Gp_ano = contract(mps_Adisc_ano, kernel_mpo; cutoff=tolerance*1e-2, use_absolute_cutoff=true)
+
+    mps_idx_info(Gp_ano)
+
+    return Gp_ano
 end
 
 
-function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance=1e-14)::MPS
+function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance=1e-5)::MPS
     @assert !all(Gp.isFermi) "Gp must have bosonic frequency to compute anomalous term"
 
     D = 3
@@ -1274,7 +1320,7 @@ end
 Compress anomalous part of Matsubara frequency kernel to MPS.
 """
 function compress_anomalous_kernel(Gp::TCI4Keldysh.PartialCorrelator_reg{D}, R::Int; tolerance=1e-10)::MPS where {D}
-    # for now, compress in D dimensions to make subsequent addition to regular part trivial...
+    # for now, compress in D-1 dimensions to make subsequent addition to regular part trivial...
     bos_idx = get_bosonic_idx(Gp)
 
     grid_ids = [i for i in 1:D if i!=bos_idx]

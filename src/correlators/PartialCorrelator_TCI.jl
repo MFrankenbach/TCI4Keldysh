@@ -65,7 +65,7 @@ TCI4Keldysh.VERBOSE() = true
 TCI4Keldysh.TIME() = true
 TCI4Keldysh.DEBUG() = true
 
-function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, perm_idx=1)
+function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, perm_idx=1, cutoff=1e-5)
 
     ITensors.disable_warn_order()
 
@@ -81,20 +81,12 @@ function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, perm_idx=1)
     spin = 1
     Gp = GFs[spin].Gps[perm_idx]
 
-    # # plot leg of Gp
-    # leg_id = 1
-    # leg = Gp.tucker.legs[leg_id]
-    # display(log.(abs.(leg)))
-    # @show size(leg)
-    # heatmap(log.(abs.(leg)))
-    # savefig("kernel_heatmap_index.png")
-
     # compute reference data for selected PSF
     display(cumsum(ωconvMat[GFs[spin].ps[perm_idx][1:npt-1],:], dims=1))
     data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
 
     # TCI computation
-    Gp_mps = TD_to_MPS_via_TTworld(Gp.tucker)
+    Gp_mps = TD_to_MPS_via_TTworld(Gp.tucker; cutoff=cutoff)
 
     # compare
     tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
@@ -169,10 +161,18 @@ function test_TCI_frequency_rotation_reg_values()
     # TCI frequency kernel convolution
     Gp_mps = TD_to_MPS_via_TTworld(Gp.tucker)
 
+    tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
+    fatUnrotGp = TCI4Keldysh.MPS_to_fatTensor(Gp_mps; tags=tags)
+
+    heatmap(log.(abs.(fatUnrotGp)))
+    savefig("TT_unrotated_rot.png")
+
     # ===== frequency rotation @ TCI =====
     tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
     is_ferm_new = vcat([0], fill(1, npt-2))
-    @TIME Gp_mps_rot = affine_freq_transform(Gp_mps; tags=tags, ωconvMat=convert(Matrix{Int}, Gp.ωconvMat), isferm_ωnew=is_ferm_new) "Frequency rotation:"
+    new_gridsizes = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in Gp.tucker.legs]
+    @TIME Gp_mps_rot = affine_freq_transform(Gp_mps; tags=tags, ωconvMat=convert(Matrix{Int}, Gp.ωconvMat), isferm_ωnew=is_ferm_new,
+                            new_gridsizes=new_gridsizes, old_grid_R=R) "Frequency rotation:"
     printstyled("-- Rotation matrix\n"; color=:blue)
     display(convert(Matrix{Int}, Gp.ωconvMat))
     # ===== frequency rotation END
@@ -192,20 +192,10 @@ function test_TCI_frequency_rotation_reg_values()
     tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
     fatGpTCI = TCI4Keldysh.MPS_to_fatTensor(Gp_mps_rot; tags=tags)
     @show size(fatGpTCI)
-    # tci_slice = [1:2^grid_R(sc) for sc in size(compare_values)]
-    # tci_slice = [1:128, Colon()]
-    # tci_slice = fill(Colon(), npt-1)
-    # tci_slice = [1:128, 129:256]
     # bosonic grid is not symmetric for tci, last point is missing to get a power of two as grid size
     # this means that the frequency transform is shifted by one in the bosonic direction compared to the reference
-    tci_slice = [1:128, 129:size(fatGpTCI,2)]
-    # @show norm(fatGpTCI[129,:])
-    # @show norm(fatGpTCI[2,:])
-    # @show norm(fatGpTCI[1,:])
-    # diff1 = fatGpTCI[1:128, 129:end] - compare_values[1:128, :]
-    # diff2 = fatGpTCI[2:129, 129:end] - compare_values[1:128, :]
+    # diff1 = fatGpTCI[2:129, 1:128] - compare_values[2:129, :]
     # @show norm(diff1)
-    # @show norm(diff2)
 
     @show is_ferm_new
 
