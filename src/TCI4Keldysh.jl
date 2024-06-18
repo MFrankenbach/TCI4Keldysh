@@ -14,6 +14,7 @@ using PrecompileTools
     using QuanticsGrids
     import TensorCrossInterpolation as TCI
     using ITensors
+    import TCIAlgorithms as TCIA
 
     using Lehmann
 

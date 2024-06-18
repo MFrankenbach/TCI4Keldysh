@@ -1,54 +1,5 @@
 using Plots
 
-"""
-Represents a partial correlator with kernels and Adisc stored in tensor train format.
-NOT NEEDED at the moment
-"""
-# mutable struct PartialCorrelator_TCI{D} <: AbstractTuckerDecomp{D}
-#     T           ::Float64
-#     formalism:: String                          # "MF" or "KF"
-#     Adisc # tensor train
-#     Adisc_anoβ::Array{ComplexF64,D}             # anomalous part of the discrete PSF data (only used for computing the anomalous contribution ∝ β)
-#     #ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
-#     #Kernels ::  Vector{Matrix{ComplexF64}}      # regular kernels
-#     ωs_ext  ::  NTuple{D,Vector{Float64}}    # external complex frequencies
-#     #ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
-#     ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices ~ i_ωs_int = ωconvMat * i_ωs_ext + ωconvOff
-#     ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of (one-based!) indices
-#     isFermi ::  SVector{D,Bool}                 # encodes whether the i-th dimension of tucker encodes a bosonic or fermionic frequency (only relevant in MF)
-
-#     ### Constructors ###
-#     function PartialCorrelator_TCI(T::Float64, formalism::String, Adisc::Array{Float64,D}, ωdisc::Vector{Float64}, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}; need_compactAdisc::Bool=true) where {D}
-#         if !(formalism == "MF" || formalism == "KF")
-#             throw(ArgumentError("formalism must be MF when unbroadened Adisc is input."))
-#         end
-#         if DEBUG()
-#             println("Constructing PartialCorrelator_reg (WITHOUT broadening).")
-#         end
-
-#         ωs_int, ωconvOff, isFermi = _trafo_ω_args(ωs_ext, ωconvMat)
-#         if need_compactAdisc 
-#         # Delete rows/columns that contain only zeros
-#         _, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
-#         else
-#             ωdiscs, Adisc = [ωdisc for _ in 1:D], Adisc
-#         end
-
-#         @TIME Kernels = [get_regular_1D_MF_Kernel(ωs_int[i], ωdiscs[i]) for i in 1:D] "Precomputing 1D kernels (for MF)."
-
-#         if formalism == "MF" && !all(isFermi)
-#             i_ωbos = argmax(.!isFermi)
-#             # all entries where bosonic frequency is (almost) zero
-#             Adisc_anoβ = Adisc[[Colon() for _ in 1:i_ωbos-1]..., abs.(ωdiscs[i_ωbos]) .< 1e-8, [Colon() for _ in i_ωbos+1:D]...]
-#         else 
-#             Adisc_anoβ = Array{ComplexF64,D}(undef, zeros(Int, D)...)
-#         end
-
-#         # tucker = TuckerDecomposition(Adisc, Kernels; ωs_center=ωdiscs, ωs_legs=[ωs_int...])
-        
-#         return new{D}(T, formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff, isFermi)
-#     end
-
 function TCI_precompute_reg_values_MF_without_ωconv(
     Gp::PartialCorrelator_reg{D}
 )::MPS where {D}
@@ -61,10 +12,10 @@ function TCI_precompute_reg_values_MF_without_ωconv(
     return Gp_mps
 end
 
-TCI4Keldysh.VERBOSE() = true
-TCI4Keldysh.TIME() = true
-TCI4Keldysh.DEBUG() = true
-
+"""
+Test TCI-convolution with regular kernels;
+the function in question is `TD_to_MPS_via_TTworld`
+"""
 function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, perm_idx=1, cutoff=1e-5)
 
     ITensors.disable_warn_order()
@@ -136,45 +87,62 @@ function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, perm_idx=1, cu
     return (mean_err, max_err)
 end
 
-function test_TCI_frequency_rotation_reg_values()
+"""
+Test frequency rotation with TCI.
+For full_tci=true, compute 4-pt function on TCI-level as well
+"""
+function test_TCI_frequency_rotation_reg_values(;npt=3, full_tci=false)
 
     ITensors.disable_warn_order()
 
     # load data
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
-    npt = 3
     Ops = npt==3 ? ["F1", "F1dag", "Q34"] : ["F1", "F1dag", "F3", "F3dag"]
     ωconvMat = dummy_frequency_convention(npt)
-    R = 7
-    GFs = load_npoint(PSFpath, Ops, npt, R, ωconvMat)
+    R_ext = 7
+    GFs = load_npoint(PSFpath, Ops, npt, R_ext, ωconvMat)
 
     # pick PSF
     spin = 1
-    perm_idx = 4 # perm_idx four has one row of zeros...
+    perm_idx = 3
+
+    # printstyled("---- Frequency rotation matrices:\n"; color=:blue)
+    # for p in 1:factorial(npt)
+    #     display(cumsum(ωconvMat[GFs[spin].ps[p][1:npt-1],:], dims=1))
+    # end
+    # printstyled("----\n"; color=:blue)
+
     Gp = GFs[spin].Gps[perm_idx]
-    @show Gp.ωconvOff
     display(cumsum(ωconvMat[GFs[spin].ps[perm_idx][1:npt-1],:], dims=1))
 
     # compute reference data for selected PSF
     data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
 
+    @show size(data_unrotated)
+
     # TCI frequency kernel convolution
-    Gp_mps = TD_to_MPS_via_TTworld(Gp.tucker)
+    Gp_mps = if npt==3 || full_tci 
+                TD_to_MPS_via_TTworld(Gp.tucker)
+            else
+                R = grid_R(Gp.tucker)
+                compress_padded_array(data_unrotated, R)
+            end
 
     tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
     fatUnrotGp = TCI4Keldysh.MPS_to_fatTensor(Gp_mps; tags=tags)
 
-    heatmap(log.(abs.(fatUnrotGp)))
-    savefig("TT_unrotated_rot.png")
+    if npt==3
+        heatmap(log.(abs.(fatUnrotGp)))
+        savefig("TT_unrotated_rot.png")
+    end
 
     # ===== frequency rotation @ TCI =====
     tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
     is_ferm_new = vcat([0], fill(1, npt-2))
-    new_gridsizes = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in Gp.tucker.legs]
-    @TIME Gp_mps_rot = affine_freq_transform(Gp_mps; tags=tags, ωconvMat=convert(Matrix{Int}, Gp.ωconvMat), isferm_ωnew=is_ferm_new,
-                            new_gridsizes=new_gridsizes, old_grid_R=R) "Frequency rotation:"
-    printstyled("-- Rotation matrix\n"; color=:blue)
-    display(convert(Matrix{Int}, Gp.ωconvMat))
+    old_gridsizes = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in Gp.tucker.legs]
+    @show old_gridsizes
+    @TIME Gp_mps_rot = freq_transform(Gp_mps; tags=tags, ωconvMat=convert(Matrix{Int}, Gp.ωconvMat), isferm_ωnew=is_ferm_new,
+                            ext_gridsizes=collect(length.(Gp.ωs_ext))) "Frequency rotation:"
     # ===== frequency rotation END
 
     # comparison
@@ -187,7 +155,6 @@ function test_TCI_frequency_rotation_reg_values()
     @show size(data_unrotated)
     @show size(compare_values)
     @show (length.(Gp.ωs_ext))
-    @show Gp.ωconvOff
 
     tags = npt==3 ? ("ω1", "ω2") : ("ω1", "ω2", "ω3")
     fatGpTCI = TCI4Keldysh.MPS_to_fatTensor(Gp_mps_rot; tags=tags)
@@ -197,8 +164,6 @@ function test_TCI_frequency_rotation_reg_values()
     # diff1 = fatGpTCI[2:129, 1:128] - compare_values[2:129, :]
     # @show norm(diff1)
 
-    @show is_ferm_new
-
     # plot
     scalefun=log
     if npt==3
@@ -207,12 +172,29 @@ function test_TCI_frequency_rotation_reg_values()
         heatmap(scalefun.(abs.(fatGpTCI)))
         savefig("TT_rotated2D.png")
     elseif npt==4
-        # TODO
+        slice_idx = 70
+        ref_slice = [1:128, slice_idx, 1:128]
+        tci_slice = [1:128, slice_idx, 1:128]
+        heatmap(scalefun.(abs.(compare_values[:,slice_idx,:])))
+        savefig("rotated_reference3D.png")
+        heatmap(scalefun.(abs.(fatGpTCI[:,slice_idx,:])))
+        savefig("TT_rotated3D.png")
+        plotdiff = abs.(compare_values[ref_slice...] - fatGpTCI[tci_slice...])
+        heatmap(scalefun.(plotdiff))
+        savefig("diff_3D.png")
+        testdiff = abs.(compare_values[2:128,1:128,1:128] - fatGpTCI[2:128,1:128,1:128])
+        printstyled("  Maximum, mean error 3D rotation:\n"; color=:green)
+        @show maximum(testdiff)
+        @show sum(testdiff)/prod(size(testdiff))
+        @show argmax(testdiff)
     end
+    println("========== DONE")
 end
 
 """
-Test TCI-computation of anomalous term in the presence of a bosonic grid.
+Test TCI-computation of anomalous term in the presence of a bosonic grid.\\
+*CAREFUL*: So far, only tested for 4-point functions, since our current 3-point functions do not require
+an anomalous term. Also, on the local machine, only cutoffs until 1e-5 can be done.
 """
 function test_TCI_precompute_anomalous_values(;npt=3, perm_idx=1)
     
@@ -242,6 +224,7 @@ function test_TCI_precompute_anomalous_values(;npt=3, perm_idx=1)
     if npt==3
         heatmap(abs.(ano_values))
         savefig("ano_values_2D.png")
+        @warn "No test for 3-pt anomalous term present!"
     end
 
     if npt==4
@@ -255,6 +238,7 @@ function test_TCI_precompute_anomalous_values(;npt=3, perm_idx=1)
         savefig("ano_values_3D.png")
 
         # perform TCI computation
+        println("---- TCI-compress anomalous kernel")
         Gp_ano_mps = anomalous_TD_to_MPS(Gp; tolerance=1e-3)
 
         grid_ids = [i for i in 1:npt-1 if i!=bos_idx]
@@ -272,6 +256,18 @@ function test_TCI_precompute_anomalous_values(;npt=3, perm_idx=1)
         @show sum(diff)/prod(size(diff))
         @show maximum(diff)
     end
+end
+
+function test_TCI_precompute_anomalous_values_patched(;npt=4, perm_idx=1)
+    GFs = load_dummy_correlator(;npt=npt)
+
+    Gp = GFs[1].Gps[perm_idx]
+
+    R = 7
+    # even a tolerance of 100 yields patches with bond dimensions of up to 100...
+    patch_res = compress_anomalous_kernel_patched(Gp, R; tolerance=1e-2)
+
+    # compress_Adisc_ano_patched(Gp; rtol=1e-5, maxbonddim=50)
 end
 
 """
@@ -411,4 +407,16 @@ function dummy_frequency_convention(npt::Int)
     elseif npt==4
         return ωconvMat_t
     end
+end
+
+"""
+Load sample matsubara full correlator
+"""
+function load_dummy_correlator(;npt=3)
+    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    Ops = npt==3 ? ["F1", "F1dag", "Q34"] : ["F1", "F1dag", "F3", "F3dag"]
+    ωconvMat = dummy_frequency_convention(npt)
+    R = 7
+    GFs = load_npoint(PSFpath, Ops, npt, R, ωconvMat; nested_ωdisc=false)
+    return GFs
 end

@@ -672,3 +672,37 @@ end
 function rank(mps::MPS)
     return maximum(dim.(linkinds(mps)))
 end
+
+"""
+Convenience wrapper to do patched TCI with TCIAlgorithms
+
+Returns ProjTTContainer
+"""
+function patchedTCI(f::Function, grid::QuanticsGrids.Grid{d}; tolerance=1e-8, maxbonddim=50) where {d}
+    R = grid.R
+    localdims = grid.unfoldingscheme==:fused ? fill(2^d, R) : fill(2, d*R)
+    qf = x -> f(quantics_to_origcoord(grid, x)...)
+    pordering = TCIA.PatchOrdering(collect(1:R))
+
+    creator = TCIA.TCI2PatchCreator(
+        ComplexF64, qf, localdims; maxbonddim=maxbonddim, tolerance=tolerance, verbosity=0, ntry=10
+    )
+
+    return TCIA.adaptiveinterpolate(creator, pordering; verbosity=0)
+end
+
+function patchedTCI(A::Array{T,D}; kwargs...) where {T,D}
+    
+    @assert all(isinteger.(log2.(size(A)))) "A must have length 2^R in each direction"
+    R = round(Int, log2.(size(A,1)))
+    grid = InherentDiscreteGrid{D}(R; unfoldingscheme=:fused) # interleaved crashes with patching?!
+    localdims = grid.unfoldingscheme==:fused ? fill(2^D, R) : fill(2, D*R)
+    qf = x -> A[quantics_to_origcoord(grid, x)...]
+    pordering = TCIA.PatchOrdering(collect(1:R))
+
+    creator = TCIA.TCI2PatchCreator(
+        T, qf, localdims; verbosity=0, ntry=10, kwargs...
+    )
+
+    return TCIA.adaptiveinterpolate(creator, pordering; verbosity=0)
+end

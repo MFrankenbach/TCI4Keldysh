@@ -300,17 +300,13 @@ freq_shift(isferm_ωnew::Vector{Int}, isferm_ωold::Vector{Int}, ωconvMat::Matr
 
 Determine shift required for correct frequency rotation on tensor train.
 old_gridsizes: sizes of the internal frequency grids, where a size 2^R+1 (bosonic) has been mapped to 2^R
-number of bits in external grid
 """
-function freq_shift(isferm_ωnew::Vector{Int}, ωconvMat::Matrix{Int}, old_gridsizes::Vector{Int}, new_grid_R::Int)
-    @assert all(old_gridsizes .>= 2^new_grid_R)
-    Nhalf = 2^(new_grid_R - 1)
-    # min frequencies of external grids, measured in units of π/β
-    bos_min = -2*Nhalf
-    ferm_min = -2*Nhalf + 1
+function freq_shift(isferm_ωnew::Vector{Int}, ωconvMat::Matrix{Int}, old_gridsizes::Vector{Int}, new_gridsizes::Vector{Int})
+    # @assert all(old_gridsizes .>= new_gridsizes)
+    # @assert all(mod.(new_gridsizes, 2) .== 0)
 
     # rotation maps new -> old
-    corner_new = map(x -> (x==1 ? ferm_min : bos_min), isferm_ωnew)
+    corner_new = [isferm_ωnew[i]==1 ? (-2*div(new_gridsizes[i],2) + 1) : (-2*div(new_gridsizes[i],2)) for i in eachindex(isferm_ωnew)]
     # we want the corner at the lower left of the new TT, so we have:
     # corner_new_idx = zeros(Int, length(isferm_ωnew))
 
@@ -336,6 +332,18 @@ function gridtypes_from_freq_rotation(ωconvMat::Matrix{Int}, isferm_ωnew::Vect
 end
 
 """
+Rotation maps new ↦ old
+Expects uneven gridsizes for bosonic, even gridsizes for fermionic grids
+"""
+function gridsizes_after_freq_rotation(ωconvMat::Matrix{Int}, gridsizes_new::Vector{Int})
+    isbos = mod.(gridsizes_new, 2)
+    ω_max_new = [isbos[i]==1 ? 2*div(gridsizes_new[i], 2) : 2*div(gridsizes_new[i], 2) - 1 for i in eachindex(isbos)]
+
+    ω_max_old = abs.(ωconvMat) * ω_max_new
+    return [iseven(w) ? (2*div(w,2) + 1) : 2*div(w+1, 2) for w in ω_max_old]
+end
+
+"""
 affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
 
 Perform an affine frequency transform (i.e. one that combines at most 2 frequencies into a new frequency)
@@ -344,15 +352,14 @@ Arguments:
  * mps          ::MPS
  * tags         ::Vector{String}
  * ωconvMat     ::Matrix{Int}    matrix M encoding the frequency conversion ω_old = M * ω_new
- * isferm_ωnew  ::Vector{Int}    0 for bosonic, 1 for fermionic
+ * isferm_ωnew  ::Vector{Int}    0 for bosonic, 1 for fermionic, by convention isferm_ωnew[1]=0
 """
 function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int}, 
-        new_gridsizes::Vector{Int}, old_grid_R::Int)
+        old_gridsizes::Vector{Int}, new_gridsizes::Vector{Int})
 
     D = length(isferm_ωnew) # number of frequencies
     R = div(length(mps), D)
     tags = collect(tags)
-    N = 2^R
     halfN = 2^(R - 1)
 
     # consistency checks
@@ -370,9 +377,8 @@ function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ω
     shift = halfN * (sum(abs.(ωconvMat), dims=2)[:] .- 1) + div.(ωconvMat * isferm_ωnew - isferm_ωold, 2)
     println("  \nOriginal shift: $shift\n")
 
-    #TODO: Match shift s such that the first index i_ext=firstindex.(ω_ext) is mapped to the correct index in ω_int i_int:
-    shift = freq_shift(isferm_ωnew, ωconvMat, new_gridsizes, old_grid_R)
-    println("  New shift: $shift\n")
+    # shift = freq_shift(isferm_ωnew, ωconvMat, old_gridsizes, new_gridsizes)
+    # println("  New shift: $shift\n")
 
     bc = ones(Int, D) # boundary condition periodic
     mps_rot = Quantics.affinetransform(
@@ -396,8 +402,10 @@ Arguments:
  * tags         ::Vector{String}
  * ωconvMat     ::Matrix{Int}    matrix M encoding the frequency conversion ωold = M * ωnew
  * isferm_ωnew  ::Vector{Int}    0 for bosonic, 1 for fermionic
+ * ext_gridsizes::Vector{Int}    sizes of external frequency grids (the frequencies fed into the rotation)
 """
-function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int})
+function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int},
+    ext_gridsizes::Vector{Int})
 
     function convert_to_affineTrafos(m::Matrix{Int}) ::Vector{Matrix{Int}}
         D = size(m, 1)
@@ -428,15 +436,26 @@ function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Ve
     
 
     ωconvMat_list = convert_to_affineTrafos(ωconvMat)
+    @assert length(ωconvMat_list)<=2
     
     if length(ωconvMat_list) > 1
-        isferm_ωnew_list = [mod.(ωconvMat_list[2] * isferm_ωnew, 2), isferm_ωnew]
+        isferm_ωnew_list = [gridtypes_from_freq_rotation(ωconvMat_list[2], isferm_ωnew), isferm_ωnew]
     else
         isferm_ωnew_list = [isferm_ωnew]
     end
 
+    @show ext_gridsizes
+    gridsizes_list = [ext_gridsizes]
     for i in eachindex(ωconvMat_list)
-        mps = affine_freq_transform(mps; tags, ωconvMat=ωconvMat_list[i], isferm_ωnew=isferm_ωnew_list[i])
+        gr = gridsizes_after_freq_rotation(ωconvMat_list[i], gridsizes_list[begin])
+        pushfirst!(gridsizes_list, gr)
+    end
+
+    @show gridsizes_list
+
+    for i in eachindex(ωconvMat_list)
+        mps = affine_freq_transform(mps; tags, ωconvMat=ωconvMat_list[i], isferm_ωnew=isferm_ωnew_list[i],
+                old_gridsizes=gridsizes_list[i], new_gridsizes=gridsizes_list[i+1])
     end
     return mps
 end
@@ -663,6 +682,14 @@ function grid_R(gridsize::Int)
     end
 end
 
+function grid_R(tucker::TCI4Keldysh.AbstractTuckerDecomp{D}) :: Int where {D}
+    return maximum(grid_R.([size(leg, 1) for leg in tucker.legs]))
+end
+
+function grid_R(sizetuple::NTuple{N, Int}) where {N}
+    return maximum(grid_R.(sizetuple))
+end
+
 """
 cutoff: cutoff for densitymatrix algorithm in MPO-MPO contraction; small cutoff affordable in 2D
 """
@@ -674,7 +701,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
 
     kwargs = Dict(:alg=>"densitymatrix", :cutoff=>cutoff, :use_absolute_cutoff=>true)
 
-    R = maximum(grid_R.([size(leg, 1) for leg in broadenedPsf.legs]))
+    R = grid_R(broadenedPsf)
 
     TCI4Keldysh.@TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
 
@@ -809,7 +836,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
 
 
     @show size.(broadenedPsf.legs,1)
-    R = maximum(grid_R.([size(leg, 1) for leg in broadenedPsf.legs]))
+    R = grid_R(broadenedPsf)
 
     @TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
 
@@ -1233,7 +1260,7 @@ function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{2})
     mps_idx_info(mps_Adisc_ano)
 
     # get kernel
-    kernel_mps = compress_anomalous_kernel(Gp, R; tolerance=tolerance)
+    @TIME kernel_mps = compress_anomalous_kernel(Gp, R; tolerance=tolerance) "Compression of anomalous kernel"
     mps_idx_info(kernel_mps)
 
     # contract
@@ -1283,9 +1310,9 @@ function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance
     Adisc_ano = dropdims(Gp.Adisc_anoβ; dims=(bos_idx,)) # D-1 dimensional
 
     # compress Adisc_anoβ
-    qtt_Adisc_ano, _, _ = quanticscrossinterpolate(
+    @TIME qtt_Adisc_ano, _, _ = quanticscrossinterpolate(
         zeropad_array(Adisc_ano, R); tolerance=tolerance
-        )  
+        ) "Compress anomalous part of PSF"
     @show rank(qtt_Adisc_ano)
     tags_Adisc = tuple(["eps$i" for i in 1:D if i!=bos_idx]...)
     mps_Adisc_ano = TCI4Keldysh.QTCItoMPS(qtt_Adisc_ano, tags_Adisc)
@@ -1375,6 +1402,107 @@ function compress_anomalous_kernel(Gp::TCI4Keldysh.PartialCorrelator_reg{D}, R::
     return kernel_mps
 end
 
+function compress_anomalous_kernel_patched(Gp::TCI4Keldysh.PartialCorrelator_reg{D}, R::Int; tolerance=1e-10) where {D}
+
+    bos_idx = get_bosonic_idx(Gp)
+
+    grid_ids = [i for i in 1:D if i!=bos_idx]
+    leg_sizes = ntuple(i -> length(Gp.tucker.ωs_legs[grid_ids[i]]), D-1)
+    omdisc_sizes = ntuple(i -> length(Gp.tucker.ωs_center[grid_ids[i]]), D-1)
+
+    kernelfun = if D==3
+        function anomalous_kernel(i1::Int, i1p::Int, i2::Int, i2p::Int)
+            om_ids = (i1, i2)
+            omprime_ids = (i1p, i2p)
+
+            # index out of bounds
+            if any(om_ids .> leg_sizes) || any(omprime_ids .> omdisc_sizes)
+                return zero(ComplexF64)
+            end
+
+            # TODO: This is atrocious...
+            oms = [Gp.tucker.ωs_legs[grid_ids[i]][om_ids[i]] for i in eachindex(grid_ids)]
+            omprimes = [Gp.tucker.ωs_center[grid_ids[i]][omprime_ids[i]] for i in eachindex(grid_ids)]
+
+            return eval_ano_matsubara_kernel(oms, omprimes, 1/Gp.T)
+        end
+    elseif  D==2
+        function anomalous_kernel(i1::Int, i1p::Int)
+            om_ids = (i1,)
+            omprime_ids = (i1p,)
+
+            # if index out of bounds
+            if any(om_ids .> leg_sizes) || any(omprime_ids .> omdisc_sizes)
+                return zero(ComplexF64)
+            end
+
+            oms = [Gp.tucker.ωs_legs[grid_ids[i]][om_ids[i]] for i in eachindex(grid_ids)]
+            omprimes = [Gp.tucker.ωs_center[grid_ids[i]][omprime_ids[i]] for i in eachindex(grid_ids)]
+
+            return eval_ano_matsubara_kernel(oms, omprimes, 1/Gp.T)
+        end
+    end    
+
+    # prepare patching TCI
+    # grid origin is zero since kernel function takes grid indices anyways
+    grid = InherentDiscreteGrid{2*(D-1)}(R; unfoldingscheme=:fused)
+    proj_tt = patchedTCI(kernelfun, grid; tolerance=tolerance, maxbonddim=500)
+
+    # proj_tt contains vector 'data' of ProjTensorTrain objects, which in turn contain TCI.TensorTrain objects, also called 'data'
+    proj_tt_info(proj_tt)
+
+    @show eltype(proj_tt.data)
+    @show typeof(proj_tt.projector)
+
+    error("NYI")
+    println("Before truncation: $(rank(kernel_qtt))")
+
+    tags = tuple(vcat([["ω$i", "eps$i"] for i in grid_ids]...)...)
+    kernel_mps = TCI4Keldysh.QTCItoMPS(kernel_qtt, tags)
+
+    truncate!(kernel_mps; cutoff=1e-14, use_absolute_cutoff=true)
+    println("After truncation: $(rank(kernel_mps))")
+
+    return kernel_mps
+end
+
+"""
+try patching compression of Adisc_anoβ
+"""
+function compress_Adisc_ano_patched(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; rtol=1e-5, maxbonddim=50)
+    bos_idx = get_bosonic_idx(Gp)
+    R = maximum(grid_R.([size(leg, 1) for leg in Gp.tucker.legs]))
+    Adisc_ano = dropdims(Gp.Adisc_anoβ; dims=(bos_idx,)) # D-1 dimensional
+
+    # patched
+    maxsample = maximum(abs.(Adisc_ano))
+    patch_tol = rtol*maxsample
+    @TIME ptt_Adisc_ano = patchedTCI(zeropad_array(Adisc_ano, R); tolerance=patch_tol, maxbonddim=maxbonddim) "Compress anomalous part of PSF (patched)"
+    proj_tt_info(ptt_Adisc_ano)
+
+    # compare to normal tci
+    @TIME qtt_Adisc_ano, _, _ = quanticscrossinterpolate(
+        zeropad_array(Adisc_ano, R); tolerance=rtol
+        ) "Compress anomalous part of PSF"
+    @show rank(qtt_Adisc_ano)
+
+    # compare errors to Adisc_ano
+end
+
+function compress_padded_array(A::Array{T,D}; tags=nothing, kwargs...)::MPS where {T,D} 
+    tags = isnothing(tags) ? ntuple(i -> "ω$i", D) : tags
+    R = grid_R(size(A))
+    return compress_padded_array(A, R; tags, kwargs...)
+end
+
+function compress_padded_array(A::Array{T,D}, R::Int; tags=nothing, kwargs...)::MPS where {T,D} 
+    tags = isnothing(tags) ? ntuple(i -> "ω$i", D) : tags
+    qtt, _, _ = quanticscrossinterpolate(zeropad_array(A, R); kwargs...)
+    mps = TCI4Keldysh.QTCItoMPS(qtt, tags)
+    return mps
+end
+
+
 function mps_idx_info(mps::Union{MPS,MPO})
     println("\n-- MPS:")
     for i in 1:length(mps)-1
@@ -1383,4 +1511,13 @@ function mps_idx_info(mps::Union{MPS,MPO})
     end
     println(siteinds(mps)[end])
     println("----\n")
+end
+
+function proj_tt_info(pttc::TCIA.ProjTTContainer)
+    println("\n-- Patched TT")
+    println("Number of patches: $(length(pttc.data))")
+    for ptt in pttc.data
+        @show TCI.linkdims(ptt.data)
+    end
+    println("\n----")
 end

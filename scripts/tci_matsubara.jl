@@ -6,9 +6,9 @@ TCI4Keldysh.VERBOSE() = false
 TCI4Keldysh.DEBUG() = false
 TCI4Keldysh.TIME() = true
 
-for i in 1:6
-    TCI4Keldysh.test_TCI_precompute_anomalous_values(;npt=3, perm_idx=i)
-end
+# for i in 1:1
+#     TCI4Keldysh.test_TCI_precompute_anomalous_values(;npt=4, perm_idx=i)
+# end
 
 
 """
@@ -85,5 +85,6 @@ end
 # utilities END ========== 
 
 # time_TCI_precompute_reg_values(;npt=3)
-# TCI4Keldysh.test_TCI_precompute_reg_values_MF_without_ωconv(;npt=4, perm_idx=2, cutoff=1e-3)
-# TCI4Keldysh.test_TCI_frequency_rotation_reg_values()
+# TCI4Keldysh.test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, perm_idx=2, cutoff=1e-3)
+TCI4Keldysh.test_TCI_frequency_rotation_reg_values(;npt=4)
+# TCI4Keldysh.test_TCI_precompute_anomalous_values_patched()
