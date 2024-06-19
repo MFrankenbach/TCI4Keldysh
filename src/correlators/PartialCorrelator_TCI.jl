@@ -196,7 +196,7 @@ Test TCI-computation of anomalous term in the presence of a bosonic grid.\\
 *CAREFUL*: So far, only tested for 4-point functions, since our current 3-point functions do not require
 an anomalous term. Also, on the local machine, only cutoffs until 1e-5 can be done.
 """
-function test_TCI_precompute_anomalous_values(;npt=3, perm_idx=1)
+function test_TCI_precompute_anomalous_values(;npt=4, perm_idx=1, tolerance=1e-6)
     
     ITensors.disable_warn_order()
 
@@ -235,7 +235,7 @@ function test_TCI_precompute_anomalous_values(;npt=3, perm_idx=1)
         slice = [[Colon() for _ in 1:bos_idx-1]..., only(zero_inds), [Colon() for _ in bos_idx+1:ndims(ano_values)]...]
         scalefun = x -> x
         heatmap(scalefun.(abs.(ano_values[slice...])))
-        savefig("ano_values_3D.png")
+        savefig("ano_values_3D_tol=1e$(round(Int, log10(tolerance))).png")
 
         # perform TCI computation
         println("---- TCI-compress anomalous kernel")
@@ -247,12 +247,12 @@ function test_TCI_precompute_anomalous_values(;npt=3, perm_idx=1)
         @show size(fat_ano)
 
         heatmap(scalefun.(abs.(fat_ano)))
-        savefig("ano_values_3D_tci.png")
+        savefig("ano_values_3D_tci_tol=1e$(round(Int, log10(tolerance))).png")
 
         diff_slice = [slice[i] for i in grid_ids]
         diff = abs.(fat_ano[diff_slice...] - ano_values[slice...])
         heatmap(diff)
-        savefig("ano_values_3D_diff.png")
+        savefig("ano_values_3D_diff_tol=1e$(round(Int, log10(tolerance))).png")
         @show sum(diff)/prod(size(diff))
         @show maximum(diff)
     end

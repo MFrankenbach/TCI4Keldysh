@@ -2,14 +2,12 @@ using TCI4Keldysh
 using JSON
 using ITensors
 
-TCI4Keldysh.VERBOSE() = false
-TCI4Keldysh.DEBUG() = false
+TCI4Keldysh.VERBOSE() = true
+TCI4Keldysh.DEBUG() = true
 TCI4Keldysh.TIME() = true
-
-# for i in 1:1
-#     TCI4Keldysh.test_TCI_precompute_anomalous_values(;npt=4, perm_idx=i)
-# end
-
+for i in 1:1
+    TCI4Keldysh.test_TCI_precompute_anomalous_values(;npt=4, perm_idx=i, tolerance=1e-1)
+end
 
 """
 Monitor mean and max error of all permutations for 3/4-point functions before frequency rotation
@@ -84,7 +82,4 @@ function readJSON(filename::String)
 end
 # utilities END ========== 
 
-# time_TCI_precompute_reg_values(;npt=3)
-# TCI4Keldysh.test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, perm_idx=2, cutoff=1e-3)
-TCI4Keldysh.test_TCI_frequency_rotation_reg_values(;npt=4)
-# TCI4Keldysh.test_TCI_precompute_anomalous_values_patched()
+# time_TCI_precompute_reg_values(;npt=4)

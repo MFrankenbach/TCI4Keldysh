@@ -1322,7 +1322,6 @@ function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance
     kernel_mps = compress_anomalous_kernel(Gp, R; tolerance=tolerance)
     mps_idx_info(kernel_mps)
 
-    # contract
     _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[1], tags_Adisc[1], R)
     _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[2], tags_Adisc[2], R)
 
@@ -1336,7 +1335,8 @@ function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance
         kernel_mpo = Quantics.combinesites(kernel_mpo, s_row, s_shared)
     end
 
-    Gp_ano = contract(mps_Adisc_ano, kernel_mpo; cutoff=tolerance*1e-2, use_absolute_cutoff=true)
+    # contract
+    Gp_ano = contract(mps_Adisc_ano, kernel_mpo; cutoff=tolerance*1e-3, use_absolute_cutoff=true)
 
     mps_idx_info(Gp_ano)
 
