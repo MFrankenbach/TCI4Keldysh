@@ -1513,6 +1513,7 @@ function mps_idx_info(mps::Union{MPS,MPO})
     println("----\n")
 end
 
+#=
 function proj_tt_info(pttc::TCIA.ProjTTContainer)
     println("\n-- Patched TT")
     println("Number of patches: $(length(pttc.data))")
@@ -1521,3 +1522,4 @@ function proj_tt_info(pttc::TCIA.ProjTTContainer)
     end
     println("\n----")
 end
+=#

@@ -673,6 +673,7 @@ function rank(mps::MPS)
     return maximum(dim.(linkinds(mps)))
 end
 
+#=
 """
 Convenience wrapper to do patched TCI with TCIAlgorithms
 
@@ -706,3 +707,4 @@ function patchedTCI(A::Array{T,D}; kwargs...) where {T,D}
 
     return TCIA.adaptiveinterpolate(creator, pordering; verbosity=0)
 end
+=#
