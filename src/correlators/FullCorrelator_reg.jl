@@ -126,6 +126,16 @@ function precompute_all_values(G :: FullCorrelator_MF{D}) ::Array{ComplexF64,D} 
     return  sum(gp -> precompute_all_values_MF(gp), G.Gps)
 end
 
+"""
+Precompute values, including only regular kernel convolutions and frequency rotations
+TODO: TEST
+"""
+function precompute_all_values_MF_noano(
+    G::FullCorrelator_MF{D}
+    )::Array{ComplexF64,D} where {D}
+
+    return sum(gp -> precompute_all_values_MF_noano(gp), G.Gps)
+end
 
 """
     reduce_Gps!(G_in :: FullCorrelator_MF{D})

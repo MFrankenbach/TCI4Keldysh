@@ -96,6 +96,16 @@ function getsitesforqtt(qtt::QuanticsTCI.QuanticsTensorCI2; tags=("bla", "blu"))
 
 end
 
+"""
+    function quanticssites(R::Int, tag="bla")
+
+Construct binary indices [tag=1, tag=2, ...]
+"""
+function quanticssites(R::Int, tag::String)
+    sites = [Index(2, "Qubit, $(tag)=$r") for r in 1:R]
+    return sites
+end
+
 
 """
     Convert TensorCI2 object to MPS (from ITensor library)
@@ -296,6 +306,124 @@ function MPS_to_fatTensor(mps::MPS; tags)
 end
 
 """
+Turn mps to array on indices given by slices.
+TODO: What about reverse_idx?
+"""
+function MPS_to_fatTensor(mps::MPS, slices::Vector{T}; reverse_idx=false, tags) where {T<:AbstractRange}
+    @assert all(dim.(siteinds(mps)) .== 2) "Need all sitedims to be 2"
+    @assert length(slices)==length(tags)
+    D = length(tags)
+    sites = siteinds(mps)
+    nbit = div(length(sites), D)
+    out_arr = Array{eltype(MPS), D}(undef, length.(slices)...)
+    for s in Iterators.product(slices...)
+        s_quantics = [QuanticsGrids.index_to_quantics(ss; numdigits=nbit, base=2) for ss in s]
+        s_idx = QuanticsGrids.interleave_dimensions(s_quantics...)
+        s_out = ntuple(i -> findfirst(ss -> ss==s[i], slices[i]), D)
+        eval_idx = reverse_idx ? reverse(s_idx) : s_idx
+        out_arr[s_out...] = eval(mps, eval_idx)
+    end
+    return out_arr
+end
+
+"""
+Does not seem to be faster than normal eval...
+"""
+struct MPSEvaluator
+    mps::MPS
+    onehotpool::Vector{ITensor}
+    hotids::Vector{Int}
+    sids::Vector{Index}
+
+    function MPSEvaluator(mps::MPS)
+        onehotpool = [onehot(s=>1) for s in siteinds(mps)]
+        hotids = fill(1,length(mps))
+        return new(mps, onehotpool, hotids, siteinds(mps))
+    end
+end
+
+function (obj::MPSEvaluator)(idx::Vector{Int})
+    # update onehots    
+    for (i,s) in enumerate(obj.sids)
+        obj.onehotpool[i][s=>obj.hotids[i]]=0.0
+        obj.onehotpool[i][s=>idx[i]]=1.0
+    end
+    res = ITensor(1.0)
+    for i in eachindex(idx)
+        res *= obj.mps[i] * obj.onehotpool[i]
+    end
+    return scalar(res)
+end
+
+function eval(mps::MPS, idx::Vector{Int})
+    TCI4Keldysh.@DEBUG length(idx)==length(mps) "idx and mps lengths do not match"
+
+    res = ITensor(one(eltype(mps[1])))
+    sidx = siteinds(mps)
+    for i in eachindex(idx)
+        res *= mps[i] * onehot(sidx[i] => idx[i])
+    end
+    return scalar(res)
+end
+
+"""
+Eval MPS by contracting towards the given bond. Should be the one with largest bond dim.
+SLOWER than normal eval even for χ_max ≈ 500
+"""
+function eval_lr(mps::MPS, idx::Vector{Int}, fatbond::Int)
+    TCI4Keldysh.@DEBUG length(idx)==length(mps) "idx and mps lengths do not match"
+
+    res_l = ITensor(one(eltype(mps[1])))
+    res_r = ITensor(one(eltype(mps[1])))
+    sidx = siteinds(mps)
+    for i in 1:fatbond
+        res_l *= mps[i] * onehot(sidx[i] => idx[i])
+    end
+    for i in fatbond+1:length(mps)
+        res_r *= mps[i] * onehot(sidx[i] => idx[i])
+    end
+    return scalar(res_l*res_r)
+end
+
+function test_eval_mps()
+    N = 20
+    ITensors.disable_warn_order()
+    s = siteinds(2, N)
+    ld = worstcase_bonddim(dim.(s))
+    mps = random_mps(Float64, s; linkdims=ld)
+
+    fat_mps = ITensor(one(eltype(mps[1])))
+    for m in mps
+        fat_mps *= m
+    end
+
+    v = rand([1,2], N)
+    e1 = eval(mps, v)
+    e2 = eval_lr(mps, v, argmax(ld))
+    ref = fat_mps[v...]
+
+    @assert isapprox(e1, ref; atol=1.e-12)
+    @assert isapprox(e2, ref; atol=1.e-12)
+
+    mev = MPSEvaluator(mps)
+    me = mev(v)
+    @assert isapprox(me, ref; atol=1.e-12)
+
+    Neval = 1000
+    t1s = fill(0.0, Neval)
+    t2s = fill(0.0, Neval)
+    for i in 1:Neval
+        v = rand([1,2],N)
+        t1 = @elapsed mev(v)
+        t2 = @elapsed eval(mps,v)
+        t1s[i]=t1
+        t2s[i]=t2
+    end
+    @show sum(t1s)/Neval
+    @show sum(t2s)/Neval
+end
+
+"""
 freq_shift(isferm_ωnew::Vector{Int}, isferm_ωold::Vector{Int}, ωconvMat::Matrix{Int})
 
 Determine shift required for correct frequency rotation on tensor train.
@@ -353,9 +481,10 @@ Arguments:
  * tags         ::Vector{String}
  * ωconvMat     ::Matrix{Int}    matrix M encoding the frequency conversion ω_old = M * ω_new
  * isferm_ωnew  ::Vector{Int}    0 for bosonic, 1 for fermionic, by convention isferm_ωnew[1]=0
+ * expl_shift   ::Vector{Int}    (optionally) explicitly given shift in Quantics.affinetransform
 """
 function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int}, 
-        old_gridsizes::Vector{Int}, new_gridsizes::Vector{Int})
+        old_gridsizes::Vector{Int}, new_gridsizes::Vector{Int}, expl_shift::Union{Nothing,Vector{Int}}=nothing, kwargs...)
 
     D = length(isferm_ωnew) # number of frequencies
     R = div(length(mps), D)
@@ -368,17 +497,27 @@ function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ω
 
     
 
-    isferm_ωold = mod.(ωconvMat * isferm_ωnew, 2) # abs.(ωconvMat) -> no, should be fine
     begin # parse matrix into dictionary with coefficients for affinetransform
         iωs = [partialsortperm(abs.(ωconvMat[i,:]), 1:2, rev=true)  for i in 1:D] # 
         coeffs_dic = [Dict([tags[iωs[i][j]] => ωconvMat[i,iωs[i][j]] for j in 1:2]...) for i in 1:D]
     end
-    # original shift
-    shift = halfN * (sum(abs.(ωconvMat), dims=2)[:] .- 1) + div.(ωconvMat * isferm_ωnew - isferm_ωold, 2)
-    println("  \nOriginal shift: $shift\n")
+    if TCI4Keldysh.DEBUG()
+        # original shift
+        isferm_ωold = mod.(ωconvMat * isferm_ωnew, 2) # abs.(ωconvMat) -> no, should be fine
+        shift = halfN * (sum(abs.(ωconvMat), dims=2)[:] .- 1) + div.(ωconvMat * isferm_ωnew - isferm_ωold, 2)
+        printstyled("  \nOriginal shift: $shift\n"; color=:green)
+    end
 
-    # shift = freq_shift(isferm_ωnew, ωconvMat, old_gridsizes, new_gridsizes)
-    # println("  New shift: $shift\n")
+    shift = if isnothing(expl_shift)
+                freq_shift(isferm_ωnew, ωconvMat, old_gridsizes, new_gridsizes)
+            else
+                ref_shift = freq_shift(isferm_ωnew, ωconvMat, old_gridsizes, new_gridsizes)
+                println("Shift in affine transform: $ref_shift")
+                expl_shift
+            end
+    if TCI4Keldysh.DEBUG()
+        printstyled("  New shift: $shift\n"; color=:green)
+    end
 
     bc = ones(Int, D) # boundary condition periodic
     mps_rot = Quantics.affinetransform(
@@ -386,7 +525,8 @@ function affine_freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ω
         tags,
         coeffs_dic,
         shift,
-        bc
+        bc;
+        kwargs...
     )
     return mps_rot
 end
@@ -405,7 +545,7 @@ Arguments:
  * ext_gridsizes::Vector{Int}    sizes of external frequency grids (the frequencies fed into the rotation)
 """
 function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Vector{Int},
-    ext_gridsizes::Vector{Int})
+    ext_gridsizes::Vector{Int}, kwargs...)
 
     function convert_to_affineTrafos(m::Matrix{Int}) ::Vector{Matrix{Int}}
         D = size(m, 1)
@@ -444,23 +584,41 @@ function freq_transform(mps::MPS; tags, ωconvMat::Matrix{Int}, isferm_ωnew::Ve
         isferm_ωnew_list = [isferm_ωnew]
     end
 
-    @show ext_gridsizes
+    # @show ext_gridsizes
     gridsizes_list = [ext_gridsizes]
     for i in eachindex(ωconvMat_list)
-        gr = gridsizes_after_freq_rotation(ωconvMat_list[i], gridsizes_list[begin])
+        gr = gridsizes_after_freq_rotation(ωconvMat_list[i], gridsizes_list[begin]) 
         pushfirst!(gridsizes_list, gr)
     end
 
-    @show gridsizes_list
+    gr_old = gridsizes_after_freq_rotation(ωconvMat, ext_gridsizes) 
+    println("\ngridsizes_old: $gr_old")
+    total_shift = freq_shift(isferm_ωnew, ωconvMat, gr_old, ext_gridsizes)
 
     for i in eachindex(ωconvMat_list)
+        s = if length(ωconvMat_list)<2
+                total_shift
+            else
+                i==2 ? fill(0, length(ext_gridsizes)) : total_shift
+            end
+        println("\nRotation no. $i/$(length(ωconvMat_list)), shift: $s")
         mps = affine_freq_transform(mps; tags, ωconvMat=ωconvMat_list[i], isferm_ωnew=isferm_ωnew_list[i],
-                old_gridsizes=gridsizes_list[i], new_gridsizes=gridsizes_list[i+1])
+                old_gridsizes=gridsizes_list[i], new_gridsizes=gridsizes_list[i+1], expl_shift=s, kwargs...)
     end
     return mps
 end
 
-
+"""
+Maps G(iν_n) to  G'(n)=G(iν_{-n}) where ν_n = 2π*n/β with the maximum frequency ν_N cut off.
+CAREFUL: G(iν_{-N}) is mapped to itself, i.e. only G'(1)=G(iν_{N-1}) to G'(2^R)=G(iν_{-N+1}) are valid.
+"""
+function flip_bos(Gmps::MPS, sites; kwargs...)
+    error("Need to test this...")
+    flipmpsprime = Quantics.flipop(sites; rev_carrydirec=false, bc=1)
+    flipmps = Quantics.matchsiteinds(flipmpsprime, siteinds(Gmps))
+    G_out = apply(flipmps, Gmps; kwargs... )
+    return noprime(G_out)
+end
 
 
 function zeropad_QTCI2(qtt_in::QuanticsTCI.QuanticsTensorCI2; N::Int, nonzeroinds_left=nothing)
@@ -647,7 +805,7 @@ pad array with zeros. larger array has size 2^R in every dimension (for given R)
 """
 function zeropad_array(arr::Array{T,D}, R::Int) where{T,D}
     R_ = padding_R(size(arr))
-    @assert R_ <= R
+    @assert R_ <= R "Required R_=$R_ larger than given R=$R"
     res = zeros(T, (2^R.*ones(Int, D))...)
     view(res, Base.OneTo.(size(arr))...) .= arr
     return res
@@ -691,9 +849,109 @@ function grid_R(sizetuple::NTuple{N, Int}) where {N}
 end
 
 """
+Compress frequency kernels (legs) of partial correlator to MPS of given length.
+CAREFUL: Compression is done via SVD!
+Excessive bits are zeropadded.
+"""
+function compress_frequencykernels(R::Int, psf::AbstractTuckerDecomp{D}; tags=("ω","eps"), tolerance=1e-12) :: Vector{MPS} where {D}
+    # TODO: Avoid zeropadding, write function instead...
+    om_upper_ids = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in psf.legs]
+    legs = [zeropad_array(psf.legs[i][1:om_upper_ids[i], :], R) for i in eachindex(psf.legs)]
+    # heatmap(log10.(abs.(legs[2])))
+    # savefig("foo.png")
+    # error("plotting")
+    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=tolerance) for i in 1:D]
+    mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("$(tags[1])$i", "$(tags[2])$i")) for i in 1:D]
+    return mps_Kernels
+end
+
+"""
+Compress frequency kernels (legs) of partial correlator to MPS of given length.
+Excessive bits are zeropadded via a function.
+Compression is done via TCI.
+"""
+function compress_frequencykernels_light(R::Int, psf::AbstractTuckerDecomp{D}; tags=("ω","eps"), tolerance=1e-12) :: Vector{MPS} where {D}
+    om_upper_ids = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in psf.legs]
+    eps_sizes = [size(psf.legs[i], 2) for i in 1:D]
+    qtt_Kernels = Vector{QuanticsTCI.QuanticsTensorCI2{ComplexF64}}(undef, D)
+    for i in eachindex(psf.legs)
+
+        function kernelfun(a::Int, b::Int)
+            if (a <= om_upper_ids[i]) && (b <= eps_sizes[i]) 
+                return  psf.legs[i][a,b]
+            else
+                return zero(ComplexF64)
+            end
+        end
+
+        qtt, _, _ = quanticscrossinterpolate(ComplexF64, kernelfun, (2^R, 2^R); tolerance=tolerance)
+        qtt_Kernels[i] = qtt
+    end
+    
+
+    mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("$(tags[1])$i", "$(tags[2])$i")) for i in 1:D]
+    return mps_Kernels
+end
+
+function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{1}; tolerance::Float64=1e-12, cutoff::Float64=1e-12, tcikernels=true)
+    D = 1
+
+    R = grid_R(broadenedPsf)
+    @show size(broadenedPsf.center)
+    @show size.(broadenedPsf.legs)
+    @show size.(broadenedPsf.ωs_legs)
+    @show size.(broadenedPsf.ωs_center)
+
+    @warn "Singular values are not shifted to center!"
+    # TCI4Keldysh.@TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
+
+    Adisc_size = size(broadenedPsf.center)
+    function evalAdisc(i...)
+        if all(i .<= Adisc_size)        
+            return broadenedPsf.center[i...]
+        else
+            return zero(Float64)
+        end
+    end
+    padded_size = ntuple(i -> 2^R, ndims(broadenedPsf.center))
+    @show maximum(abs.(broadenedPsf.center))
+    println("  Interpolating...")
+    qtt_Adisc, _, _ = quanticscrossinterpolate(
+        eltype(broadenedPsf.center),
+        evalAdisc,
+        padded_size;
+        tolerance=tolerance)
+    
+    # qtt_Adisc_padded = TCI4Keldysh.zeropad_QTCI2(qtt_Adisc; N=0)
+    qtt_Adisc_padded = qtt_Adisc
+
+    # convert qtt for Tucker center
+    mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
+
+    mps_Kernels = if tcikernels
+                    printstyled(" --- Compressing kernels with TCI\n"; color=:blue)
+                    compress_frequencykernels_light(R, broadenedPsf; tolerance=tolerance)
+                else
+                    legs = [zeropad_array(leg[1:2^grid_R(size(leg, 1)), :], R) for leg in broadenedPsf.legs]
+                    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=tolerance) for i in 1:D]
+                    [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+                end
+
+    # contract kernel with tucker center
+    k1 = mps_Kernels[1]
+    TCI4Keldysh._adoptinds_by_tags!(k1, mps_Adisc_padded, "eps1",  "eps1", R)
+    k1MPO = MPO([k1[2*r-1]*k1[2*r] for r in 1:R])
+
+    TCI4Keldysh.@TIME res = apply(k1MPO, mps_Adisc_padded; alg="densitymatrix", cutoff=cutoff, use_absolute_cutoff=true) "Contraction 1"
+
+    return res
+end
+
+
+"""
 cutoff: cutoff for densitymatrix algorithm in MPO-MPO contraction; small cutoff affordable in 2D
 """
-function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-12, cutoff::Float64=1e-12)
+function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-12, cutoff::Float64=1e-12, tcikernels=true)
     D = 2
 
     # fit algorithm works for D=2 (in contrast to D=3...)
@@ -703,11 +961,22 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
 
     R = grid_R(broadenedPsf)
 
+    # @warn "Singular values are not shifted to center!"
     TCI4Keldysh.@TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
 
+    # find nonzero value
+    pivot = findfirst(x -> abs(x)>tolerance, broadenedPsf.center)
+    # qpivot = Vector{Int}[]
+    # for i in 1:D
+    #     push!(qpivot, QuanticsGrids.index_to_quantics(pivot[i]; numdigits=R, base=2))
+    # end
+    # initpivot = QuanticsGrids.interleave_dimensions(qpivot...)
+    # @show initpivot
+
+    #compress PSF
     qtt_Adisc, _, _ = quanticscrossinterpolate(
-            # zeropad_array(broadenedPsf.Adisc),#[end-2^R_Adisc+1:end,end-2^R_Adisc+1:end],
-            zeropad_array(broadenedPsf.center, R),#[end-2^R_Adisc+1:end,end-2^R_Adisc+1:end],
+            zeropad_array(broadenedPsf.center, R),
+            [collect(Tuple(pivot))];
             tolerance=tolerance
         )  
     
@@ -718,28 +987,21 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
     # all(qtt_Adisc_padded.tci.sitetensors[(R-R_Adisc)*D+1:end] .== qtt_Adisc.tci.sitetensors)
     # Adisc is complex-valued...
     # all(getindex.(argmax.(qtt_Adisc_padded.tci.sitetensors[1:(R-R_Adisc)*D]), 2) .== nonzeroinds_left)
-    @show length(qtt_Adisc.tci)
-    @show length(qtt_Adisc_padded.tci)
-
-
 
     # convert qtt for Tucker center
     mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
-    @show length(mps_Adisc_padded)
 
-    # legs = [zeropad_array(broadenedPsf.legs[i][1:end-residue,:]) for i in 1:D]
-    legs = [zeropad_array(leg[1:2^grid_R(size(leg, 1)), :], R) for leg in broadenedPsf.legs]
-    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=1e-15) for i in 1:D]
-    mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+    mps_Kernels = if tcikernels
+                    printstyled(" --- Compressing kernels with TCI\n"; color=:blue)
+                    compress_frequencykernels_light(R, broadenedPsf; tolerance=tolerance)
+                else
+                    legs = [zeropad_array(leg[1:2^grid_R(size(leg, 1)), :], R) for leg in broadenedPsf.legs]
+                    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=tolerance) for i in 1:D]
+                    [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+                end
 
     ### contract Kernel with Tucker center
 
-    # add dummy dimension
-    #TCI4Keldysh.@TIME begin
-    #    mps_Kernel1_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[1]; pos=3, D_old=2)
-    #    mps_Kernel2_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[2]; pos=1, D_old=2)
-    #    #mps_Kernel3_exp = TCI4Keldysh.add_dummy_dim(mps_Kernels[3]; pos=1, D_old=2)
-    #end "Adding dummy dimensions."
     mps_Kernel1_exp = mps_Kernels[1]
     mps_Kernel2_exp = mps_Kernels[2]
 
@@ -777,7 +1039,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
         meandiff<=1e-8;
     end "\n ---- Testing contraction 1 ----\n"
 
-    ITensors.truncate!(ab; cutoff=1e-14, use_absolute_cutoff=true)
+    ITensors.truncate!(ab; cutoff=cutoff, use_absolute_cutoff=true)
 
     #findallsiteinds_by_tag(siteinds(); tag="eps2")
     TCI4Keldysh.@TIME res = Quantics.automul(
@@ -812,7 +1074,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
     end "\n ---- Testing contraction 2 ----\n"
 
     # truncate res, not ab!
-    ITensors.truncate!(res; cutoff=1e-14, use_absolute_cutoff=true)
+    ITensors.truncate!(res; cutoff=cutoff, use_absolute_cutoff=true)
     
     # siteinds(res)
     return res
@@ -824,7 +1086,7 @@ end
 """
 cutoff: cutoff for densitymatrix algorithm in MPO-MPO contraction
 """
-function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}; tolerance::Float64=1e-12, cutoff::Float64=1e-5)
+function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}; tolerance::Float64=1e-12, cutoff::Float64=1e-5, tcikernels::Bool=true)
 
     D = 3
     # scaling for maxbondim(MPS)=m, maxbonddim(MPO)=k: m^3k + m^2k^2
@@ -838,6 +1100,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     @show size.(broadenedPsf.legs,1)
     R = grid_R(broadenedPsf)
 
+    # @warn "Singular values are not shifted to center!"
     @TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
 
     qtt_Adisc, _, _ = quanticscrossinterpolate(
@@ -861,10 +1124,16 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     #    legs[i][:,1:2^R_Adisc] .= broadenedPsf.legs[i][1:end-1,end-2^6+1:end]
     #end
     # legs = [zeropad_array(broadenedPsf.legs[i][1:end-residue,:]) for i in 1:D]
-    om_upper_ids = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in broadenedPsf.legs]
-    legs = [zeropad_array(broadenedPsf.legs[i][1:om_upper_ids[i], :], R) for i in eachindex(broadenedPsf.legs)]
-    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=1e-15) for i in 1:D]
-    mps_Kernels = [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+
+    mps_Kernels = if tcikernels
+                    printstyled(" --- Compressing kernels with TCI\n"; color=:blue)
+                    compress_frequencykernels_light(R, broadenedPsf; tolerance=tolerance)
+                else
+                    om_upper_ids = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in broadenedPsf.legs]
+                    legs = [zeropad_array(broadenedPsf.legs[i][1:om_upper_ids[i], :], R) for i in eachindex(broadenedPsf.legs)]
+                    qtt_Kernels = [TCI4Keldysh.fatTensortoQTCI(legs[i]; tolerance=1e-15) for i in 1:D]
+                    [TCI4Keldysh.QTCItoMPS(qtt_Kernels[i], ("ω$i", "eps$i")) for i in 1:D]
+                end
 
     ### contract Kernel with Tucker center
 
@@ -917,8 +1186,8 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
         true;
     end "\n ---- Check Tucker ----\n"
 
-    printstyled("\n  Ranks before contraction 1 MPS/Kernel: $(rank(mps_Adisc_padded)) / $(rank(mps_Kernel1_exp))\n"; color=:blue)
-    printstyled("        Cutoff: $cutoff\n"; color=:blue)
+    printstyled("\n  Ranks before contraction 1 MPS/Kernel: $(rank(mps_Adisc_padded)) / $(rank(mps_Kernel1_exp))\n"; color=:magenta)
+    printstyled("        Cutoff: $cutoff\n"; color=:magenta)
 
     @TIME ab = Quantics.automul(
             mps_Kernel1_exp,
@@ -966,7 +1235,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     ITensors.truncate!(ab; cutoff=1e-14, use_absolute_cutoff=true)
     ITensors.truncate!(mps_Kernel2_exp; cutoff=1e-14, use_absolute_cutoff=true)
 
-    printstyled("\n  Ranks before contraction 2 MPS/Kernel: $(rank(ab)) / $(rank(mps_Kernel2_exp))\n"; color=:blue)
+    printstyled("\n  Ranks before contraction 2 MPS/Kernel: $(rank(ab)) / $(rank(mps_Kernel2_exp))\n"; color=:magenta)
 
     #findallsiteinds_by_tag(siteinds(); tag="eps2")
     @TIME ab2 = Quantics.automul(
@@ -988,7 +1257,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     # ITensors.truncate!(ab2; cutoff=cutoff*1e-2, use_absolute_cutoff=true)
     # ITensors.truncate!(mps_Kernel3_exp; cutoff=cutoff*1e-2, use_absolute_cutoff=true)
 
-    printstyled("\n  Ranks before contraction 3 MPS/Kernel: $(rank(ab2)) / $(rank(mps_Kernel3_exp))\n"; color=:blue)
+    printstyled("\n  Ranks before contraction 3 MPS/Kernel: $(rank(ab2)) / $(rank(mps_Kernel3_exp))\n"; color=:magenta)
 
     @TIME res = Quantics.automul(
         ab2,
@@ -1000,6 +1269,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
         ) "Contraction 3"
 
     ITensors.truncate!(res; cutoff=1e-14, use_absolute_cutoff=true)
+    printstyled("\n  MPS rank after contraction 3 + truncation: $(rank(res))\n"; color=:magenta)
 
     return res
 end
@@ -1489,15 +1759,60 @@ function compress_Adisc_ano_patched(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; rt
     # compare errors to Adisc_ano
 end
 
+"""
+See rank of compressed frequency kernels
+"""
+function frequency_kernel_ranks(;npt=2, R=12, perm_idx=1, beta=2000.0, tolerance=1e-12, fermikernel=true, singvalshift=false)
+    # get PSF
+    perms = [p for p in permutations(collect(1:npt))]
+    perm = perms[perm_idx]
+    path = npt<=3 ? "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/" : joinpath("data/SIAM_u=0.50/PSF_nz=2_conn_zavg/", "4pt")
+    Ops = if npt==2
+            ["F1", "F1dag"][perm]
+        elseif npt==3
+            ["F1", "F1dag", "Q34"][perm]
+        else
+            ["F1", "F1dag", "F3", "F3dag"][perm]
+        end
+    spin = 1
+
+    ωconvMat = TCI4Keldysh.dummy_frequency_convention(npt)
+    ωconvMat_sum = cumsum(ωconvMat[perm[1:(npt-1)],:]; dims=1)
+    psf = PartialCorrelator_reg(npt-1, 1/beta, R, path, Ops, ωconvMat_sum; flavor_idx=spin, nested_ωdisc=false)
+    @show psf.isFermi
+
+    if singvalshift
+        TCI4Keldysh.shift_singular_values_to_center!(psf.tucker)
+    end
+    kernels = compress_frequencykernels_light(R, psf.tucker; tolerance=tolerance)
+    printstyled("\n --- Frequency kernel ranks: $(rank.(kernels))  R=$R  β=$beta ---\n"; color=:green)
+    if fermikernel
+        return maximum([rank(kernels[i]) for i in 1:npt-1 if psf.isFermi[i]])
+    else
+        return rank(kernels[findfirst(.!psf.isFermi)])
+    end
+end
+
 function compress_padded_array(A::Array{T,D}; tags=nothing, kwargs...)::MPS where {T,D} 
     tags = isnothing(tags) ? ntuple(i -> "ω$i", D) : tags
     R = grid_R(size(A))
     return compress_padded_array(A, R; tags, kwargs...)
 end
 
+"""
+TODO: TEST
+"""
 function compress_padded_array(A::Array{T,D}, R::Int; tags=nothing, kwargs...)::MPS where {T,D} 
     tags = isnothing(tags) ? ntuple(i -> "ω$i", D) : tags
-    qtt, _, _ = quanticscrossinterpolate(zeropad_array(A, R); kwargs...)
+    asize = size(A)
+    function evalA(i...)
+        if all(i .<= asize)
+            return A[i...]
+        else
+            return zero(T)
+        end
+    end
+    qtt, _, _ = quanticscrossinterpolate(T, evalA, ntuple(i -> 2^R, D); kwargs...)
     mps = TCI4Keldysh.QTCItoMPS(qtt, tags)
     return mps
 end
@@ -1513,13 +1828,18 @@ function mps_idx_info(mps::Union{MPS,MPO})
     println("----\n")
 end
 
-#=
-function proj_tt_info(pttc::TCIA.ProjTTContainer)
-    println("\n-- Patched TT")
-    println("Number of patches: $(length(pttc.data))")
-    for ptt in pttc.data
-        @show TCI.linkdims(ptt.data)
-    end
-    println("\n----")
+function worstcase_bonddim(dims::Vector{Int}, i::Int)
+    @assert 1<= i <=length(dims)-1 "Invalid bond index $i"
+    return min(prod(dims[1:i]; init=1), prod(dims[i+1:end]; init=1))
 end
-=#
+
+function worstcase_bonddim(dims::Vector{Int})
+    return [worstcase_bonddim(dims, i) for i in 1:length(dims)-1]
+end
+
+"""
+Check whether tucker center (PSF) contains any values larger than tolerance.
+"""
+function check_zero(Gp::TCI4Keldysh.PartialCorrelator_reg{D}, tolerance::Float64) :: Bool where {D}
+    return all(abs.(Gp.tucker.center) .<= tolerance)
+end

@@ -393,7 +393,17 @@ function parse_Ops_to_filename(ops)
     return "PSF_(("*temp[1:end-1]*")).mat"
 end
 
-
+"""
+Return symmetric 1D Matsubara grid.
+TODO: TEST
+"""
+function MF_grid(T::Float64, Nhalf::Int, fermi::Bool)
+    if fermi
+        return π * T *(collect(-Nhalf:Nhalf-1) * 2 .+ 1)
+    else
+        return π * T * collect(-Nhalf:Nhalf) * 2
+    end
+end
 
 """
 
@@ -665,12 +675,27 @@ function eval_ano_matsubara_kernel(oms::Vector{Float64}, omprimes::Vector{Float6
     return -0.5*(beta + sum)*product
 end
 
+"""
+Fit y = α*x + β. \\
+NOTE: method linear_least_squares already exists...
+"""
+function linear_fit(x::Vector{T}, y::Vector{T}) where {T<:Number}
+    A = hcat(x, ones(T, length(x)))
+    out = A \ y # y = αx + β
+    println("  LSQ err: $(norm(A*out - y))")
+    return out
+end
+
 function rank(qtt::QuanticsTCI.QuanticsTensorCI2)
     return maximum(TCI.linkdims(qtt.tci))
 end
 
 function rank(mps::MPS)
     return maximum(dim.(linkinds(mps)))
+end
+
+function absmax(v)
+    return maximum(abs.(v))
 end
 
 #=

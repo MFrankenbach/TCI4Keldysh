@@ -105,6 +105,24 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
 
 end
 
+"""
+Construct (D+1)-point partial correlator with frequency grids of size 2^R / 2^R+1
+"""
+function PartialCorrelator_reg(D::Int, T::Float64, R::Int, path::String, Ops::Vector{String}, ωconvMat::Matrix{Int}, formalism::String="MF"; flavor_idx=1, nested_ωdisc=false)
+    if formalism!="MF"
+        error("only Matsubara available here")
+    end
+
+    Adisc = load_Adisc(path, Ops, flavor_idx)
+    ωdisc = load_ωdisc(path, Ops; nested_ωdisc=nested_ωdisc)
+
+    Nhalf = 2^(R-1)
+    ombos = MF_grid(T, Nhalf, false)
+    omfer = MF_grid(T, Nhalf, true)
+    ωs_ext = ntuple(i -> i>1 ? omfer : ombos, D)
+
+    return PartialCorrelator_reg(T, formalism, Adisc, ωdisc, ωs_ext, ωconvMat)
+end
 
 function update_frequency_args!(Gp::PartialCorrelator_reg{D}) where{D}
     Gp.tucker.ωs_legs, Gp.ωconvOff, Gp.isFermi = _trafo_ω_args(Gp.ωs_ext, Gp.ωconvMat)
@@ -133,9 +151,10 @@ Internal indices have the ranges OneTo.(length.(ωs_new))
 """
 function _trafo_ω_args(ωs::NTuple{D,Vector{T}}, ωconvMat::AbstractMatrix{Int}) where{D,T}
     function grids_are_fine(grids)
+        tol = 1.e-10
         Δgrids = [diff(g) for g in grids]
-        is_equidistant_symmetric = [(grids[i][1] == -grids[i][end]) && (maximum(abs.(diff(Δgrids[i]))) < 1.e-10) for i in eachindex(ωs)]
-        all_spacings_identical = D > 1 ? maximum(abs.(diff([Δgrids[i][1] for i in eachindex(ωs)]))) < 1.e-10 : true
+        is_equidistant_symmetric = [(grids[i][1] == -grids[i][end]) && (maximum(abs.(diff(Δgrids[i]))) < tol) for i in eachindex(ωs)]
+        all_spacings_identical = D > 1 ? maximum(abs.(diff([Δgrids[i][1] for i in eachindex(ωs)]))) < tol : true
         return all(is_equidistant_symmetric) && all_spacings_identical
     end
 
@@ -354,6 +373,27 @@ function precompute_all_values_MF(
     #println("Gp val after rotation: ", maxval2)
     #println("dev in maxvals due to rotation: $(maxval1 - maxval2)")
 
+
+    return res
+end
+
+"""
+Precompute values, including only regular kernel convolutions and frequency rotations
+TODO: TEST
+"""
+function precompute_all_values_MF_noano(
+    Gp::PartialCorrelator_reg{D}
+    )::Array{ComplexF64,D} where {D}
+    
+    @assert Gp.formalism == "MF"
+    data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
+
+    # perform frequency rotation:
+    strides_internal = [stride(data_unrotated, i) for i in 1:D]'
+    strides4rot = ((strides_internal * Gp.ωconvMat)...,)
+    offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
+    sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)...,), strides4rot, offset4rot)
+    res = Array{ComplexF64,D}(sv[[Colon() for _ in 1:D]...])
 
     return res
 end
