@@ -113,6 +113,7 @@ function chi_vs_bondidx(;beta::Float64=1.e1, tolerance::Float64=1e-6, cutoff::Fl
             continue
         end
         gpdata = readJSON(fname)
+        println("Read "*fname)
         Gpdata[p]=gpdata
     end
 
@@ -154,7 +155,7 @@ function test_full_correlator()
 
     R = 7
     beta = 10.0
-    tolerance = 1e-6
+    tolerance = 1e-8
     cutoff = 1.e-20
     spin = 1
     
@@ -164,10 +165,23 @@ function test_full_correlator()
     ωconvMat = TCI4Keldysh.dummy_frequency_convention(npt)
     GFs = TCI4Keldysh.load_npoint(PSFpath, Ops, npt, R, ωconvMat; beta=beta, nested_ωdisc=false)
 
-    Gps_out = get_Gps(;R=R, beta=beta, tolerance=tolerance, cutoff=cutoff, Ops=Ops, verbose=true)
-    @time Gfull = TCI4Keldysh.FullCorrelator_add(Gps_out; cutoff=1.e-20, use_absolute_cutoff=false)
-    truncate!(Gfull; cutoff=cutoff, use_absolute_cutoff=true)
+    tref = @elapsed begin
+                Gfull_ref = TCI4Keldysh.precompute_all_values_MF_noano(GFs[spin])
+            end
+    printstyled("REFERENCE time for 4pt-correlator: $tref\n")
+
+    tpart = @elapsed begin 
+                Gps_out = get_Gps(;R=R, beta=beta, tolerance=tolerance, cutoff=cutoff, Ops=Ops, verbose=true)
+            end
+    tfull1 = @elapsed begin
+                Gfull = TCI4Keldysh.FullCorrelator_add(Gps_out; cutoff=1.e-12, use_absolute_cutoff=false)
+            end
+    # @time Gfull = TCI4Keldysh.FullCorrelator_recompress(Gps_out; tolerance=tolerance)
+    tfull2 = @elapsed begin
+                truncate!(Gfull; cutoff=cutoff, use_absolute_cutoff=true)
+            end
     @show TCI4Keldysh.rank(Gfull)
+    printstyled("Time for 4pt-correlator $(tpart)+$(tfull1)+$(tfull2)=$(tpart+tfull1+tfull2) [sec.]\n")
 
 
     # reference
@@ -180,15 +194,31 @@ function test_full_correlator()
     Gfull_fat = TCI4Keldysh.MPS_to_fatTensor(Gfull; tags=("ω1", "ω2", "ω3"))
     slice_idx = 2^(R-1)
     refmax = maximum(abs.(Gfull_ref))
-    heatmap(log10.(abs.(Gfull_fat[:,slice_idx,:])); clim=(log10(refmax)-10, log10(refmax))) 
-    savefig("Gfull.png")
-    heatmap(log10.(abs.(Gfull_ref[:,slice_idx,:])); clim=(log10(refmax)-10, log10(refmax))) 
-    savefig("Gfull_ref.png")
+    pfull = default_plot()
+    clim_low = log10(tolerance)+1
+    heatmap!(pfull, log10.(abs.(Gfull_fat[:,slice_idx,:])); clim=(clim_low, log10(refmax))) 
+    savefig(pfull, "Gfull_R=$(R)_tol=$(round(Int,log10(tolerance))).png")
+
+    pfullref = default_plot()
+    # heatmap!(pfullref, log10.(abs.(Gfull_ref[:,slice_idx,:])); clim=(log10(refmax)-10, log10(refmax))) 
+    heatmap!(pfullref, Gfull_ref[:,slice_idx,:] .|> abs .|> (x -> max(x,1.e-15)) .|> log10; clim=(clim_low, log10(refmax))) 
+    savefig(pfullref, "Gfull_ref_R=$(R)_tol=$(round(Int,log10(tolerance))).png")
+
     diffslice = (2:2^R, 1:2^R, 1:2^R) # leave out first bosonic frequency
     diff = abs.(Gfull_fat[diffslice...] - Gfull_ref[diffslice...]) ./ maximum(abs.(Gfull_ref[diffslice...]))
-    heatmap(log10.(diff[:,slice_idx,:]))
+    # diff = abs.(Gfull_fat[diffslice...] - Gfull_ref[diffslice...])
+    pfulldiff = default_plot()
+    heatmap!(pfulldiff, log10.(diff[:,slice_idx,:]))
     @show maximum(diff)
     @show norm(diff)./prod(size(diff))
-    savefig("Gfull_diff.png")
+    savefig(pfulldiff, "Gfull_diff_R=$(R)_tol=$(round(Int,log10(tolerance))).png")
+end
 
+function default_plot()
+    tfont = 12
+    titfont = 16
+    gfont = 16
+    lfont = 12
+    p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
+    return p
 end

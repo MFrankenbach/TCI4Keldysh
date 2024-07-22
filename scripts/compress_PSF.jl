@@ -4,6 +4,9 @@ using ITensors
 using Plots
 using LaTeXStrings
 using QuanticsTCI
+import TensorCrossInterpolation as TCI
+using Combinatorics
+using Measures
 
 #=
 Plot and analyze compression of PSF data.
@@ -60,8 +63,10 @@ function PSF_4pt(;beta=2000.0, R=7, tolerance=1.e-6)
     lfont = 12
     p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
     p = heatmap!(p, Adisc[:,:,slice_idx] .|> abs .|> (x -> max(1.e-8, x)) .|> (x -> x/max_weight) .|> log10)
-    xlabel!(p, L"\epsilon_1")
-    ylabel!(p, L"\epsilon_2")
+    # xlabel!(p, L"\epsilon_2")
+    # ylabel!(p, L"\epsilon_1")
+    xlabel!(p, L"n_2")
+    ylabel!(p, L"n_1")
     title!(p, L"\log_{10}\left|\!\! S_p\right|")
     savefig(p, "PSF_sample3D.png")
 
@@ -86,6 +91,10 @@ function PSF_4pt(;beta=2000.0, R=7, tolerance=1.e-6)
 
     worst = TCI4Keldysh.worstcase_bonddim(fill(2, length(mps_Adisc)))
     ld = ITensors.linkdims(mps_Adisc)
+    rk = maximum(ld)
+    printstyled("\n  ---- Bonddims (quantics): $ld\n"; color=:blue)
+    printstyled("\n  ---- Rank (quantics): $rk\n"; color=:blue)
+    printstyled("  ---- No. of elements in largest array: $(2*rk^2)\n"; color=:blue)
 
     tfont = 12
     gfont = 16
@@ -98,6 +107,30 @@ function PSF_4pt(;beta=2000.0, R=7, tolerance=1.e-6)
     xlabel!(chiplot, "bond index")
     ylabel!(chiplot, "χ")
     savefig(chiplot, "PSF_bonddim_4pt.png")
+end
+
+"""
+Compress PSF in natural representation
+x--x--x
+|  |  |
+n1 n2 n3
+"""
+function compress_PSF_natural(; tolerance=1.e-8)
+
+    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt/"
+    Ops = ["F1", "F1dag", "F3", "F3dag"]
+    perm_idx = 1
+    p = collect(permutations(collect(1:4)))[perm_idx]
+    Adisc = TCI4Keldysh.load_Adisc(PSFpath, Ops[p], 1)
+
+    initpivot = collect(Tuple(argmax(abs.(Adisc))))
+    localdims = collect(size(Adisc))
+    tt, _, _ = TCI.crossinterpolate2(ComplexF64, i -> Adisc[i...], localdims, [initpivot]; tolerance=tolerance)
+
+    ld = TCI.linkdims(tt)
+    printstyled("\n  ---- Worst case: $(size(Adisc))\n"; color=:blue)
+    printstyled("  ---- Bond dims: $ld\n"; color=:blue)
+    printstyled("  ---- No. of elements in largest array: $(size(Adisc)[2] * prod(ld))\n"; color=:blue)
 end
 
 function PSF_3pt(;beta=2000.0, R=7)
@@ -116,10 +149,30 @@ function PSF_3pt(;beta=2000.0, R=7)
     ωdisc = GF.Gps[perm_idx].tucker.ωs_center
     @show size.(ωdisc)
     max_weight = maximum(abs.(Adisc))
-    p = heatmap(Adisc .|> real .|> abs .|> (x -> max(1.e-8, x)) .|> (x -> x/max_weight) .|> log)
-    xlabel!(p,"ϵ1")
-    ylabel!(p,"ϵ2")
-    title!(p,"Sample 3-point-PSF")
-    savefig(p,"PSF_sample2D.png")
+    tfont = 18
+    titfont = 30
+    gfont = 34
+    lfont = 18
+    p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
+    cbar = false
+    p = heatmap!(p, Adisc .|> abs .|> (x -> max(1.e-8, x)) .|> (x -> x/max_weight) .|> log; colorbar=cbar)
+    # xlabel!(p,L"n_2", margin=5mm)
+    # ylabel!(p,L"n_1", margin=5mm)
+    xlabel!(p,L"n_2")
+    ylabel!(p,L"n_1")
+    plot!(p; xformatter=:none)
+    plot!(p; yformatter=:none)
+    # title!(p, L"\log_{10}|\!\!S_{n_1n_2}|")
+    # title!(p, L"S_{n_1n_2}", margin=5mm)
+    savefig(p,"PSF_sample2D_label.png")
 
+end
+
+function default_plot()
+    tfont = 12
+    titfont = 16
+    gfont = 16
+    lfont = 12
+    p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
+    return p
 end

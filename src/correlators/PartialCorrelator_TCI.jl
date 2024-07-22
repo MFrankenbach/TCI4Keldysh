@@ -1,35 +1,37 @@
 using Plots
 
-function TCI_precompute_reg_values_MF_without_ωconv(
-    Gp::PartialCorrelator_reg{D}
-)::MPS where {D}
-
-    Gp_mps = TD_to_MPS_via_TTworld(Gp)
-    if TCI4Keldysh.VERBOSE()
-        TCI4Keldysh.mps_idx_info(Gp_mps)
-    end
-
-    return Gp_mps
-end
+#=
+Compute PartialCorrelators by convolution with frequency kernels, all in interleaved quantics representation.
+Performance: 🤯😢
+=#
 
 """
 Compute MPS of PartialCorrelator parametrized in external frequencies, i.e., after frequency rotation.
 TODO: Write generic test
 """
 function TCI_precompute_reg_values_rotated(
-    Gp::PartialCorrelator_reg{D}; tag="ω", tolerance=1e-8, cutoff=1e-20
+    Gp::PartialCorrelator_reg{D}; tag="ω", tolerance=1e-8, cutoff=1e-20, include_ano=true
 )::MPS where {D}
     
     Gp_mps = TD_to_MPS_via_TTworld(Gp.tucker; tolerance=tolerance, cutoff=cutoff)
 
-    # TODO: add anomalous term
-    bos_idx = findfirst(i -> !Gp.isFermi[i], 1:D)
-    ano_term_required = !isnothing(bos_idx) && !isnothing(findfirst(om -> abs(om)<=1.e-10, Gp.tucker.ωs_center[bos_idx]))
-    if ano_term_required
-        # zero_eps_idx = findfirst(om -> abs(om)<=1.e-10, Gp.tucker.ωs_center[bos_idx])
-        # @show Gp.tucker.ωs_center[bos_idx][zero_eps_idx-10 : zero_eps_idx+10]
-        @warn "Anomalous term missing in $(D+1)pt partial correlator"
+    println("  Regular corr. rank before rotation: $(rank(Gp_mps))")
+
+    # anomalous term if required
+    if include_ano
+        if ano_term_required(Gp)
+            @info "Adding anomalous term"
+            Gano_mps = anomalous_TD_to_MPS_full(Gp; tolerance=tolerance, cutoff=cutoff)
+            println("  Anomalous corr. rank before rotation: $(rank(Gp_mps))")
+            R = div(length(Gp_mps), D)
+            for i in 1:D
+                _adoptinds_by_tags!(Gano_mps, Gp_mps, "ω$i", "ω$i", R)
+            end
+            Gp_mps = add(Gp_mps, Gano_mps; alg="densitymatrix", cutoff=cutoff, use_absolute_cutoff=true)
+        end
     end
+
+    println("  Corr. rank before rotation: $(rank(Gp_mps))")
 
     # frequency rotation
     freq_transform_kwargs = Dict(:cutoff=>cutoff, :use_absolute_cutoff=>true)
@@ -39,7 +41,6 @@ function TCI_precompute_reg_values_rotated(
                     freq_transform(Gp_mps; tags=tags, ωconvMat=convert(Matrix{Int}, Gp.ωconvMat), isferm_ωnew=is_ferm_new,
                             ext_gridsizes=collect(length.(Gp.ωs_ext)), freq_transform_kwargs...)
                 elseif D==1
-                    # TODO: deal with minus sign in ωconvMat
                     if only(Gp.ωconvMat) == -1
                         Quantics.reverseaxis(Gp_mps; tag="ω1", cutoff=cutoff, use_absolute_cutoff=true)
                     else
@@ -69,6 +70,7 @@ function TCI_precompute_reg_values_rotated(
         replacetags!(ret[i], tag_old, tag_new)
     end
     ret = truncate!(ret; cutoff=cutoff, use_absolute_cutoff=true)
+    println("  Corr. rank after rotation: $(rank(ret))")
     return ret
 end
 
@@ -143,41 +145,9 @@ function FullCorrelator_add(Gps::Vector{MPS}; addkwargs...)
     return Gfull
 end
 
-function test_FullCorrelator_add()
-    N = 20
-    s1 = siteinds(2, N)
-    Gp1 = random_mps(Float64, s1)
-    s2 = siteinds(2, N)
-    Gp2 = random_mps(Float64, s2)
-    Gpfull = FullCorrelator_add([Gp1, Gp2]; cutoff=1.e-20)
-
-    for _ in 1:20
-        v = rand([1,2], N)
-        fval = eval(Gpfull, v)
-        refval = eval(Gp1, v) + eval(Gp2, v)
-        @assert isapprox(fval, refval; atol=1.e-10)
-    end
-end
-
-function test_FullCorrelator_recompress()
-    N = 20
-    s1 = siteinds(2, N)
-    Gp1 = random_mps(Float64, s1)
-    s2 = siteinds(2, N)
-    Gp2 = random_mps(Float64, s2)
-    Gpfull = FullCorrelator_recompress([Gp1, Gp2]; tolerance=1.e-12)
-
-    for _ in 1:20
-        v = rand([1,2], N)
-        fval = eval(Gpfull, v)
-        refval = eval(Gp1, v) + eval(Gp2, v)
-        @assert isapprox(fval, refval; atol=1.e-9)
-    end
-end
-
 """
-Test TCI-convolution with regular kernels;
-the function in question is `TD_to_MPS_via_TTworld`
+Test and visualize TCI-convolution with regular kernels.
+The function in question is `TD_to_MPS_via_TTworld`
 """
 function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, R=7, perm_idx=1, cutoff=1e-5, tolerance=1e-12)
 
@@ -185,8 +155,7 @@ function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, R=7, perm_idx=
 
     # load data
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
-    # PSFpath = "data/SIAM_u=1.00/PSF_nz=4_conn_zavg_new/"
-    Ops = npt==3 ? ["F1", "F1dag", "Q34"] : ["F1", "F1dag", "F3", "F3dag"]
+    Ops = dummy_operators(npt)
     ωconvMat = dummy_frequency_convention(npt)
     GFs = load_npoint(PSFpath, Ops, npt, R, ωconvMat; nested_ωdisc=false)
 
@@ -251,7 +220,7 @@ function test_TCI_precompute_reg_values_MF_without_ωconv(;npt=3, R=7, perm_idx=
 end
 
 """
-Test frequency rotation with TCI.
+Test and visualize frequency rotation with TCI.
 For full_tci=true, compute 4-pt function on TCI-level as well
 """
 function test_TCI_frequency_rotation_reg_values(;npt=3, full_tci=false, perm_idx::Int=1, cutoff::Float64=1e-20, tolerance::Float64=1e-12, beta::Float64=1.e3)
@@ -494,7 +463,9 @@ function test_TCI_precompute_reg_values_rotated_1D()
 end
 
 function test_TCI_precompute_anomalous_values_patched(;npt=4, perm_idx=1)
-    GFs = load_dummy_correlator(;npt=npt)
+    error("Not yet implemented")
+
+    GFs = dummy_correlator(npt, 7)
 
     Gp = GFs[1].Gps[perm_idx]
 
@@ -514,6 +485,7 @@ function load_npoint(PSFpath::String, ops::Vector{String}, npt::Int, R, ωconvMa
     T = 1.0/beta
     Rpos = R-1
     Nωcont_pos = 2^Rpos
+    # TODO: call grid functions to generate this
     ωbos = π * T * collect(-Nωcont_pos:Nωcont_pos) * 2
     ωfer = π * T *(collect(-Nωcont_pos:Nωcont_pos-1) * 2 .+ 1)
 
@@ -646,13 +618,27 @@ function dummy_frequency_convention(npt::Int)
 end
 
 """
-Load sample matsubara full correlator
+Get 2-pt / 3-pt / 4pt operator combination for testing
 """
-function load_dummy_correlator(;npt=3)
-    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
-    Ops = npt==3 ? ["F1", "F1dag", "Q34"] : ["F1", "F1dag", "F3", "F3dag"]
+function dummy_operators(npt::Int)
+    if npt==2 
+        return ["F1", "F1dag"]
+    elseif npt==3
+        return ["F1", "F1dag", "Q34"]
+    elseif npt==4
+        return ["F1", "F1dag", "F3", "F3dag"]
+    else 
+        error("Invalid: npt=$npt")
+    end
+end
+
+"""
+Load sample Matsubara full correlator.
+"""
+function dummy_correlator(npt::Int, R::Int; beta::Float64=1.e3, Ops::Union{Nothing,Vector{String}}=nothing) :: Vector{FullCorrelator_MF}
+    PSFpath = joinpath(datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    Ops_loc = isnothing(Ops) ?  dummy_operators(npt) : Ops
     ωconvMat = dummy_frequency_convention(npt)
-    R = 7
-    GFs = load_npoint(PSFpath, Ops, npt, R, ωconvMat; nested_ωdisc=false)
+    GFs = load_npoint(PSFpath, Ops_loc, npt, R, ωconvMat; nested_ωdisc=false, beta=beta)
     return GFs
 end

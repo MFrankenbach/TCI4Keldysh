@@ -2,14 +2,11 @@ using TCI4Keldysh
 using JSON
 using ITensors
 using Plots
+using LaTeXStrings
 
 TCI4Keldysh.VERBOSE() = false
 TCI4Keldysh.DEBUG() = false
 TCI4Keldysh.TIME() = false
-
-# for i in 1:1
-#     TCI4Keldysh.test_TCI_precompute_anomalous_values(;npt=4, perm_idx=i, tolerance=1e-1)
-# end
 
 """
 Monitor mean and max error of all permutations for 3/4-point functions before frequency rotation
@@ -91,6 +88,32 @@ function plot_kernel_ranks_beta_2pt(;R=12, imagtime=false, tolerance=1.e-8, do_b
     savefig(rankplot, prefix * "kernelranks_beta_$(npt)pt_$(fermistr)_tol=$(round(Int,log10(tolerance))).png")
 end
 
+function compare_1D_3D_kernel(;R=7, perm_idx=1, beta=10.0, tolerance=1.e-8)
+
+    # get PSF
+    npt = 4
+    perms = [p for p in permutations(collect(1:npt))]
+    perm = perms[perm_idx]
+    path = npt<=3 ? "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/" : joinpath("data/SIAM_u=0.50/PSF_nz=2_conn_zavg/", "4pt")
+    Ops = if npt==2
+            ["F1", "F1dag"][perm]
+        elseif npt==3
+            ["F1", "F1dag", "Q34"][perm]
+        else
+            ["F1", "F1dag", "F3", "F3dag"][perm]
+        end
+    spin = 1
+
+    ωconvMat = TCI4Keldysh.dummy_frequency_convention(npt)
+    ωconvMat_sum = cumsum(ωconvMat[perm[1:(npt-1)],:]; dims=1)
+    psf = TCI4Keldysh.PartialCorrelator_reg(npt-1, 1/beta, R, path, Ops, ωconvMat_sum; flavor_idx=spin, nested_ωdisc=false)
+
+    rf = TCI4Keldysh.compress_frequencykernels_light(R, psf.tucker; tolerance=tolerance)
+    printstyled("1D ranks: $(TCI4Keldysh.rank.(rf))\n")
+    fullkernel = TCI4Keldysh.compress_full_frequencykernel(R, psf.tucker; tolerance=tolerance)
+    printstyled("$(npt-1)D rank: $(TCI4Keldysh.rank(fullkernel))\n")
+end
+
 function plot_kernel_ranks_beta(;npt=2, R=12, imagtime=false, tolerance=1.e-8, fermikernel=true, do_bigR=true)
     # collect data
     tauR = R+7
@@ -136,24 +159,26 @@ function plot_kernel_ranks_beta(;npt=2, R=12, imagtime=false, tolerance=1.e-8, f
     titfont = 16
     gfont = 16
     lfont = 12
+    lwidth = 3
     rankplot = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont,
                 legend=:left,
                 xscale=:log10)
     omlabel = imagtime ? "ω, R=$R" : "ω-kernel, R=$R"
     omlabelbig = imagtime ? "ω, R=$bigR" : "ω-kernel, R=$bigR"
     msize = 6
-    plot!(rankplot, betas, ranks_freq; label=omlabel, marker=:diamond, markersize=msize, color=:blue)
+    plot!(rankplot, betas, ranks_freq; label=omlabel, marker=:diamond, markersize=msize, color=:blue, linewidth=lwidth)
     if imagtime
-        plot!(rankplot, betas, ranks_tau; label="τ, R=$tauR", marker=:circle, markersize=msize, color=:red)
+        plot!(rankplot, betas, ranks_tau; label="τ, R=$tauR", marker=:circle, markersize=msize, color=:red, linewidth=lwidth)
     end
     if do_bigR
-        plot!(rankplot, betas, ranks_freq_bigR; label=omlabelbig, marker=:diamond, markersize=msize, color=:blue, linestyle=:dash)
+        plot!(rankplot, betas, ranks_freq_bigR; label=omlabelbig, marker=:diamond, markersize=msize, markercolor=:blue, linecolor=:lightgreen, linestyle=:dot, linewidth=lwidth)
     end
 
+    singvalcolor = RGBA(0.0,136/256,58/256,1.0)
     # add ranks with singular value shift
-    plot!(rankplot, betas, ranks_singval; label="sing. val. shift, R=$R", color=:black, marker=:diamond, markersize=msize)
+    plot!(rankplot, betas, ranks_singval; label="U(ω,α), R=$R", color=singvalcolor, marker=:diamond, markersize=msize, linewidth=lwidth)
     if do_bigR
-        plot!(rankplot, betas, ranks_singval_bigR; label="sing. val. shift, R=$bigR", color=:black, marker=:diamond, markersize=msize, linestyle=:dash)
+        plot!(rankplot, betas, ranks_singval_bigR; label="U(ω,α), R=$bigR", color=singvalcolor, marker=:diamond, markersize=msize, linestyle=:dot, linewidth=lwidth)
     end
 
     kernelname = fermikernel ? "fermionic" : "bosonic"
@@ -295,8 +320,79 @@ function readJSON(filename::String)
 end
 # utilities END ========== 
 
-TCI4Keldysh.TIME() = true
-# yields max. error ≤1.e-5
-# TCI4Keldysh.test_TCI_precompute_reg_values_MF_without_ωconv(;npt=4, R=7, perm_idx=1, cutoff=1.e-8, tolerance=1.e-8)
-TCI4Keldysh.test_TCI_frequency_rotation_reg_values(;npt=4, full_tci=true, perm_idx=3, cutoff=1e-3, tolerance=1e-3)
-# TCI4Keldysh.test_imagtime_PartialCorrelator(;npt=4, R=12, perm_idx=1, cutoff=1.e-8, tolerance=1.e-8)
+include("../test/utils4tests.jl")
+
+function test_full_correlator(npt::Int; include_ano=true)
+
+    ITensors.disable_warn_order()
+
+    R = npt==2 ? 13 : 6
+    beta = 10.0
+    tolerance = 1.e-8
+    cutoff = npt < 4 ? 1.e-25 : 1.e-20
+    # GF = TCI4Keldysh.dummy_correlator(npt, R; beta=beta)[1]
+    GF = multipeak_correlator_MF(npt, R; beta=beta, peakdens=1.0, nωdisc=4)
+
+    # Gfull =  TCI4Keldysh.TCI_precompute_reg_values_rotated(GF.Gps[1];
+    #             tolerance=tolerance, cutoff=cutoff, include_ano=include_ano)
+    # printstyled(" ---- Rank p=1: $(TCI4Keldysh.rank(Gfull))\n"; color=:green)
+    Gps_out = Vector{MPS}(undef, factorial(npt))
+    for perm_idx in 1:factorial(npt)
+
+        Gp_mps = TCI4Keldysh.TCI_precompute_reg_values_rotated(GF.Gps[perm_idx];
+                                tolerance=tolerance, cutoff=cutoff, include_ano=include_ano)
+
+        # for i in 1:npt-1
+        #     TCI4Keldysh._adoptinds_by_tags!(Gp_mps, Gfull, "ω$i", "ω$i", R)
+        # end
+        # Gfull = add(Gfull, Gp_mps; cutoff=1.e-35, use_absolute_cutoff=false)
+
+        Gps_out[perm_idx] = Gp_mps
+        printstyled(" ---- Rank p=$perm_idx: $(TCI4Keldysh.rank(Gp_mps))\n"; color=:green)
+        
+        # # plot diff to exact
+        # Gpref = TCI4Keldysh.precompute_all_values_MF(GF.Gps[perm_idx])
+        # Gpref_noano = TCI4Keldysh.precompute_all_values_MF_noano(GF.Gps[perm_idx])
+        # diffslice = ntuple(i -> (i==1 ? (2:2^R) : 1:2^R), npt-1)
+        # Gpval = TCI4Keldysh.MPS_to_fatTensor(Gp_mps; tags=ntuple(i -> "ω$i", npt-1))
+
+        # scfun = x -> log(abs(x))
+        # heatmap(scfun.(Gpref[diffslice...]))
+        # savefig("Gpref$perm_idx.png")
+        # heatmap(scfun.(Gpval[diffslice...]))
+        # savefig("Gpval$perm_idx.png")
+        # diff = Gpval[diffslice...] - Gpref[diffslice...]
+        # heatmap(scfun.(diff))
+        # savefig("diff$perm_idx.png")
+        # anoref = Gpref - Gpref_noano
+        # heatmap(scfun.(anoref[diffslice...]))
+        # savefig("ano$perm_idx.png")
+
+        GC.gc()
+    end
+
+    Gfull = TCI4Keldysh.FullCorrelator_add(Gps_out; cutoff=1.e-20, use_absolute_cutoff=false)
+    @show TCI4Keldysh.rank(Gfull)
+
+    Gfull_ref = if include_ano
+                    TCI4Keldysh.precompute_all_values(GF)
+                else
+                    TCI4Keldysh.precompute_all_values_MF_noano(GF)
+                end
+    Gfull_fat = TCI4Keldysh.MPS_to_fatTensor(Gfull; tags=ntuple(i -> "ω$i", npt-1))
+
+    # reference
+    diffslice = ntuple(i -> (i==1 ? (2:2^R) : 1:2^R), npt-1)
+    diff = abs.(Gfull_fat[diffslice...] - Gfull_ref[diffslice...]) / maximum(abs.(Gfull_ref))
+    maxdiff = maximum(diff)
+    test_tol = npt < 4 ? 1.e3 * tolerance : 1.e2*tolerance
+    printstyled(" ---- Max error $maxdiff for tol=$tolerance, cut=$cutoff, npt=$npt\n"; color=:blue)
+    return maxdiff < test_tol
+end
+
+"""
+Return slice where D+1 correlator computed via TCI is expected to match the conventionally computed one.
+"""
+function diffslice(D::Int, N::Int)
+    return ntuple(i -> (i==1 ? (2:N) : (1:N)), D)
+end

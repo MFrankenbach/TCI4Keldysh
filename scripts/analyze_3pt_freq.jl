@@ -3,6 +3,7 @@ using JSON
 using ITensors
 using Plots
 using LaTeXStrings
+using Measures
 
 #=
 Analyze bond dimension of 3pt functions in frequency domain, computed from 
@@ -87,8 +88,8 @@ function test_full_correlator()
 
     ITensors.disable_warn_order()
 
-    R = 9
-    beta = 1000.0
+    R = 7
+    beta = 2000.0
     tolerance = 1e-6
     spin = 1
     
@@ -111,7 +112,7 @@ function test_full_correlator()
     @show TCI4Keldysh.rank(Gfull)
 
     Gfull_fat = TCI4Keldysh.MPS_to_fatTensor(Gfull; tags=("ω1", "ω2"))
-    heatmap(abs.(Gfull_fat))
+    heatmap(log10.(abs.(Gfull_fat)); clim=(-3.0,1.4))
     savefig("Gfull.png")
 
     # reference
@@ -119,7 +120,7 @@ function test_full_correlator()
     heatmap(log10.(abs.(Gfull_ref)))
     savefig("Gfull_ref.png")
     diffslice = 2:2^R, 1:2^R # leave out first bosonic frequency
-    diff = abs.(Gfull_fat[diffslice...] - Gfull_ref[diffslice...])
+    diff = abs.(Gfull_fat[diffslice...] - Gfull_ref[diffslice...]) / maximum(abs.(Gfull_ref))
     heatmap(log10.(diff))
     @show maximum(diff)
     @show norm(diff)./prod(size(diff))
@@ -140,17 +141,41 @@ function plot_sample_3pt()
     GFs = TCI4Keldysh.load_npoint(PSFpath, Ops, npt, R, ωconvMat; beta=beta, nested_ωdisc=false)
 
     Gfull_ref = TCI4Keldysh.precompute_all_values(GFs[spin])
-    heatmap(log10.(abs.(Gfull_ref)); clim=(-3, 1.4))
-    savefig("Gfull_sample.png")
+    # full correlator
+    cbar = false
+    p1 = blindschleichenplot()
+    heatmap!(p1, log10.(abs.(Gfull_ref)); clim=(-3, 1.4), colorbar=cbar)
+    plot!(p1; xformatter=:none)
+    plot!(p1; yformatter=:none)
+    xlabel!(p1, L"\omega_2")
+    # ylabel!(p1, L"\omega_1")
+    # title!(p1, L"\Sigma_p G_p(\mathrm{i}\omega_1,\mathrm{i}\omega_2)")
+    savefig(p1, "Gfull_sample2.png")
+
     perm_idx = 2
+    display(GFs[spin].Gps[perm_idx].ωconvMat)
     # not rotated
     Gp_unrot = TCI4Keldysh.precompute_all_values_MF_without_ωconv(GFs[spin].Gps[perm_idx])
-    heatmap(log10.(abs.(Gp_unrot)))
-    savefig("Gp_sample_norot.png")
+    p2 = blindschleichenplot()
+    plot!(p2; xformatter=:none)
+    plot!(p2; yformatter=:none)
+    heatmap!(p2, log10.(abs.(Gp_unrot)); colorbar=cbar)
+    xlabel!(p2, L"\omega_2")
+    ylabel!(p2, L"\omega_1")
+    # title!(p2, L"G_p(\mathrm{i}\omega_1,\mathrm{i}\omega_2 - \mathrm{i}\omega_1)")
+    savefig(p2, "Gp_sample_norot2.png")
+
     # rotated
     Gp_rot = TCI4Keldysh.precompute_all_values_MF(GFs[spin].Gps[perm_idx])
-    heatmap(log10.(abs.(Gp_rot)))
-    savefig("Gp_sample.png")
+    p3 = blindschleichenplot()
+    heatmap!(p3, log10.(abs.(Gp_rot)); colorbar=cbar)
+    plot!(p3; xformatter=:none)
+    plot!(p3; yformatter=:none)
+    xlabel!(p3, L"\omega_2", margin=5mm)
+    # ylabel!(p3, L"\omega_1")
+    # title!(p3, L"G_p(\mathrm{i}\omega_1,\mathrm{i}\omega_2)")
+    savefig(p3, "Gp_sample2.png")
+
 end
 
 """
@@ -398,6 +423,25 @@ function histogram_all_3pt()
     savefig("histogram_all_3pt_R=$(R)_beta=$(beta)_tol=$(round(Int, log10(tolerance))).png")
 end
 
-for beta in [1.0, 1.e3]
-    chi_vs_bondidx(;beta=beta, tolerance=1.e-6, R=9)
+function default_plot()
+    tfont = 12
+    titfont = 16
+    gfont = 16
+    lfont = 12
+    p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
+    return p
 end
+
+function blindschleichenplot()
+    tfont = 18
+    titfont = 30
+    gfont = 30
+    lfont = 18
+    p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
+    return p
+end
+
+
+# for beta in [1.0, 1.e3]
+#     chi_vs_bondidx(;beta=beta, tolerance=1.e-6, R=9)
+# end

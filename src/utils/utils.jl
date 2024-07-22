@@ -661,8 +661,13 @@ function interpolDecomp4TD(Gp::AbstractTuckerDecomp{D}; atol::Float64=1e-0, rtol
 end
 
 """
+    function eval_ano_matsubara_kernel(oms::Vector{Float64}, omprimes::Vector{Float64}, beta::Float64)
+
 Evaluate anomalous part of matsubara kernel
-oms, omprimes should not contain the zero frequencies
+-0.5(β + ∑_{j≠i} 1/(i⋅ωj - ωj')) * ∏_{i≠j} 1/(i⋅ωj - ωj')
+where i is the bosonic frequency index.
+
+oms, omprimes should NOT contain the zero frequencies
 """
 function eval_ano_matsubara_kernel(oms::Vector{Float64}, omprimes::Vector{Float64}, beta::Float64)
     product = 1.0
@@ -696,6 +701,14 @@ end
 
 function absmax(v)
     return maximum(abs.(v))
+end
+
+function datadir()
+    return joinpath(dirname(Base.current_project()), "data")
+end
+
+function iterate_binvec(R::Int)
+    return Iterators.product(fill([1,2], R)...)
 end
 
 #=

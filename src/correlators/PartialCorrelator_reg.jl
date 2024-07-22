@@ -652,6 +652,14 @@ function get_bosonic_idx(Gp::PartialCorrelator_reg) :: Union{Int, Nothing}
 end
 
 """
+Determine whether a partial correlator requires an anomalous term.
+"""
+function ano_term_required(Gp::PartialCorrelator_reg) :: Bool
+    bos_idx = get_bosonic_idx(Gp)
+    return !isnothing(bos_idx) && !isnothing(findfirst(om -> abs(om)<=1.e-14, Gp.tucker.ωs_center[bos_idx]))
+end
+
+"""
 Get idx of vanishing frequency in PSF grid
 """
 function get_bosonic_freq_idx_Adisc(Gp::PartialCorrelator_reg) :: Union{Int, Nothing}

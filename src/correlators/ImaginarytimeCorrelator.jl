@@ -616,7 +616,7 @@ function test_1peak_imagtime_PartialCorrelator(R_tau::Int, beta::Float64)
     return (maxdiff, std)
 end
 
-function test_imagtime_PartialCorrelator(;npt=2, tolerance=1.e-12, perm_idx=1, beta=2000.0, R=18, cutoff=1.e-20)
+function test_imagtime_PartialCorrelator(;npt=2, tolerance=1.e-12, perm_idx=1, beta=1000.0, R=18, cutoff=1.e-20)
 
     ITensors.disable_warn_order()
 
@@ -635,11 +635,15 @@ function test_imagtime_PartialCorrelator(;npt=2, tolerance=1.e-12, perm_idx=1, b
     if npt==2
 
         diffplot = plot()
-        maxerrplot = plot()
-        Rs = 12:4:32
-        Rs = [12]
-        # betas = [1.e2, 1.e3, 1.e4]
-        betas = [1.e3]
+        tfont = 12
+        titfont = 16
+        gfont = 16
+        lfont = 12
+        maxerrplot = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
+        Rs = 12:3:42
+        # Rs = [12]
+        betas = [1.e2, 1.e3, 1.e4]
+        # betas = [1.e3]
         for beta_loc in betas
             max_errors = Float64[]
             for R in Rs
@@ -720,15 +724,17 @@ function test_imagtime_PartialCorrelator(;npt=2, tolerance=1.e-12, perm_idx=1, b
                 @show maximum(diff)
                 @show abs(data_unrotated[argmax(diff)]) 
                 @show argmax(diff)
-                push!(max_errors, maximum(diff) / abs(data_unrotated[argmax(diff)]))
                 # push!(max_errors, maximum(diff) / abs(data_unrotated[argmax(diff)]))
+                # push!(max_errors, maximum(diff) / abs(data_unrotated[argmax(diff)]))
+                push!(max_errors, maximum(abs.(diff ./ data_unrotated)))
             end
             plot!(maxerrplot, Rs, max_errors; label="β=$beta_loc", marker=:diamond, yscale=:log10)
         end
         xlabel!(maxerrplot, "Rτ")
+        yticks!(maxerrplot, 10.0 .^ (round(Int,log10(tolerance))-1:-2))
         ylabel!(maxerrplot, "Max. rel. error")
-        title!(maxerrplot, "2pt G(ω) via imaginary time TCI")
-        savefig(maxerrplot, "maxdiff_vs_R.png")
+        # title!(maxerrplot, "2pt G(ω) via imaginary time TCI")
+        savefig(maxerrplot, "maxdiff_vs_R_beta=$(beta)_tol=$(round(Int,log10(tolerance))).png")
 
     elseif npt==3
         taushift = 0.5

@@ -385,44 +385,6 @@ function eval_lr(mps::MPS, idx::Vector{Int}, fatbond::Int)
     return scalar(res_l*res_r)
 end
 
-function test_eval_mps()
-    N = 20
-    ITensors.disable_warn_order()
-    s = siteinds(2, N)
-    ld = worstcase_bonddim(dim.(s))
-    mps = random_mps(Float64, s; linkdims=ld)
-
-    fat_mps = ITensor(one(eltype(mps[1])))
-    for m in mps
-        fat_mps *= m
-    end
-
-    v = rand([1,2], N)
-    e1 = eval(mps, v)
-    e2 = eval_lr(mps, v, argmax(ld))
-    ref = fat_mps[v...]
-
-    @assert isapprox(e1, ref; atol=1.e-12)
-    @assert isapprox(e2, ref; atol=1.e-12)
-
-    mev = MPSEvaluator(mps)
-    me = mev(v)
-    @assert isapprox(me, ref; atol=1.e-12)
-
-    Neval = 1000
-    t1s = fill(0.0, Neval)
-    t2s = fill(0.0, Neval)
-    for i in 1:Neval
-        v = rand([1,2],N)
-        t1 = @elapsed mev(v)
-        t2 = @elapsed eval(mps,v)
-        t1s[i]=t1
-        t2s[i]=t2
-    end
-    @show sum(t1s)/Neval
-    @show sum(t2s)/Neval
-end
-
 """
 freq_shift(isferm_ωnew::Vector{Int}, isferm_ωold::Vector{Int}, ωconvMat::Matrix{Int})
 
@@ -866,6 +828,71 @@ function compress_frequencykernels(R::Int, psf::AbstractTuckerDecomp{D}; tags=("
 end
 
 """
+Compress 3-dimensional frequency kernel
+"""
+function compress_full_frequencykernel(R::Int, psf::AbstractTuckerDecomp{3}; tags=("ω", "eps"), tolerance=1.e-8) :: MPS
+    om_upper_ids = [min(2^grid_R(size(leg, 1)), size(leg,1)) for leg in psf.legs]
+    eps_sizes = [size(psf.legs[i], 2) for i in 1:3]
+
+    function oneD_kernelfun(a::Int, b::Int, k_id::Int)
+        if (a <= om_upper_ids[k_id]) && (b <= eps_sizes[k_id]) 
+            return  psf.legs[k_id][a,b]
+        else
+            return zero(ComplexF64)
+        end
+    end
+
+    function kernelfun(om1::Int, eps1::Int, om2::Int, eps2::Int, om3::Int, eps3::Int)
+        return oneD_kernelfun(om1, eps1, 1) * oneD_kernelfun(om2, eps2, 2) * oneD_kernelfun(om3, eps3, 3) 
+    end
+
+    qtt, _, _ = quanticscrossinterpolate(ComplexF64, kernelfun, (ntuple(i -> 2^R, 2*3)); tolerance=tolerance)
+
+    mps_kernel = TCI4Keldysh.QTCItoMPS(qtt, ntuple(i -> (rem(i,2)==1 ? "$(tags[1])$(div(i+1,2))" : "$(tags[2])$(div(i,2))"), 2*3))
+    return mps_kernel
+end
+
+function test_compress_full_frequencykernel()
+    # get PSF
+    R = 7
+    npt = 4
+    perm_idx = 1
+    beta = 10.0
+    perms = [p for p in permutations(collect(1:npt))]
+    perm = perms[perm_idx]
+    path = npt<=3 ? "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/" : joinpath("data/SIAM_u=0.50/PSF_nz=2_conn_zavg/", "4pt")
+    Ops = if npt==2
+            ["F1", "F1dag"][perm]
+        elseif npt==3
+            ["F1", "F1dag", "Q34"][perm]
+        else
+            ["F1", "F1dag", "F3", "F3dag"][perm]
+        end
+    spin = 1
+    ωconvMat = TCI4Keldysh.dummy_frequency_convention(npt)
+    ωconvMat_sum = cumsum(ωconvMat[perm[1:(npt-1)],:]; dims=1)
+    Gp = TCI4Keldysh.PartialCorrelator_reg(npt-1, 1/beta, R, path, Ops, ωconvMat_sum; flavor_idx=spin, nested_ωdisc=false)
+
+    tolerance = 1.e-3
+    printstyled("Compress 1D...\n"; color=:blue)
+    onedkernels = compress_frequencykernels_light(R, Gp.tucker; tolerance=tolerance)
+    printstyled("Compress 3D...\n"; color=:blue)
+    fullkernel = compress_full_frequencykernel(R, Gp.tucker; tolerance=tolerance)
+
+    epsvec = fill(1,R)
+    for i in 1:10
+        samplevecs = [rand([1,2], R)  for _ in 1:3]
+        # ugly...
+        refval = prod([eval(onedkernels[i], QuanticsGrids.interleave_dimensions(samplevecs[i], epsvec)) for i in eachindex(samplevecs)])
+        fullval = eval(fullkernel, QuanticsGrids.interleave_dimensions(samplevecs[1], epsvec, samplevecs[2], epsvec, samplevecs[3], epsvec))
+
+        @show refval
+        @show fullval
+        @show abs(refval - fullval)
+    end
+end
+
+"""
 Compress frequency kernels (legs) of partial correlator to MPS of given length.
 Excessive bits are zeropadded via a function.
 Compression is done via TCI.
@@ -893,9 +920,13 @@ function compress_frequencykernels_light(R::Int, psf::AbstractTuckerDecomp{D}; t
     return mps_Kernels
 end
 
-function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{1}; tolerance::Float64=1e-12, cutoff::Float64=1e-12, tcikernels=true)
+"""
+Creates local copy of tucker decomposition, thus the input remains untouched.
+"""
+function TD_to_MPS_via_TTworld(broadenedPsf_::TCI4Keldysh.AbstractTuckerDecomp{1}; tolerance::Float64=1e-12, cutoff::Float64=1e-12, tcikernels=true)
     D = 1
 
+    broadenedPsf = deepcopy(broadenedPsf_)
     R = grid_R(broadenedPsf)
     @show size(broadenedPsf.center)
     @show size.(broadenedPsf.legs)
@@ -929,7 +960,6 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{1}
     mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
 
     mps_Kernels = if tcikernels
-                    printstyled(" --- Compressing kernels with TCI\n"; color=:blue)
                     compress_frequencykernels_light(R, broadenedPsf; tolerance=tolerance)
                 else
                     legs = [zeropad_array(leg[1:2^grid_R(size(leg, 1)), :], R) for leg in broadenedPsf.legs]
@@ -950,13 +980,15 @@ end
 
 """
 cutoff: cutoff for densitymatrix algorithm in MPO-MPO contraction; small cutoff affordable in 2D
+Creates local copy of tucker decomposition, thus the input remains untouched.
 """
-function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-12, cutoff::Float64=1e-12, tcikernels=true)
+function TD_to_MPS_via_TTworld(broadenedPsf_::TCI4Keldysh.AbstractTuckerDecomp{2}; tolerance::Float64=1e-12, cutoff::Float64=1e-12, tcikernels=true)
     D = 2
 
     # fit algorithm works for D=2 (in contrast to D=3...)
     # kwargs = Dict(:alg=>"fit")
 
+    broadenedPsf = deepcopy(broadenedPsf_)
     kwargs = Dict(:alg=>"densitymatrix", :cutoff=>cutoff, :use_absolute_cutoff=>true)
 
     R = grid_R(broadenedPsf)
@@ -992,7 +1024,6 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{2}
     mps_Adisc_padded = TCI4Keldysh.QTCItoMPS(qtt_Adisc_padded, ntuple(i->"eps$i", D))
 
     mps_Kernels = if tcikernels
-                    printstyled(" --- Compressing kernels with TCI\n"; color=:blue)
                     compress_frequencykernels_light(R, broadenedPsf; tolerance=tolerance)
                 else
                     legs = [zeropad_array(leg[1:2^grid_R(size(leg, 1)), :], R) for leg in broadenedPsf.legs]
@@ -1085,8 +1116,9 @@ end
 
 """
 cutoff: cutoff for densitymatrix algorithm in MPO-MPO contraction
+Creates local copy of tucker decomposition, thus the input remains untouched.
 """
-function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}; tolerance::Float64=1e-12, cutoff::Float64=1e-5, tcikernels::Bool=true)
+function TD_to_MPS_via_TTworld(broadenedPsf_::TCI4Keldysh.AbstractTuckerDecomp{3}; tolerance::Float64=1e-12, cutoff::Float64=1e-5, tcikernels::Bool=true)
 
     D = 3
     # scaling for maxbondim(MPS)=m, maxbonddim(MPO)=k: m^3k + m^2k^2
@@ -1097,6 +1129,7 @@ function TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerDecomp{3}
     kwargs = Dict(:alg=>"densitymatrix", :cutoff=>cutoff, :use_absolute_cutoff=>true)
 
 
+    broadenedPsf = deepcopy(broadenedPsf_)
     @show size.(broadenedPsf.legs,1)
     R = grid_R(broadenedPsf)
 
@@ -1503,76 +1536,181 @@ function noewmul_TD_to_MPS_via_TTworld(broadenedPsf::TCI4Keldysh.AbstractTuckerD
     return res
 end
 
-function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{2})
+"""
+    function renew_link_tags!(mps::MPS)
 
-    @warn "ANOMALOUS TERM @TCI/3pt-function NOT TESTED; 3pt PSF with 0 bosonic frequency was not available"
+Replace tags in common indices of adjacent tensors i, i+1 by "Link, l=i".
+Adjacent ITensors should have exactly one Index in common.
+"""
+function renew_link_tags!(mps::MPS)
+    return renew_link_tags!(mps.data)
+end
 
-    @assert sum(map(isf -> isf ? 0 : 1, Gp.isFermi)) == 1 "Gp must have exactly one bosonic frequency to compute anomalous term"
-
-    D = 2
-
-    bos_idx = get_bosonic_idx(Gp)
-    @assert !isnothing(bos_idx)
-
-    # how many bits are required due to frequency grid?
-    # TODO: Exclude bosonic index here?
-    R = maximum(grid_R.([size(leg, 1) for leg in Gp.tucker.legs]))
-
-    Adisc_ano = dropdims(Gp.Adisc_anoβ; dims=(bos_idx,)) # D-1 dimensional
-
-    # compress Adisc_anoβ
-    qtt_Adisc_ano, _, _ = quanticscrossinterpolate(
-        zeropad_array(Adisc_ano, R); tolerance=tolerance
-        )  
-    @show rank(qtt_Adisc_ano)
-    tags_Adisc = tuple(["eps$i" for i in 1:D if i!=bos_idx]...)
-    mps_Adisc_ano = TCI4Keldysh.QTCItoMPS(qtt_Adisc_ano, tags_Adisc)
-    mps_idx_info(mps_Adisc_ano)
-
-    # get kernel
-    @TIME kernel_mps = compress_anomalous_kernel(Gp, R; tolerance=tolerance) "Compression of anomalous kernel"
-    mps_idx_info(kernel_mps)
-
-    # contract
-    _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[1], tags_Adisc[1], R)
-    _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[2], tags_Adisc[2], R)
-
-    # kernel: ω1, eps1, ω2, eps2...
-    sites_row = siteinds(kernel_mps)[1:2:end]
-    sites_shared = siteinds(kernel_mps)[2:2:end]
-
-    # kernel to MPO
-    kernel_mpo = Quantics.asMPO(kernel_mps)
-    for (s_row, s_shared) in zip(sites_row, sites_shared)
-        kernel_mpo = Quantics.combinesites(kernel_mpo, s_row, s_shared)
+"""
+    function renew_link_tags!(mpsdata::Vector{ITensor})
+"""
+function renew_link_tags!(mpsdata::Vector{ITensor})
+    for i in 1:length(mpsdata)-1    
+        lidx = only(commoninds(mpsdata[i], mpsdata[i+1]))
+        newtag = "Link, l=$i"
+        newidx = settags(lidx, newtag)
+        oldidxl = inds(mpsdata[i])
+        oldidxr = inds(mpsdata[i+1])
+        newidxl = replace(oldidxl, lidx=>newidx)
+        newidxr = replace(oldidxr, lidx=>newidx)
+        replaceinds!(mpsdata[i], oldidxl, newidxl)
+        replaceinds!(mpsdata[i+1], oldidxr, newidxr)
     end
+end
 
-    Gp_ano = contract(mps_Adisc_ano, kernel_mpo; cutoff=tolerance*1e-2, use_absolute_cutoff=true)
+"""
+    function insert_tensor(mpsdata::Vector{ITensor}, t::ITensor, iafter::Int)
 
-    mps_idx_info(Gp_ano)
+Insert tensor into vector of tensor trains, adapting the link indices.
+* iafter: Insert after this index. Insert at the start if iafter==0
+* t: should have site index in the middle.
+"""
+function insert_tensor!(mpsdata::Vector{ITensor}, t::ITensor, iafter::Int)
+    # adapt indices
+    if iafter==0
+        tinds = inds(t)
+        @assert length(tinds)==2
+        lidx = tinds[2]
+        ldim = dim(lidx)
+        # add leg to first tensor
+        addleg = ITensor(ones(eltype(t), ldim), lidx)
+        mpsdata[1] *= addleg
+    elseif iafter==length(mpsdata)
+        tinds = inds(t)
+        @assert length(inds(t))==2
+        lidx = tinds[1]
+        ldim = dim(lidx)
+        # add leg to last tensor
+        addleg = ITensor(ones(eltype(t), ldim), lidx)
+        mpsdata[end] *= addleg
+    else
+        tleft = mpsdata[iafter]
+        tright = mpsdata[iafter+1]
+        old_link = only(commoninds(tleft, tright))
+        tinds = inds(t)
+        @assert length(tinds)==3
+        llink = tinds[1]
+        rlink = tinds[3]
+        @assert dim(old_link)==dim(llink) "Dimension mismatch: $(dim(old_link)) vs $(dim(llink))"
+        @assert dim(old_link)==dim(rlink) "Dimension mismatch: $(dim(old_link)) vs $(dim(rlink))"
+        replaceind!(tleft, old_link, llink)
+        replaceind!(tright, old_link, rlink)
+    end
+    # insert
+    insert!(mpsdata, iafter+1, t)
+    renew_link_tags!(mpsdata)
+end
 
-    return Gp_ano
+"""
+Construct 2-leg tensor that contains only ones for a given site index value and zero else.
+    * left=true/false gives
+        x-  OR  -x
+        |        |
+"""
+function delta_tensor_end(::Type{T}, d::Int, sitedim::Int, linkdim::Int, left::Bool; sitetag::String="Site")::ITensor where {T}
+    revfun = left ? identity : reverse
+    arr = zeros(T, revfun((sitedim, linkdim)))
+    arr[revfun((d, Colon()))...] = ones(linkdim)
+    sidx = Index(sitedim, sitetag)
+    linktag = left ? "Link, left" : "Link, right"
+    lidx = Index(linkdim, linktag)
+    return ITensor(arr, revfun([sidx, lidx]))
+end
+
+"""
+    delta_tensor_end with linkdim=1
+"""
+function delta_tensor_end(::Type{T}, d::Int, sitedim::Int, left::Bool; sitetag::String="Site")::ITensor where {T}
+    return delta_tensor_end(T, d, sitedim, 1, left; sitetag=sitetag)
+end
+
+"""
+Construct 3-leg tensor that is unity for a given site index value and zero else.
+"""
+function delta_tensor(::Type{T}, d::Int, sitedim::Int, linkdim::Int; sitetag::String="Site")::ITensor where {T}
+    arr = zeros(T, (linkdim, sitedim, linkdim))
+    arr[:,d,:] = diagm(ones(T, linkdim))
+    sidx = Index(sitedim, sitetag)
+    llidx = Index(linkdim, "Link, left")
+    rlidx = Index(linkdim, "Link, right")
+    return ITensor(arr, [llidx, sidx, rlidx])
 end
 
 
-function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance=1e-5)::MPS
-    @assert !all(Gp.isFermi) "Gp must have bosonic frequency to compute anomalous term"
+"""
+    function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{D}; tolerance=1e-6, cutoff=1.e-20)::MPS where {D}
 
-    D = 3
+Compute anomalous contribution to correlator for 3/4-point.
+Return MPS that can be added to regular part.
+"""
+function anomalous_TD_to_MPS_full(Gp::TCI4Keldysh.PartialCorrelator_reg{D}; tolerance, cutoff)::MPS where {D}
+    # has (D-1)*R legs
+    bos_idx = get_bosonic_idx(Gp)
+    zero_idx = findfirst(x -> abs(x)<=1.e-15, Gp.tucker.ωs_legs[bos_idx])
+    delta_tag = "ω$bos_idx"
+
+    if D==1
+        # only one anomalous value
+        ano_val = only(Gp.Adisc_anoβ)
+        R = maximum(grid_R.([size(leg, 1) for leg in Gp.tucker.legs]))
+        localdims = fill(2, R)
+        sites = [Index(localdims[i], "Qubit,$delta_tag=$i") for i in eachindex(localdims)]
+        state = QuanticsGrids.index_to_quantics(zero_idx; numdigits=R, base=2)
+        return MPS(ComplexF64, sites, state) * ano_val
+    else
+        Gano_mps = anomalous_TD_to_MPS(Gp; tolerance=tolerance, cutoff=cutoff)
+        R = div(length(Gano_mps), (D-1))
+        zero_state = QuanticsGrids.index_to_quantics(zero_idx; numdigits=R, base=2)
+        Gano_data = Gano_mps.data
+        # insert R tensors
+        for i in 1:R
+            if i==1 && bos_idx==1
+                printstyled("\n ---- Before insertion $i\n"; color=:blue)
+                for g in Gano_data
+                    @show inds(g)
+                end
+                printstyled(" ----------\n"; color=:blue)
+                # left end
+                t = delta_tensor_end(ComplexF64, zero_state[i], 2, true; sitetag="$delta_tag=$i")
+                iafter = 0
+                insert_tensor!(Gano_data, t, iafter)
+            elseif i==R && bos_idx==D
+                # right end
+                t = delta_tensor_end(ComplexF64, zero_state[i], 2, false; sitetag="$delta_tag=$i")
+                iafter = R*(D-1) + i-1
+                insert_tensor!(Gano_data, t, iafter)
+            else
+                # d; i-1 tensors have already been inserted
+                iafter = (i-1)*(D-1) + bos_idx-1 + i-1
+                ltensor = Gano_data[iafter]
+                rtensor = Gano_data[iafter+1]
+                linkdim = dim(only(commoninds(ltensor, rtensor)))
+                t = delta_tensor(ComplexF64, zero_state[i], 2, linkdim; sitetag="$delta_tag=$i")
+                insert_tensor!(Gano_data, t, iafter)
+            end
+        end
+        return MPS(Gano_data)
+    end
+end
+
+"""
+    function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{D}; tolerance=1e-6, cutoff=1.e-20)::MPS where {D}
+
+Compute anomalous contribution to correlator for 3/4-point.
+Return MPS with (D-1)*R legs, i.e., the legs for the bosonic direction have to be added afterwards.
+2-point is separate because there the anomalous term consists of a single nonzero value.
+"""
+function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{D}; tolerance=1e-6, cutoff=1.e-20)::MPS where {D}
+    @assert !all(Gp.isFermi) "Gp must have bosonic frequency to compute anomalous term"
+    @assert D>1 "2-point case is best treated separately"
 
     bos_idx = get_bosonic_idx(Gp)
     @assert !isnothing(bos_idx)
-    grid_ids = [i for i in 1:D if i!=bos_idx]
-
-    # # embed anomalous Adisc into zeros
-    # Adisc_ano = zeros(eltype(Gp.Adisc_anoβ), size(Gp.tucker.center))
-    # @assert !isnothing(bos_freq_idx)
-    # slice = [[Colon() for _ in 1:bos_idx-1]..., bos_freq_idx, [Colon() for _ in bos_idx+1:D]...]
-    # slice_anoβ = [[Colon() for _ in 1:bos_idx-1]..., 1, [Colon() for _ in bos_idx+1:D]...]
-    # @show size(Gp.Adisc_anoβ)
-    # @show size(Adisc_ano[slice...])
-    # Adisc_ano[slice...] .= Gp.Adisc_anoβ[slice_anoβ...]
-    # @show size(Adisc_ano)
 
     # how many bits are required due to frequency grid?
     R = maximum(grid_R.([size(leg, 1) for leg in Gp.tucker.legs]))
@@ -1580,20 +1718,20 @@ function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance
     Adisc_ano = dropdims(Gp.Adisc_anoβ; dims=(bos_idx,)) # D-1 dimensional
 
     # compress Adisc_anoβ
+    pivot = findfirst(x -> abs(x)>tolerance, Adisc_ano)
     @TIME qtt_Adisc_ano, _, _ = quanticscrossinterpolate(
-        zeropad_array(Adisc_ano, R); tolerance=tolerance
+        zeropad_array(Adisc_ano, R), [collect(Tuple(pivot))]; tolerance=tolerance
         ) "Compress anomalous part of PSF"
     @show rank(qtt_Adisc_ano)
     tags_Adisc = tuple(["eps$i" for i in 1:D if i!=bos_idx]...)
     mps_Adisc_ano = TCI4Keldysh.QTCItoMPS(qtt_Adisc_ano, tags_Adisc)
-    mps_idx_info(mps_Adisc_ano)
 
     # get kernel
     kernel_mps = compress_anomalous_kernel(Gp, R; tolerance=tolerance)
-    mps_idx_info(kernel_mps)
 
-    _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[1], tags_Adisc[1], R)
-    _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[2], tags_Adisc[2], R)
+    for i in 1:D-1
+        _adoptinds_by_tags!(kernel_mps, mps_Adisc_ano, tags_Adisc[i], tags_Adisc[i], R)
+    end
 
     # kernel: ω1, eps1, ω2, eps2...
     sites_row = siteinds(kernel_mps)[1:2:end]
@@ -1606,9 +1744,7 @@ function anomalous_TD_to_MPS(Gp::TCI4Keldysh.PartialCorrelator_reg{3}; tolerance
     end
 
     # contract
-    Gp_ano = contract(mps_Adisc_ano, kernel_mpo; cutoff=tolerance*1e-3, use_absolute_cutoff=true)
-
-    mps_idx_info(Gp_ano)
+    Gp_ano = contract(mps_Adisc_ano, kernel_mpo; cutoff=cutoff, use_absolute_cutoff=true)
 
     return Gp_ano
 end
@@ -1623,51 +1759,50 @@ function compress_anomalous_kernel(Gp::TCI4Keldysh.PartialCorrelator_reg{D}, R::
     grid_ids = [i for i in 1:D if i!=bos_idx]
     leg_sizes = ntuple(i -> length(Gp.tucker.ωs_legs[grid_ids[i]]), D-1)
     omdisc_sizes = ntuple(i -> length(Gp.tucker.ωs_center[grid_ids[i]]), D-1)
-    @show grid_ids
 
     kernelfun = if D==3
-        function anomalous_kernel(i1::Int, i1p::Int, i2::Int, i2p::Int)
-            om_ids = (i1, i2)
-            omprime_ids = (i1p, i2p)
+                    function anomalous_kernel3(i1::Int, i1p::Int, i2::Int, i2p::Int)
+                        om_ids = (i1, i2)
+                        omprime_ids = (i1p, i2p)
 
-            # index out of bounds
-            if any(om_ids .> leg_sizes) || any(omprime_ids .> omdisc_sizes)
-                return zero(ComplexF64)
-            end
+                        # index out of bounds
+                        if any(om_ids .> leg_sizes) || any(omprime_ids .> omdisc_sizes)
+                            return zero(ComplexF64)
+                        end
 
-            # TODO: This is atrocious...
-            oms = [Gp.tucker.ωs_legs[grid_ids[i]][om_ids[i]] for i in eachindex(grid_ids)]
-            omprimes = [Gp.tucker.ωs_center[grid_ids[i]][omprime_ids[i]] for i in eachindex(grid_ids)]
+                        # TODO: This is atrocious...
+                        oms = [Gp.tucker.ωs_legs[grid_ids[i]][om_ids[i]] for i in eachindex(grid_ids)]
+                        omprimes = [Gp.tucker.ωs_center[grid_ids[i]][omprime_ids[i]] for i in eachindex(grid_ids)]
 
-            return eval_ano_matsubara_kernel(oms, omprimes, 1/Gp.T)
-        end
-    elseif  D==2
-        function anomalous_kernel(i1::Int, i1p::Int)
-            om_ids = (i1,)
-            omprime_ids = (i1p,)
+                        return eval_ano_matsubara_kernel(oms, omprimes, 1/Gp.T)
+                    end
+                elseif  D==2
+                    function anomalous_kernel2(i1::Int, i1p::Int)
+                        om_ids = (i1,)
+                        omprime_ids = (i1p,)
 
-            # if index out of bounds
-            if any(om_ids .> leg_sizes) || any(omprime_ids .> omdisc_sizes)
-                return zero(ComplexF64)
-            end
+                        # if index out of bounds
+                        if any(om_ids .> leg_sizes) || any(omprime_ids .> omdisc_sizes)
+                            return zero(ComplexF64)
+                        end
 
-            oms = [Gp.tucker.ωs_legs[grid_ids[i]][om_ids[i]] for i in eachindex(grid_ids)]
-            omprimes = [Gp.tucker.ωs_center[grid_ids[i]][omprime_ids[i]] for i in eachindex(grid_ids)]
+                        oms = [Gp.tucker.ωs_legs[grid_ids[i]][om_ids[i]] for i in eachindex(grid_ids)]
+                        omprimes = [Gp.tucker.ωs_center[grid_ids[i]][omprime_ids[i]] for i in eachindex(grid_ids)]
 
-            return eval_ano_matsubara_kernel(oms, omprimes, 1/Gp.T)
-        end
-    end    
+                        return eval_ano_matsubara_kernel(oms, omprimes, 1/Gp.T)
+                    end
+                end    
 
     kernel_qtt, _, _ = quanticscrossinterpolate(ComplexF64, kernelfun, ntuple(i -> 2^R, 2*(D-1)); tolerance=tolerance)
 
-
-    println("Before truncation: $(rank(kernel_qtt))")
+    println("  Anomalous kernel before truncation: $(rank(kernel_qtt))")
+    println("  Worst case for $R bits: $(maximum(worstcase_bonddim(fill(2, 2*(D-1)*R))))")
 
     tags = tuple(vcat([["ω$i", "eps$i"] for i in grid_ids]...)...)
     kernel_mps = TCI4Keldysh.QTCItoMPS(kernel_qtt, tags)
 
     truncate!(kernel_mps; cutoff=1e-14, use_absolute_cutoff=true)
-    println("After truncation: $(rank(kernel_mps))")
+    println("  Anomalous kernel after truncation: $(rank(kernel_mps))")
 
     return kernel_mps
 end
