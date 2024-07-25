@@ -1,3 +1,5 @@
+using JSON
+
 function allconcrete(x::T) where T 
     return all(isconcretetype, fieldtypes(T))
 end
@@ -710,6 +712,32 @@ end
 function iterate_binvec(R::Int)
     return Iterators.product(fill([1,2], R)...)
 end
+
+# ==== JSON
+function logJSON(data::Any, filename::String, folder::String="tci_data"; verbose=true)
+    fullname = filename*".json"
+    open(joinpath(folder, fullname), "w") do file
+        JSON.print(file, data)
+    end
+    if verbose
+        printstyled(" ---- File $filename.json written!\n", color=:green)
+    end 
+end
+
+function readJSON(filename::String, folder::String="tci_data")
+    path = joinpath(folder, filename*".json")
+    data = open(path) do file
+        JSON.parse(file)
+    end 
+    return data
+end
+
+function updateJSON(filename::String, key::String, val::Any, folder::String="tci_data")
+    data = readJSON(filename, folder)
+    data[key] = val
+    logJSON(data, filename, folder; verbose=false)
+end
+# ==== JSON END
 
 #=
 """

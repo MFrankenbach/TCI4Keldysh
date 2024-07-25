@@ -67,8 +67,83 @@ function profile_FullCorrelator(npt=3)
     statprofilehtml()
 end
 
-# TCI4Keldysh.test_compress_PartialCorrelator_pointwise3D(;perm_idx=3, R=5)
-# TCI4Keldysh.test_compress_PartialCorrelator_pointwise3D(;perm_idx=3, R=7, nomdisc=30)
-# TCI4Keldysh.test_compress_PartialCorrelator_pointwise3D(;perm_idx=3, R=7, nomdisc=50)
-# TCI4Keldysh.test_compress_PartialCorrelator_pointwise3D(;perm_idx=3, R=9, nomdisc=20)
-# TCI4Keldysh.test_compress_PartialCorrelator_pointwise3D(;perm_idx=3, R=9, nomdisc=50)
+function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
+    return "timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(tolstr(tolerance))_beta=$beta"
+end
+
+function tolstr(tolerance)
+    return "$(round(Int, log10(tolerance)))"
+end
+
+"""
+Store ranks and timings for computation of full 4-point correlators.
+Can vary:
+* beta
+* nωdisc
+* R
+* tolerance
+"""
+function time_FullCorrelator_sweep(mode::String="R")
+    folder = "pwtcidata"
+    beta = 10.0
+    tolerance = 1.e-8
+    npt = 4
+    times = []
+    qttranks = []
+    if mode=="R"
+        nωdisc = 35
+        Rs = 5:10
+        # prepare output
+        d = Dict()
+        d["times"] = times
+        d["ranks"] = qttranks
+        d["Rs"] = Rs
+        d["nomdisc"] = nωdisc
+        d["tolerance"] = tolerance
+        outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta)
+        TCI4Keldysh.logJSON(d, outname, folder)
+
+        for R in Rs
+            # GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=beta, nωdisc=nωdisc)
+            GF = TCI4Keldysh.dummy_correlator(npt, R; beta=beta)[1]
+            nωdisc = div(maximum(size(GF.Gps[1].tucker.center)), 2)
+            TCI4Keldysh.updateJSON(outname, "nomdisc", nωdisc, folder)
+            t = @elapsed begin
+                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=tolerance, unfoldingscheme=:interleaved)
+            end
+            push!(times, t)
+            push!(qttranks, TCI4Keldysh.rank(qtt))
+            TCI4Keldysh.updateJSON(outname, "times", times, folder)
+            TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+            println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+        end
+    elseif mode=="nomdisc"
+        R = 5
+        nωdiscs = 10:50
+        d = Dict()
+        d["times"] = times
+        d["ranks"] = qttranks
+        d["nomdiscs"] = nωdiscs
+        d["R"] = R
+        d["tolerance"] = tolerance
+        outname = GFfilename(mode, first(nωdiscs), last(nωdiscs), tolerance, beta)
+        TCI4Keldysh.logJSON(d, outname, folder)
+
+        for n in nωdiscs
+            GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=beta, nωdisc=n)
+            t = @elapsed begin
+                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=tolerance, unfoldingscheme=:interleaved)
+            end
+            push!(times, t)
+            push!(qttranks, TCI4Keldysh.rank(qtt))
+            TCI4Keldysh.updateJSON(outname, "times", times, folder)
+            TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+            println(" ===== nωdisc=$n: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+        end
+    else
+        error("Invalid mode $mode")
+    end
+end
+
+time_FullCorrelator_sweep("R")
+time_FullCorrelator_sweep("nomdisc")
