@@ -39,9 +39,14 @@ end
 """
 QTCI-compress regular part of PartialCorrelator (including frequency rotation) by pointwise evaluation.
 """
-function compress_reg_PartialCorrelator_pointwise(Gp::PartialCorrelator_reg{D}; qtcikwargs...) where {D}
+function compress_reg_PartialCorrelator_pointwise(Gp::PartialCorrelator_reg{D}, svd_kernel::Bool=false; qtcikwargs...) where {D}
     R = grid_R(Gp)
     pivot = collect(ntuple(i -> 2^(R-1), D))
+    if svd_kernel
+        kwargs_dict = Dict(qtcikwargs)
+        cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+        svd_kernels!(Gp.tucker; cutoff=cutoff)
+    end
     tqtt, _, _ = quanticscrossinterpolate(eltype(Gp.tucker.center), Gp, ntuple(i -> 2^R, D), [pivot]; qtcikwargs...)
 
     return tqtt
@@ -50,10 +55,20 @@ end
 """
 QTCI-compress  PartialCorrelator (including frequency rotation and anomalous part) by pointwise evaluation.
 """
-function compress_PartialCorrelator_pointwise(Gp::PartialCorrelator_reg{D}; qtcikwargs...) where {D}
+function compress_PartialCorrelator_pointwise(
+    Gp::PartialCorrelator_reg{D}, svd_kernel::Bool=false; qtcikwargs...
+    ) where {D}
     R = grid_R(Gp)
     pivot = collect(ntuple(i -> 2^(R-1), D))
     anev = AnomalousEvaluator(Gp)
+
+    if svd_kernel
+        # TODO: Rigorous scheme to choose cutoff
+        kwargs_dict = Dict(qtcikwargs)
+        cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+        svd_kernels!(Gp.tucker; cutoff=cutoff)
+    end
+
     function _qttfun(w::Vararg{Int,D})
         # return Gp(w...) + evaluate_ano_with_ωconversion(Gp, w...)
         return Gp(w...) + anev(w...)
@@ -94,7 +109,7 @@ end
 """
 Obtain qtt for full correlator by pointwise evaluation.
 """
-function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}; qtcikwargs...) where {D}
+function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; qtcikwargs...) where {D}
     # check external frequency grids
     R = grid_R(GF)
 
@@ -125,6 +140,19 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}; qtcikwargs.
     anoid_to_Gpid = zeros(Int, length(GF.Gps))
     for i in eachindex(ano_ids)
         anoid_to_Gpid[ano_ids[i]] = i
+    end
+
+    # svd kernels if requested
+    if svd_kernel
+        kwargs_dict = Dict(qtcikwargs)
+        cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+        println("  SVD-decompose kernels with cut=$cutoff...")
+        for Gp in GF.Gps
+            size_old = size(Gp.tucker.center)
+            svd_kernels!(Gp.tucker; cutoff=cutoff)
+            size_new = size(Gp.tucker.center)
+            println(" Reduced tucker center from $size_old to $size_new")
+        end
     end
 
     function _qtcifun(w::Vararg{Int,D})

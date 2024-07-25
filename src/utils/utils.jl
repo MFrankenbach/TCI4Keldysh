@@ -480,6 +480,20 @@ function symmetry_expand(path::String, Ops::Vector{String})
     return nothing
 end
 
+function svd_kernels!(td::AbstractTuckerDecomp{D}; cutoff::Float64=1.e-15) where {D}
+    tmp_legs = Vector{eltype(td.legs)}(undef, D)
+    for d in 1:D
+        U, S, V = svd(td.legs[d])
+        notcut = S .> cutoff
+        tmp_legs[d] = Diagonal(S[notcut]) * V'[notcut, :]
+        td.legs[d] = U[:,notcut]
+    end
+    center_new = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(tmp_legs, td.center)
+    td.center = center_new
+    td.modified = true
+    return nothing
+end
+
 
 function shift_singular_values_to_center!(td::AbstractTuckerDecomp{D}) where{D}
     tmp_legs = Vector{typeof(td.legs[1])}(undef, 0)
@@ -491,6 +505,7 @@ function shift_singular_values_to_center!(td::AbstractTuckerDecomp{D}) where{D}
     end
     center_new = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(tmp_legs, td.center)
     td.center[:] = center_new[:]
+    td.modified = true
     
     return nothing
 end
@@ -508,6 +523,7 @@ function shift_singular_values_to_center_DIRTY!(broadenedPsf::AbstractTuckerDeco
         modifier_Adisc = 1 ./ modifier_Kernel
         broadenedPsf.center .= broadenedPsf.center .* reshape(modifier_Adisc, (ones(Int, d-1)..., length(modifier_Adisc)))
     end
+    broadenedPsf.modified = true
 
     return nothing
 end

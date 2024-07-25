@@ -124,6 +124,13 @@ function PartialCorrelator_reg(D::Int, T::Float64, R::Int, path::String, Ops::Ve
     return PartialCorrelator_reg(T, formalism, Adisc, ωdisc, ωs_ext, ωconvMat)
 end
 
+"""
+Only if Gp is intact can it be evaluated correctly.
+"""
+function intact(Gp::PartialCorrelator_reg{D}) where {D}
+    return !Gp.tucker.modified
+end
+
 function update_frequency_args!(Gp::PartialCorrelator_reg{D}) where{D}
     Gp.tucker.ωs_legs, Gp.ωconvOff, Gp.isFermi = _trafo_ω_args(Gp.ωs_ext, Gp.ωconvMat)
 
@@ -270,9 +277,9 @@ struct AnomalousEvaluator{T,D,N}
         ωconvMat = Gp.ωconvMat[perm, :]
         ωconvOff = Gp.ωconvOff[perm]
         beta = 1.0/Gp.T
-        # Careful: This does NOT copy
-        Adisc_ano = dropdims(Gp.Adisc_anoβ; dims=(bos_idx,))
-        ωlegs = [Gp.tucker.legs[i] for i in nonbos_idx]
+
+        Adisc_ano = copy(dropdims(Gp.Adisc_anoβ; dims=(bos_idx,)))
+        ωlegs = copy.([Gp.tucker.legs[i] for i in nonbos_idx])
         ωlegs_sq = [Gp.tucker.legs[i] .^ 2 for i in nonbos_idx]
         T = eltype(Adisc_ano)
 
@@ -482,6 +489,7 @@ function precompute_all_values_MF(
 ) ::Array{ComplexF64,D} where{D}
     
     @assert Gp.formalism == "MF"
+    @assert intact(Gp) "TuckerDecomposition has been modified"
 
     data_unrotated = precompute_all_values_MF_without_ωconv(Gp)
     maxval1 = maximum(abs.(data_unrotated))
@@ -511,6 +519,7 @@ function precompute_all_values_MF_noano(
     )::Array{ComplexF64,D} where {D}
     
     @assert Gp.formalism == "MF"
+    @assert intact(Gp) "TuckerDecomposition has been modified"
     data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
 
     # perform frequency rotation:

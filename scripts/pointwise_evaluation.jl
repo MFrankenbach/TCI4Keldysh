@@ -20,9 +20,9 @@ end
 function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
     GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
     t = @elapsed begin
-        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=tolerance, unfoldingscheme=:interleaved) 
+        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, true; tolerance=tolerance, unfoldingscheme=:interleaved) 
     end
-    @show rank(qtt)
+    @show TCI4Keldysh.rank(qtt)
     printstyled("==== Time: $t for tolerance=$tolerance, R=$R\n"; color=:blue)
 end
 
@@ -59,7 +59,7 @@ function profile_FullCorrelator(npt=3)
     Profile.clear()
     R = 5
     tolerance = 1.e-8
-    GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=100.0, nωdisc=30)
+    GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=100.0, nωdisc=10)
     # compile
     @time TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=tolerance, unfoldingscheme=:interleaved)
     # profile
@@ -73,6 +73,50 @@ end
 
 function tolstr(tolerance)
     return "$(round(Int, log10(tolerance)))"
+end
+
+"""
+Compute error introduced in regular partial correlators when the kernels are truncated with via SVD.
+"""
+function svd_error_GF(R::Int, beta::Float64, cutoff::Float64=1.e-15)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)[1]
+
+    # truncate
+    for Gp in GF.Gps[1:1]
+        println(" -- Before")
+        ref = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
+        @show size(Gp.tucker.center)
+        @show size.(Gp.tucker.legs)
+        TCI4Keldysh.svd_kernels!(Gp.tucker; cutoff=cutoff)
+        println(" -- After")
+        @show size(Gp.tucker.center)
+        @show size.(Gp.tucker.legs)
+        cutval = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
+        # compute error
+        rel_err =  maximum(abs.(cutval - ref) / maximum(abs.(ref)))
+        abs_err =  maximum(abs.(cutval - ref))
+        norm_err =  norm(abs.(cutval - ref))
+        printstyled("---- Errors: max(rel.)=$rel_err, max(abs.)=$abs_err, norm=$norm_err\n"; color=:green)
+    end
+
+end
+
+"""
+Check rank of Matsubara kernel
+"""
+function svd_rank_kernel(R::Int, beta::Float64, cutoff::Float64=1.e-15)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
+    kernels = GF[1].Gps[1].tucker.legs
+    rank_reds = fill(0.0, length(kernels))
+    cc = 1
+    for k in kernels
+        @show size(k)
+        _, S, _ = svd(k)
+        Scut = [s for s in S if s>cutoff]
+        rank_reds[cc] = length(Scut)/size(k,2)
+        cc += 1
+    end
+    return rank_reds
 end
 
 """
@@ -92,7 +136,7 @@ function time_FullCorrelator_sweep(mode::String="R")
     qttranks = []
     if mode=="R"
         nωdisc = 35
-        Rs = 5:10
+        Rs = 7:12
         # prepare output
         d = Dict()
         d["times"] = times
@@ -109,7 +153,7 @@ function time_FullCorrelator_sweep(mode::String="R")
             nωdisc = div(maximum(size(GF.Gps[1].tucker.center)), 2)
             TCI4Keldysh.updateJSON(outname, "nomdisc", nωdisc, folder)
             t = @elapsed begin
-                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=tolerance, unfoldingscheme=:interleaved)
+                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, true; tolerance=tolerance, unfoldingscheme=:interleaved)
             end
             push!(times, t)
             push!(qttranks, TCI4Keldysh.rank(qtt))
@@ -144,6 +188,3 @@ function time_FullCorrelator_sweep(mode::String="R")
         error("Invalid mode $mode")
     end
 end
-
-time_FullCorrelator_sweep("R")
-time_FullCorrelator_sweep("nomdisc")

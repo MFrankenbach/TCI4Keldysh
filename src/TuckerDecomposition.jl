@@ -33,6 +33,7 @@ mutable struct TuckerDecomposition{T,D} <: AbstractTuckerDecomp{D}              
     ωs_legs     ::Vector{Vector{Float64}}   ### external frequencies of the legs
     idxs_center ::Vector{Vector{Int}}       ### internal indices corresponding to the arguments of the center
     idxs_legs   ::Vector{Vector{Int}}       ### external indices of the legs
+    modified :: Bool # whether center of legs have been changed
 
     function TuckerDecomposition(
         center  ::Array{T1,D}        ,
@@ -49,7 +50,7 @@ mutable struct TuckerDecomposition{T,D} <: AbstractTuckerDecomp{D}              
     @DEBUG D == length(ωs_legs)     "number of ωs_legs inconsistent with dims(center)=$D."
     @DEBUG D == length(idxs_center) "number of idxs_center inconsistent with dims(center)=$D."
     @DEBUG D == length(idxs_legs)   "number of idxs_legs inconsistent with dims(center)=$D."
-        return new{promote_type(T1,T2),D}(center, legs, size(center), name, ωs_center, ωs_legs, idxs_center, idxs_legs)
+        return new{promote_type(T1,T2),D}(center, legs, size(center), name, ωs_center, ωs_legs, idxs_center, idxs_legs, false)
     end
 
 end

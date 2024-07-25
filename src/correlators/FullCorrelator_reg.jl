@@ -117,12 +117,7 @@ end
 
 
 function precompute_all_values(G :: FullCorrelator_MF{D}) ::Array{ComplexF64,D} where{D}
-    # result = precompute_all_values_MF(G.Gps[1]) .* G.Gp_to_G[1]
-    # @show (size(result), eltype(result))
-    # for i in 2:length(G.Gps)
-    #    result .+= precompute_all_values_MF(G.Gps[i]) .* G.Gp_to_G[i]
-    # end
-    # return result
+    @assert all(intact.(G.Gps)) "TuckerDecomposition has been modified"
     return  sum(gp -> precompute_all_values_MF(gp), G.Gps)
 end
 
@@ -134,6 +129,7 @@ function precompute_all_values_MF_noano(
     G::FullCorrelator_MF{D}
     )::Array{ComplexF64,D} where {D}
 
+    @assert all(intact.(G.Gps)) "TuckerDecomposition has been modified"
     return sum(gp -> precompute_all_values_MF_noano(gp), G.Gps)
 end
 

@@ -57,16 +57,16 @@ __DO_FOURPOINT() = false
         GFs = TCI4Keldysh.dummy_correlator(npt, R; beta=beta)
         Gp = GFs[1].Gps[perm_idx]
 
+        # reference data
+        ref_data = TCI4Keldysh.precompute_all_values_MF_noano(Gp)
+        diffslice = ntuple(i -> (i==1 ? (2:2^R) : 1:2^R), npt-1)
+
         # TCI computation
         printstyled(" ---- Computing $npt-point function...\n"; color=:blue)
         tolerance = npt < 4 ? 1.e-10 : 1.e-8
         cutoff = npt < 4 ? 1.e-25 : 1.e-20
         Gmps = TCI4Keldysh.TCI_precompute_reg_values_rotated(Gp; tolerance=tolerance, cutoff=cutoff, include_ano=false)
         fatGp = TCI4Keldysh.MPS_to_fatTensor(Gmps; tags=ntuple(i -> "ω$i", npt-1))
-
-        # reference data
-        ref_data = TCI4Keldysh.precompute_all_values_MF_noano(Gp)
-        diffslice = ntuple(i -> (i==1 ? (2:2^R) : 1:2^R), npt-1)
 
         diff = (ref_data[diffslice...] - fatGp[diffslice...]) / maximum(abs.(ref_data))
         maxdiff = maximum(abs.(diff))
@@ -84,27 +84,28 @@ __DO_FOURPOINT() = false
         beta = 1.e1
         R = 8
         GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=beta)
-
-        # TCI computation
-        tolerance = 1.e-8
         Gp = GF.Gps[perm_idx]
-        cutoff = 1.e-20
+
         if !TCI4Keldysh.ano_term_required(Gp)
             # nothing to test
             return true
         end
-        Gano_mps = TCI4Keldysh.anomalous_TD_to_MPS(Gp; tolerance=tolerance, cutoff=cutoff)
-
-        bos_idx = findfirst(.!Gp.isFermi)
-        grid_ids = [i for i in 1:npt-1 if i!=bos_idx]
-        Gano_fat = TCI4Keldysh.MPS_to_fatTensor(Gano_mps; tags=ntuple(i -> "ω$(grid_ids[i])", npt-2))
 
         # reference
+        bos_idx = findfirst(.!Gp.isFermi)
         reg_values = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
         full_values = TCI4Keldysh.precompute_all_values_MF_without_ωconv(Gp)
         ωbos = Gp.tucker.ωs_legs[bos_idx] 
         zero_inds = [i for i in eachindex(ωbos) if abs(ωbos[i]) < 1.e-10]
         ano_values = (full_values .- reg_values)[ntuple(i -> i==bos_idx ? only(zero_inds) : Colon(), npt-1)...]
+
+        # TCI computation
+        tolerance = 1.e-8
+        cutoff = 1.e-20
+        Gano_mps = TCI4Keldysh.anomalous_TD_to_MPS(Gp; tolerance=tolerance, cutoff=cutoff)
+
+        grid_ids = [i for i in 1:npt-1 if i!=bos_idx]
+        Gano_fat = TCI4Keldysh.MPS_to_fatTensor(Gano_mps; tags=ntuple(i -> "ω$(grid_ids[i])", npt-2))
 
         diff = (ano_values .- Gano_fat[Base.OneTo.(size(ano_values))...]) ./ maximum(abs.(ano_values))
         maxdiff = maximum(abs.(diff))
@@ -289,6 +290,14 @@ end
         GFs = TCI4Keldysh.dummy_correlator(npt, R; beta=beta)
         spin = 1
 
+        # reference
+        Gfull_ref = if include_ano
+                        TCI4Keldysh.precompute_all_values(GFs[spin])
+                    else
+                        TCI4Keldysh.precompute_all_values_MF_noano(GFs[spin])
+                    end
+
+        # TCI
         Gps_out = Vector{MPS}(undef, factorial(npt))
         for perm_idx in 1:factorial(npt)
             Gp_mps = TCI4Keldysh.TCI_precompute_reg_values_rotated(GFs[spin].Gps[perm_idx];
@@ -302,12 +311,6 @@ end
 
         Gfull_fat = TCI4Keldysh.MPS_to_fatTensor(Gfull; tags=ntuple(i -> "ω$i", npt-1))
 
-        # reference
-        Gfull_ref = if include_ano
-                        TCI4Keldysh.precompute_all_values(GFs[spin])
-                    else
-                        TCI4Keldysh.precompute_all_values_MF_noano(GFs[spin])
-                    end
         diffslice = ntuple(i -> (i==1 ? (2:2^R) : 1:2^R), npt-1)
         diff = abs.(Gfull_fat[diffslice...] - Gfull_ref[diffslice...]) / maximum(abs.(Gfull_ref))
         maxdiff = maximum(diff)
