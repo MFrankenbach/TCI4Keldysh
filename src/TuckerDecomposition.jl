@@ -109,7 +109,6 @@ function _getindex(
 end
 
 
-
 function _getindex(td::TuckerDecomposition{T,D}, idx::Vararg{Int,D})  ::T where {T,D}
     res = td.center
     sz_center = size(res)
@@ -118,8 +117,6 @@ function _getindex(td::TuckerDecomposition{T,D}, idx::Vararg{Int,D})  ::T where 
     end
     return res[1]
 end
-
-
 
 
 function (td::TuckerDecomposition{T,D})(idx::Vararg{Int,D})  ::T where {T,D}
@@ -136,21 +133,112 @@ function (td::TuckerDecomposition{T,D})(idx::Vararg{Int,D})  ::T where {T,D}
     return res[1]
 end
 
+
 function (td::TuckerDecomposition{T,1})(idx::Vararg{Int,1})  ::T where {T}
     #return mapreduce(*,+,view(td.legs[1], idx[1], :),td.center)
     #return dot(view(td.legs[1], idx[1], :),td.center)
-    return LinearAlgebra.BLAS.dot(view(td.legs[1], idx[1], :),td.center)
+    # return LinearAlgebra.BLAS.dot(view(td.legs[1], idx[1], :),td.center)
+    return conj(td.legs[1][idx[1],:]') * td.center
 end
+
 
 function (td::TuckerDecomposition{T,2})(idx::Vararg{Int,2})  ::T where {T}
-    return LinearAlgebra.BLAS.dot(view(td.legs[1], idx[1], :), LinearAlgebra.BLAS.gemv('N',td.center,view(td.legs[2], idx[2], :)))
+    # return LinearAlgebra.BLAS.dot(view(td.legs[1], idx[1], :), LinearAlgebra.BLAS.gemv('N',td.center,view(td.legs[2], idx[2], :)))
     #return dot(view(td.legs[1], idx[1], :),td.center,view(td.legs[2], idx[2], :))
+    return conj(td.legs[1][idx[1],:]') * ( td.center * td.legs[2][idx[2],:])
 end
 
+#=
 function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3})  ::T where {T}
     N = size(td.legs[3])[2]
     #temp = [dot(view(td.legs[1], idx[1], :),view(td.center, :,:,i),view(td.legs[2], idx[2], :)) for i in 1:N]
     #return dot(temp,view(td.legs[3], idx[3], :))
     temp = [LinearAlgebra.BLAS.dot(view(td.legs[1], idx[1], :), LinearAlgebra.BLAS.gemv('N',view(td.center, :,:,i),view(td.legs[2], idx[2], :))) for i in 1:N]
     return LinearAlgebra.BLAS.dot(temp,view(td.legs[3], idx[3], :))
+end
+=#
+
+"""
+Pointwise eval. by direct summation
+"""
+# function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
+#     ret = zero(T)    
+
+#     n1, n2, n3 = size(td.center)
+#     @inbounds for k in 1:n3
+#         for j in 1:n2
+#             for i in 1:n1
+#                 ret += td.legs[1][idx[1], i] * td.legs[2][idx[2], j] * td.legs[3][idx[3], k] * td.center[i, j, k]
+#             end
+#         end
+#     end
+
+#     return ret
+# end
+
+"""
+Pointwise eval. by direct summation, optimized.
+Tried linear indexing for tucker center, yields no improvement.
+"""
+function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
+    ret = zero(T)    
+
+    n1, n2, n3 = size(td.center)
+    @inbounds for k in 1:n3
+        k3 = td.legs[3][idx[3], k]
+        ret3 = zero(T)
+        for j in 1:n2
+            ret2 = zero(T)
+            k2 = td.legs[2][idx[2], j]
+            for i in 1:n1
+                ret2 += td.legs[1][idx[1], i] * td.center[i, j, k]
+            end
+            ret3 += ret2 * k2
+        end
+        ret += ret3 * k3
+    end
+
+    return ret
+end
+
+"""
+Struct to accelerate pointwise evaluation of 3D tucker decompositions
+"""
+mutable struct TuckerEvaluator3D{T}
+    td::TuckerDecomposition{T,3}
+    inter2D::Array{T,2}
+    inter1D::Array{T,1}
+
+    function TuckerEvaluator3D(td::TuckerDecomposition{T,3}) where {T}
+        _, n2, n3 = size(td.center)
+        inter2D = zeros(T, n2, n3)
+        inter1D = zeros(T, n3)
+        return new{T}(td, inter2D, inter1D)
+    end
+end
+
+
+function (te::TuckerEvaluator3D{T})(idx::Vararg{Int,3}) :: T where {T}
+    v1 = te.td.legs[1][idx[1], :]
+    v2 = te.td.legs[2][idx[2], :]
+    v3 = te.td.legs[3][idx[3], :]
+
+    _, n2, n3 = size(te.td.center)
+
+    # Contract over the first dimension
+    @inbounds @views for j in 1:n2
+        for k in 1:n3
+            te.inter2D[j, k] = sum(v1 .* te.td.center[:, j, k])
+        end
+    end
+
+    # Contract over the second dimension
+    @inbounds @views for k in 1:n3
+        te.inter1D[k] = sum(v2 .* te.inter2D[:, k])
+    end
+
+    # Contract over the third dimension
+    ret = sum(v3 .* te.inter1D)
+
+    return ret
 end

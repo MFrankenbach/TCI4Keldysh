@@ -202,10 +202,135 @@ function evaluate_with_ωconversion(
     Gp  :: PartialCorrelator_reg{D},
     w   :: Vararg{Union{Int, Colon}, D}
     )   :: Union{ComplexF64, AbstractArray{ComplexF64}} where {D}
-    return Gp.tucker[(Gp.ωconvMat * SA[w...] + Gp.ωconvOff)...]
+    # return Gp.tucker[(Gp.ωconvMat * SA[w...] + Gp.ωconvOff)...]
+    return Gp.tucker((Gp.ωconvMat * SA[w...] + Gp.ωconvOff)...)
 end
 
+"""
+Evaluate anomalous contribution
+-0.5(β + ∑_{i≠j}1/(i⋅ωi - ϵi)) ∏_{i≠j}1/(i⋅ωi - ϵi)
+where is the bosonic index.
 
+Here we take D external frequencies and return zero(ComplexF64) if the internal bosonic frequency is nonzero.
+"""
+function evaluate_ano_with_ωconversion(
+    Gp :: PartialCorrelator_reg{D},
+    w :: Vararg{Int, D}
+    ) where {D}
+    bos_idx = get_bosonic_idx(Gp)
+    w_int = Gp.ωconvMat * SA[w...] + Gp.ωconvOff
+    beta = 1.0/Gp.T
+    if abs(Gp.tucker.ωs_legs[bos_idx][w_int[bos_idx]]) > 1.e-2*Gp.T
+        # not in anomalous range
+        return zero(ComplexF64)
+    else
+        # IN anomalous range
+        ret = zero(ComplexF64)
+        for c in CartesianIndices(Gp.Adisc_anoβ)
+            # compute anomalous kernel
+            sum = beta
+            prod = one(ComplexF64)
+            for i in 1:D
+                if i==bos_idx
+                    continue
+                else
+                    sum += Gp.tucker.legs[i][w_int[i], c[i]]
+                    prod *= Gp.tucker.legs[i][w_int[i], c[i]]
+                end
+            end
+            ret += sum * prod * Gp.Adisc_anoβ[c]
+        end
+        return -0.5 * ret
+    end
+end
+
+"""
+struct designed to evaluate anomalous term of PartialCorrelator efficiently
+"""
+struct AnomalousEvaluator{T,D,N}
+    beta::Float64
+    bos_zero_idx::Int
+    nonbos_idx::NTuple{N,Int}
+    Adisc_ano::Array{T,N}
+    ωlegs::Vector{Matrix{T}}
+    ωlegs_sq::Vector{Matrix{T}} # pointwise squared
+    ωconvMat::SMatrix{D,D,Int}
+    ωconvOff::SVector{D,Int}
+
+    function AnomalousEvaluator(Gp::PartialCorrelator_reg{D}) where {D}
+        @assert ano_term_required(Gp) "Trying to build AnomalousEvaluator when anomalous term is not required"
+        bos_idx = get_bosonic_idx(Gp)
+        nonbos_idx = ntuple(i -> (i<bos_idx ? i : i+1), D-1)
+        bos_zero_idx = findfirst(w -> abs(Gp.tucker.ωs_legs[bos_idx][w]) < 1.e-2*Gp.T, 1:length(Gp.tucker.ωs_legs[bos_idx]))
+
+        # permute bos_idx to first index
+        perm = collect(1:D)
+        perm[1] = bos_idx
+        perm[bos_idx] = 1
+        ωconvMat = Gp.ωconvMat[perm, :]
+        ωconvOff = Gp.ωconvOff[perm]
+        beta = 1.0/Gp.T
+        # Careful: This does NOT copy
+        Adisc_ano = dropdims(Gp.Adisc_anoβ; dims=(bos_idx,))
+        ωlegs = [Gp.tucker.legs[i] for i in nonbos_idx]
+        ωlegs_sq = [Gp.tucker.legs[i] .^ 2 for i in nonbos_idx]
+        T = eltype(Adisc_ano)
+
+        # check
+        for i in eachindex(ωlegs)
+            @assert size(ωlegs[i], 2)==size(Adisc_ano, i)
+        end
+
+        return new{T, D, D-1}(beta, bos_zero_idx, nonbos_idx, Adisc_ano, ωlegs, ωlegs_sq, ωconvMat, ωconvOff)
+    end
+end
+
+"""
+4-point anomalous term
+"""
+function (anev::AnomalousEvaluator{T,3,2})(w::Vararg{Int,3}) where {T}
+    # always has bosonic index first
+    w_int = anev.ωconvMat * SA[w...] + anev.ωconvOff
+    if w_int[1] == anev.bos_zero_idx
+        # IN anomalous range
+        bterm = anev.beta * transpose(anev.ωlegs[1][w_int[2],:]) * anev.Adisc_ano * anev.ωlegs[2][w_int[3],:]
+        lsqterm = transpose(anev.ωlegs_sq[1][w_int[2],:]) * anev.Adisc_ano * anev.ωlegs[2][w_int[3],:]
+        rsqterm = transpose(anev.ωlegs[1][w_int[2],:]) * anev.Adisc_ano * anev.ωlegs_sq[2][w_int[3],:]
+        return -0.5 * (bterm + lsqterm + rsqterm)
+    else
+        # not in anomalous range
+        return zero(T)
+    end
+end
+
+"""
+3-point anomalous term
+"""
+function (anev::AnomalousEvaluator{T,2,1})(w::Vararg{Int,2}) where {T}
+    # always has bosonic index first
+    w_int = anev.ωconvMat * SA[w...] + anev.ωconvOff
+    if w_int[1] == anev.bos_zero_idx
+        # IN anomalous range
+        bterm = anev.beta * transpose(anev.Adisc_ano) * anev.ωlegs[1][w_int[2],:]
+        sqterm = transpose(anev.Adisc_ano) * anev.ωlegs_sq[1][w_int[2],:]
+        return -0.5 * (bterm + sqterm)
+    else
+        # not in anomalous range
+        return zero(T)
+    end
+end
+
+"""
+2-point anomalous term
+"""
+function (anev::AnomalousEvaluator{T,1,0})(w::Int) where {T}
+    w_int = anev.ωconvMat * SA[w...] + anev.ωconvOff
+    if w_int[1] == anev.bos_zero_idx
+        return -0.5 * anev.beta * anev.Adisc_ano[begin]
+    else
+        return zero(T)
+    end
+end
 
 
 function evaluate_with_ωconversion_KF(Gp::PartialCorrelator_reg{D}, idx::Vararg{Int,D})  ::Vector{ComplexF64} where{D}
@@ -398,6 +523,14 @@ function precompute_all_values_MF_noano(
     return res
 end
 
+"""
+Compute only anomalous values. For testing (very inefficient).
+"""
+function precompute_ano_values_MF(
+    Gp::PartialCorrelator_reg{D}
+    )::Array{ComplexF64,D} where {D}
+    return precompute_all_values_MF(Gp) .- precompute_all_values_MF_noano(Gp)
+end
 
 function precompute_all_values_KF(
     Gp :: PartialCorrelator_reg{D},

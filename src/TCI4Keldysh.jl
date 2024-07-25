@@ -57,14 +57,16 @@ include("broadening/broaden_logGauss.jl")
 include("broadening/broaden_lin.jl")
 include("broadening/broaden_Gauss.jl")
 include("correlators/PartialCorrelator_reg.jl")
-include("utils/TCI_utils.jl")
 include("correlators/FullCorrelator_reg.jl")
+include("utils/TCI_utils.jl")
+include("utils/gen_dummyinput.jl")
 include("improved_estimators/calc_SE.jl")
 include("improved_estimators/symmetric_estimators_2D3D.jl")
 
 # TCI
 include("correlators/PartialCorrelator_TCI.jl")
 include("correlators/ImaginarytimeCorrelator.jl")
+include("correlators/PartialCorrelator_pointwiseTCI.jl")
 
 @compile_workload begin
     T = 1.

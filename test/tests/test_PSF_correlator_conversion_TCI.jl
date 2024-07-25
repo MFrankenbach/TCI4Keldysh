@@ -4,6 +4,9 @@ using QuanticsGrids
 Test Partial Spectral Function → Correlator conversion @ TCI
 """
 
+# whether to test 4-point correlators (takes time...)
+__DO_FOURPOINT() = false
+
 @testset "PSF -> Partial Correlator" begin
 
     ITensors.disable_warn_order()
@@ -80,7 +83,7 @@ Test Partial Spectral Function → Correlator conversion @ TCI
     function test_anomalous_TD_to_MPS_23D(npt::Int, perm_idx::Int)
         beta = 1.e1
         R = 8
-        GF = multipeak_correlator_MF(npt, R; beta=beta)
+        GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=beta)
 
         # TCI computation
         tolerance = 1.e-8
@@ -115,7 +118,7 @@ Test Partial Spectral Function → Correlator conversion @ TCI
     """
     function test_anomalous_TD_to_MPS_full_1D()
         R = 8
-        GF = multipeak_correlator_MF(2, R)
+        GF = TCI4Keldysh.multipeak_correlator_MF(2, R)
         Gp = GF.Gps[1]
 
         tolerance = 1.e-10
@@ -140,7 +143,7 @@ Test Partial Spectral Function → Correlator conversion @ TCI
     function test_anomalous_TD_to_MPS_full_23D(npt::Int, perm_idx::Int)
         @assert npt>2
         R = 7
-        GF = multipeak_correlator_MF(npt, R)
+        GF = TCI4Keldysh.multipeak_correlator_MF(npt, R)
         Gp = GF.Gps[perm_idx]
 
         tolerance = 1.e-10
@@ -199,30 +202,38 @@ Test Partial Spectral Function → Correlator conversion @ TCI
     @test test_TD_to_MPS_via_TTworld(2,2)
     @test test_TD_to_MPS_via_TTworld(3,1)
     @test test_TD_to_MPS_via_TTworld(3,3)
-    @test test_TD_to_MPS_via_TTworld(4,1)
-    @test test_TD_to_MPS_via_TTworld(4,4)
+    if __DO_FOURPOINT()
+        @test test_TD_to_MPS_via_TTworld(4,1)
+        @test test_TD_to_MPS_via_TTworld(4,4)
+    end
 
     @test test_TCI_precompute_reg_values_rotated(2,2)
     @test test_TCI_precompute_reg_values_rotated(3,1)
     @test test_TCI_precompute_reg_values_rotated(3,2)
     @test test_TCI_precompute_reg_values_rotated(3,3)
-    @test test_TCI_precompute_reg_values_rotated(4,1)
-    @test test_TCI_precompute_reg_values_rotated(4,3)
-    @test test_TCI_precompute_reg_values_rotated(4,23)
+    if __DO_FOURPOINT()
+        @test test_TCI_precompute_reg_values_rotated(4,1)
+        @test test_TCI_precompute_reg_values_rotated(4,3)
+        @test test_TCI_precompute_reg_values_rotated(4,23)
+    end
 
     @test test_anomalous_TD_to_MPS_23D(3, 1)
     @test test_anomalous_TD_to_MPS_23D(3, 2)
     @test test_anomalous_TD_to_MPS_23D(3, 3)
-    @test test_anomalous_TD_to_MPS_23D(4, 1)
-    @test test_anomalous_TD_to_MPS_23D(4, 15)
-    @test test_anomalous_TD_to_MPS_23D(4, 4)
+    if __DO_FOURPOINT()
+        @test test_anomalous_TD_to_MPS_23D(4, 1)
+        @test test_anomalous_TD_to_MPS_23D(4, 15)
+        @test test_anomalous_TD_to_MPS_23D(4, 4)
+    end
 
     test_anomalous_TD_to_MPS_full_1D()
     test_anomalous_TD_to_MPS_full_23D(3, 1)
     test_anomalous_TD_to_MPS_full_23D(3, 3)
-    test_anomalous_TD_to_MPS_full_23D(4, 6)
-    test_anomalous_TD_to_MPS_full_23D(4, 2)
-    test_anomalous_TD_to_MPS_full_23D(4, 3)
+    if __DO_FOURPOINT()
+        test_anomalous_TD_to_MPS_full_23D(4, 6)
+        test_anomalous_TD_to_MPS_full_23D(4, 2)
+        test_anomalous_TD_to_MPS_full_23D(4, 3)
+    end
 end
 
 @testset "Partial -> Full Correlator" begin
@@ -309,7 +320,8 @@ end
     @test test_FullCorrelator_add()
     @test test_full_correlator(2)
     @test test_full_correlator(3)
-    # TODO: Test 4-point with reasonable runtimes
-    # @test test_full_correlator(4; include_ano=false)
-    # @test test_full_correlator(4; include_ano=true)
+    if __DO_FOURPOINT()
+        @test test_full_correlator(4; include_ano=false)
+        @test test_full_correlator(4; include_ano=true)
+    end
 end
