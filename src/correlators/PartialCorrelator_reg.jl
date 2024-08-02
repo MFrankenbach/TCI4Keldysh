@@ -201,10 +201,16 @@ end
 #### Pointwise evaluation: ####
 ###############################
 
+"""
+Evaluate regular part with frequency transformation.
+"""
 function (Gp :: PartialCorrelator_reg{D})(w   :: Vararg{Int, D} )   ::ComplexF64 where {D}
     return evaluate_with_ωconversion(Gp, w...)
 end
 
+"""
+Evaluate regular part with frequency transformation.
+"""
 function evaluate_with_ωconversion(
     Gp  :: PartialCorrelator_reg{D},
     w   :: Vararg{Union{Int, Colon}, D}

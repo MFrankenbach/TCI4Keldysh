@@ -115,9 +115,127 @@ function (G::FullCorrelator_MF{D})(idx::Vararg{Int,D}) where{D}
     return evaluate(G, idx...)#[1]
 end
 
+"""
+To evaluate FullCorrelator_MF pointwise.
+"""
+struct FullCorrEvaluator_MF{T,D,N}
+
+    GF::FullCorrelator_MF{D}
+    anevs::Vector{AnomalousEvaluator{T,D,N}}
+    ano_terms_required::Vector{Bool}
+    anoid_to_Gpid::Vector{Int}
+
+    function FullCorrEvaluator_MF(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cutoff::Float64=1.e-12) where {D}
+
+        @assert intact(GF)
+        ano_terms_required = ano_term_required.(GF.Gps)
+        ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
+
+        # create anomalous term evaluators
+        T = eltype(GF.Gps[1].tucker.center)
+        anevs = Vector{AnomalousEvaluator{T,D,D-1}}(undef, length(ano_ids))
+        for i in eachindex(ano_ids)
+            anevs[i] = AnomalousEvaluator(GF.Gps[ano_ids[i]])
+        end
+        anoid_to_Gpid = zeros(Int, length(GF.Gps))
+        for i in eachindex(ano_ids)
+            anoid_to_Gpid[ano_ids[i]] = i
+        end
+
+        # svd kernels if requested
+        if svd_kernel
+            println("  SVD-decompose kernels with cut=$cutoff...")
+            for Gp in GF.Gps
+                if any(size(Gp.tucker.center) .> 300) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
+                size_old = size(Gp.tucker.center)
+                svd_kernels!(Gp.tucker; cutoff=cutoff)
+                size_new = size(Gp.tucker.center)
+                println(" Reduced tucker center from $size_old to $size_new")
+            end
+        end
+        return new{T,D,D-1}(GF, anevs, ano_terms_required, anoid_to_Gpid)
+    end
+end
+
+"""
+Evaluate full Matsubara correlator, including anomalous terms.
+"""
+function (fev::FullCorrEvaluator_MF{T,D,N})(w::Vararg{Int,D}) where {T,D,N}
+    ret = zero(ComplexF64)
+    for i in eachindex(fev.GF.Gps)
+        if fev.ano_terms_required[i]
+            anev_act = fev.anevs[fev.anoid_to_Gpid[i]]
+            ret += fev.GF.Gps[i](w...) + anev_act(w...)
+        else
+            ret += fev.GF.Gps[i](w...)
+        end
+    end
+    return ret
+end
+
+"""
+Try to evaluate FullCorrelator_MF batchwise.
+Should be compressed with crossinterpolate2, not quanticscrossinterpolate.
+NOT YET IMPLEMENTED (not clear whether batch evaluation makes sense here)
+"""
+struct FullCorrBatchEvaluator_MF{T,D,N} <: TCI.BatchEvaluator{T}
+
+    GF::FullCorrelator_MF{D}
+    anevs::Vector{AnomalousEvaluator{T,D,N}}
+    ano_terms_required::Vector{Bool}
+    anoid_to_Gpid::Vector{Int}
+    grid::QuanticsGrids.InherentDiscreteGrid{D}
+    localdims::Vector{Int}
+
+    function FullCorrEvaluator_MF(GF::FullCorrelator_MF{D}, localdims::Vector{Int}, svd_kernel::Bool=false; cutoff::Float64=1.e-12, unfoldingscheme=:interleaved) where {D}
+
+        @assert intact(GF)
+        ano_terms_required = ano_term_required.(GF.Gps)
+        ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
+
+        # create anomalous term evaluators
+        T = eltype(GF.Gps[1].tucker.center)
+        anevs = Vector{AnomalousEvaluator{T,D,D-1}}(undef, length(ano_ids))
+        for i in eachindex(ano_ids)
+            anevs[i] = AnomalousEvaluator(GF.Gps[ano_ids[i]])
+        end
+        anoid_to_Gpid = zeros(Int, length(GF.Gps))
+        for i in eachindex(ano_ids)
+            anoid_to_Gpid[ano_ids[i]] = i
+        end
+
+        # svd kernels if requested
+        if svd_kernel
+            println("  SVD-decompose kernels with cut=$cutoff...")
+            for Gp in GF.Gps
+                if any(size(Gp.tucker.center) .> 300) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
+                size_old = size(Gp.tucker.center)
+                svd_kernels!(Gp.tucker; cutoff=cutoff)
+                size_new = size(Gp.tucker.center)
+                println(" Reduced tucker center from $size_old to $size_new")
+            end
+        end
+
+        # grid
+        R = grid_R(GF)
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
+        return new{T,D,D-1}(GF, anevs, ano_terms_required, anoid_to_Gpid, grid, localdims)
+    end
+end
+
+function (fbev::FullCorrBatchEvaluator_MF{T,D,N})(
+    leftindexsset::Vector{Vector{Int}}, rightindexsset::Vector{Vector{Int}}, ::Val{M}
+    ) where {T,D,N,M}
+    error("NYI")
+end
+
+
+function intact(GF::FullCorrelator_MF{D}) where {D}
+    return all(intact.(GF.Gps))
+end
 
 function precompute_all_values(G :: FullCorrelator_MF{D}) ::Array{ComplexF64,D} where{D}
-    @assert all(intact.(G.Gps)) "TuckerDecomposition has been modified"
+    @assert intact(G) "TuckerDecomposition has been modified"
     return  sum(gp -> precompute_all_values_MF(gp), G.Gps)
 end
 

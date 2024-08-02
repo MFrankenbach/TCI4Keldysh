@@ -355,6 +355,20 @@ function my_hilbert_trafo(
     return ys_interp .+ im .* result
 end
 
+"""
+Load 0-point correlator, i.e., a single value.
+"""
+function load_Adisc_0pt(path::String, Op::String, flavor_idx::Int) :: Float64
+    f = matopen(joinpath(path, parse_Ops_to_filename([Op])), "r")
+    try 
+        keys(f)
+    catch
+        keys(f)
+    end
+    Adisc = read(f, "Adisc")[flavor_idx]
+    return only(Adisc)
+end
+
 
 function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
     f = matopen(joinpath(path, "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"), "r")
@@ -729,6 +743,37 @@ function iterate_binvec(R::Int)
     return Iterators.product(fill([1,2], R)...)
 end
 
+"""
+* channel: a, p or t
+"""
+function channel_trafo(channel::String)
+    ωconvMat = if channel == "a"
+        [
+            0 -1  0;
+            0  0  1;
+            -1  0 -1;
+            1  1  0;
+        ]
+    elseif channel == "p"
+        [
+            0 -1  0;
+            1  0 -1;
+            -1  1  0;
+            0  0  1;
+        ]
+    elseif channel == "t"
+        [
+            0 -1  0;
+            1  1  0;
+            -1  0 -1;
+            0  0  1;
+        ]
+    else
+        error("Invalid frequency convention")
+    end
+    return ωconvMat
+end
+
 # ==== JSON
 function logJSON(data::Any, filename::String, folder::String="tci_data"; verbose=true)
     fullname = filename*".json"
@@ -754,6 +799,18 @@ function updateJSON(filename::String, key::String, val::Any, folder::String="tci
     logJSON(data, filename, folder; verbose=false)
 end
 # ==== JSON END
+
+"""
+Get plotting object with reasonable font sizes.
+"""
+function default_plot()
+    tfont = 12
+    titfont = 16
+    gfont = 16
+    lfont = 12
+    p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
+    return p
+end
 
 #=
 """

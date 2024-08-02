@@ -44,10 +44,22 @@ using ITensors
         @test maxdiff < 5.0 * tolerance
     end
 
-    function test_compress_FullCorrelator_pointwise(npt::Int, svd_kernel=false)
+    # FullCorrelator with dummy data
+    function test_compress_FullCorrelator_pointwise1(npt::Int, svd_kernel=false)
         tolerance = 1.e-8
         R = 5
         GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=1000.0, nωdisc=8)
+        refval = TCI4Keldysh.precompute_all_values(GF)
+        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, svd_kernel; tolerance=tolerance, unfoldingscheme=:interleaved)
+
+        maxdiff = maxdiff_qtt_ref(R, qtt, refval)
+        @test maxdiff < 5.0 * tolerance
+    end
+
+    # FullCorrelator with actual data
+    function test_compress_FullCorrelator_pointwise2(npt::Int, svd_kernel=false; tolerance=1.e-8, channel="t")
+        R = 5
+        GF = TCI4Keldysh.dummy_correlator(npt, R; beta=10.0, channel=channel)[1]
         refval = TCI4Keldysh.precompute_all_values(GF)
         qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, svd_kernel; tolerance=tolerance, unfoldingscheme=:interleaved)
 
@@ -72,8 +84,20 @@ using ITensors
     test_compress_PartialCorrelator_pointwise(true; npt=4, perm_idx=13, ano=true)
 
     for svd_kernel in [true,false]
-        test_compress_FullCorrelator_pointwise(2, svd_kernel)
-        test_compress_FullCorrelator_pointwise(3, svd_kernel)
-        test_compress_FullCorrelator_pointwise(4, svd_kernel)
+        test_compress_FullCorrelator_pointwise1(2, svd_kernel)
+        test_compress_FullCorrelator_pointwise1(3, svd_kernel)
+        test_compress_FullCorrelator_pointwise1(4, svd_kernel)
     end
+    printstyled("CHANNEL t\n"; color=:green)
+    test_compress_FullCorrelator_pointwise2(4, true; tolerance=1.e-5, channel="t")
+    test_compress_FullCorrelator_pointwise2(3, true; tolerance=1.e-5, channel="t")
+    test_compress_FullCorrelator_pointwise2(2, true; tolerance=1.e-5, channel="t")
+    printstyled("CHANNEL a\n"; color=:green)
+    test_compress_FullCorrelator_pointwise2(4, true; tolerance=1.e-5, channel="a")
+    test_compress_FullCorrelator_pointwise2(3, true; tolerance=1.e-5, channel="a")
+    # test_compress_FullCorrelator_pointwise2(2, true; tolerance=1.e-5, channel="a")
+    printstyled("CHANNEL p\n"; color=:green)
+    test_compress_FullCorrelator_pointwise2(4, true; tolerance=1.e-8, channel="p")
+    test_compress_FullCorrelator_pointwise2(3, true; tolerance=1.e-8, channel="p")
+    test_compress_FullCorrelator_pointwise2(2, true; tolerance=1.e-8, channel="p")
 end

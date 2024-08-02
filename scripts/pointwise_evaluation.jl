@@ -3,12 +3,13 @@ using Plots
 using ITensors
 using Profile
 using StatProfilerHTML
+import TensorCrossInterpolation as TCI
 
 """
-Benchmark single-point evaluation of 4-point correlator
+Benchmark single-point evaluation of partial 4-point correlator
 """
 function benchmark_Gp()
-    R = 8
+    R = 5
     GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=100.0, nωdisc=100)
     Gp = GF.Gps[1]
     # compile
@@ -17,13 +18,96 @@ function benchmark_Gp()
     @btime x = $Gp(rand(1:2^$R, 3)...)
 end
 
-function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
-    GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
+"""
+Benchmark single-point evaluation of full 4-point correlator (TT vs kernel convolution)
+For R=6, beta=100, TT has rank ≈300 and is slower
+"""
+function benchmark_GF(R::Int, beta::Float64)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)[1]
+    GF2 = deepcopy(GF)
+    qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, true; tolerance=1.e-8, unfoldingscheme=:interleaved)
+    fev = TCI4Keldysh.FullCorrEvaluator_MF(GF2, true; cutoff=1.e-10)
+    # compile
+    fev(rand(1:2^R,3)...)
+    qtt(rand(1:2^R,3)...)
+    # benchmark
+    printstyled("Benchmark pointwise eval...\n"; color=:blue)
+    bmp = @benchmark x = $fev(rand(1:2^$R, 3)...)
+    @show mean(bmp).time/1.e3
+    printstyled("Benchmark TT eval...\n"; color=:blue)
+    @show TCI4Keldysh.rank(qtt)
+    bmtt = @benchmark x = $qtt(rand(1:2^$R, 3)...)
+    @show mean(bmtt).time/1.e3
+    return (bmp, bmtt)
+end
+
+function plot_benchmark_GF()
+    Rs = [5,6,7]
+    colors = [:blue, :red, :green]
+    # Rs = [5]
+    betas = 10.0 .^ (1:3)
+    p = plot(; xscale=:log10)
+    for (i,R) in enumerate(Rs)
+        times_p = []
+        times_tt = []
+        for beta in betas
+            (bmp, bmtt) = benchmark_GF(R, beta)
+            push!(times_p, mean(bmp).time / 1.e3)
+            push!(times_tt, mean(bmtt).time / 1.e3)
+        end
+        plot!(p, betas, times_p; color=colors[i], marker=:diamond, label="R=$R, pw")
+        plot!(p, betas, times_tt; color=colors[i], marker=:circle,label="R=$R, TT")
+    end
+    xlabel!(p, "β")
+    ylabel!(p, "time[μs]")
+    savefig(p,"GF_eval_timing.png")
+end
+
+function time_PartialCorrelator(perm_idx ;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=1000.0, nomdisc=10)
+    # GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
+    Gp = GF[1].Gps[perm_idx]
     t = @elapsed begin
-        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, true; tolerance=tolerance, unfoldingscheme=:interleaved) 
+        qtt = TCI4Keldysh.compress_PartialCorrelator_pointwise(Gp, true; tolerance=tolerance, unfoldingscheme=:interleaved) 
     end
     @show TCI4Keldysh.rank(qtt)
     printstyled("==== Time: $t for tolerance=$tolerance, R=$R\n"; color=:blue)
+    return t
+end
+
+function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
+    # GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
+    t = @elapsed begin
+        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved) 
+    end
+    @show TCI4Keldysh.rank(qtt)
+    printstyled("==== Time: $t for tolerance=$tolerance, R=$R\n"; color=:blue)
+    return t
+end
+
+# yields worst case at least up to R=7
+function time_FullCorrelator_natural(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
+    # GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
+    t = @elapsed begin
+        tt = TCI4Keldysh.compress_FullCorrelator_natural(GF[1], true; tolerance=tolerance) 
+    end
+    @show TCI.rank(tt)
+    printstyled("==== Time: $t for tolerance=$tolerance, R=$R\n"; color=:blue)
+    return t
+end
+
+
+function compare_PartialFullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
+    tfull = time_FullCorrelator(;R=R, tolerance=tolerance, beta=beta, nomdisc=nomdisc)
+    ts_partial = []
+    for i in 1:24
+        tp = time_PartialCorrelator(i ;R=R, tolerance=tolerance, beta=beta, nomdisc=nomdisc)
+        push!(ts_partial, tp)
+    end
+    printstyled("\n==== FullCorrelator time: $tfull for tolerance=$tolerance, R=$R\n"; color=:blue)
+    printstyled("==== All PartialCorrelators time: $(sum(ts_partial)) for tolerance=$tolerance, R=$R\n"; color=:blue)
 end
 
 """
@@ -57,9 +141,9 @@ Profile pointwise TCI of full correlator.
 """
 function profile_FullCorrelator(npt=3)
     Profile.clear()
-    R = 5
+    R = 6
     tolerance = 1.e-8
-    GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=100.0, nωdisc=10)
+    GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=10.0, nωdisc=10)
     # compile
     @time TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=tolerance, unfoldingscheme=:interleaved)
     # profile
@@ -127,16 +211,16 @@ Can vary:
 * R
 * tolerance
 """
-function time_FullCorrelator_sweep(mode::String="R")
+function time_FullCorrelator_sweep(mode::String="R"; beta=10.0, Rs=nothing)
     folder = "pwtcidata"
-    beta = 10.0
     tolerance = 1.e-8
     npt = 4
     times = []
     qttranks = []
+    svd_kernel = true
     if mode=="R"
         nωdisc = 35
-        Rs = 7:12
+        Rs = isnothing(Rs) ? (5:10) : Rs
         # prepare output
         d = Dict()
         d["times"] = times
@@ -144,6 +228,7 @@ function time_FullCorrelator_sweep(mode::String="R")
         d["Rs"] = Rs
         d["nomdisc"] = nωdisc
         d["tolerance"] = tolerance
+        d["svd_kernel"] = svd_kernel
         outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta)
         TCI4Keldysh.logJSON(d, outname, folder)
 
@@ -153,7 +238,7 @@ function time_FullCorrelator_sweep(mode::String="R")
             nωdisc = div(maximum(size(GF.Gps[1].tucker.center)), 2)
             TCI4Keldysh.updateJSON(outname, "nomdisc", nωdisc, folder)
             t = @elapsed begin
-                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, true; tolerance=tolerance, unfoldingscheme=:interleaved)
+                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, svd_kernel; tolerance=tolerance, unfoldingscheme=:interleaved)
             end
             push!(times, t)
             push!(qttranks, TCI4Keldysh.rank(qtt))
@@ -176,7 +261,7 @@ function time_FullCorrelator_sweep(mode::String="R")
         for n in nωdiscs
             GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=beta, nωdisc=n)
             t = @elapsed begin
-                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=tolerance, unfoldingscheme=:interleaved)
+                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, svd_kernel; tolerance=tolerance, unfoldingscheme=:interleaved)
             end
             push!(times, t)
             push!(qttranks, TCI4Keldysh.rank(qtt))
@@ -188,3 +273,40 @@ function time_FullCorrelator_sweep(mode::String="R")
         error("Invalid mode $mode")
     end
 end
+
+"""
+How much RAM would a densely stored correlator need in GB
+"""
+function RAM_usage_3D(R::Int)
+    return 16 * 2^(3*R) / 1.e9
+end
+
+function plot_FullCorrelator_timing(param_range, mode="R"; beta=10.0, tolerance=1.e-8, plot_mem=false)
+    folder = "pwtcidata"    
+    filename = GFfilename(mode, minimum(param_range), maximum(param_range), tolerance, beta)
+    data = TCI4Keldysh.readJSON(filename, folder)
+
+    if mode=="R"
+        Rs = convert.(Int, data["Rs"])
+        RAM_usage = RAM_usage_3D.(Rs)
+        times = convert.(Float64, data["times"])
+        p = TCI4Keldysh.default_plot()
+
+        plot!(p, Rs, times; marker=:diamond, color=:blue, label="F1F1dagF3F3dag")
+        xlabel!(p, "R")
+        ylabel!(p, "Wall time [s]")
+        title!(p, "Timings full correlator, β=$beta, tol=$tolerance")
+
+        if plot_mem
+            ptwin = twinx(p)
+            plot!(ptwin, Rs, RAM_usage; marker=:circle, color=:black, linestyle=:dash, yscale=:log10, label=nothing)
+            yticks!(ptwin, 10.0 .^ (round(Int, log10(minimum(RAM_usage))) : round(Int, log10(maximum(RAM_usage)))))
+            ylabel!(ptwin, "Memory for dense corr. [GB]")
+        end
+
+        savefig(p, "corrtiming_beta=$(beta)_tol=$(round(Int,log10(tolerance))).png")
+    end
+end
+
+time_FullCorrelator()
+time_FullCorrelator_sweep("R"; beta=1000.0, Rs=9:10)

@@ -25,6 +25,7 @@ QTCI-compress tucker decomposition by pointwise evaluation
 """
 function compress_tucker_pointwise(tucker::TuckerDecomposition{T,D}, svd_kernel=true; qtcikwargs...) where {T,D}
     if svd_kernel
+        if any(size(tucker.center) .> 300) @warn "SVD-ing legs of sizes $(size.(tucker.legs))" end
         shift_singular_values_to_center!(tucker)
     end
     R = grid_R(tucker)
@@ -63,8 +64,9 @@ function compress_PartialCorrelator_pointwise(
     anev = AnomalousEvaluator(Gp)
 
     if svd_kernel
-        # TODO: Rigorous scheme to choose cutoff
+        if any(size(Gp.tucker.center) .> 300) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
         kwargs_dict = Dict(qtcikwargs)
+        # TODO: Rigorous scheme to choose cutoff
         cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
         svd_kernels!(Gp.tucker; cutoff=cutoff)
     end
@@ -107,19 +109,23 @@ function compress_PartialCorrelator_ano_pointwise(Gp::PartialCorrelator_reg{D}; 
 end
 
 """
-Obtain qtt for full correlator by pointwise evaluation.
-"""
-function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; qtcikwargs...) where {D}
-    # check external frequency grids
-    R = grid_R(GF)
+Obtain TT for partial correlator by pointwise evaluation as:
+x--x--x
+|  |  | 
+ω1 ω2 ω3
 
-    ano_terms_required = ano_term_required.(GF.Gps)
-    ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
+TODO: test
+"""
+function compress_FullCorrelator_natural(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; tcikwargs...) where {D}
+
+    kwargs_dict = Dict(tcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    fev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff)
 
     # collect anomalous term pivots
     pivots = [zeros(Int, D)]
     for i in eachindex(GF.Gps)
-        if ano_terms_required[i]
+        if fev.ano_terms_required[i]
             Gp = GF.Gps[i]
             bos_idx = get_bosonic_idx(Gp)
             zero_idx = findfirst(x -> abs(x)<=1.e-2*Gp.T, Gp.tucker.ωs_legs[bos_idx])
@@ -131,47 +137,46 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel:
         end
     end
 
-    # create anomalous term evaluators
     T = eltype(GF.Gps[1].tucker.center)
-    anevs = Vector{AnomalousEvaluator{T,D,D-1}}(undef, length(ano_ids))
-    for i in eachindex(ano_ids)
-        anevs[i] = AnomalousEvaluator(GF.Gps[ano_ids[i]])
-    end
-    anoid_to_Gpid = zeros(Int, length(GF.Gps))
-    for i in eachindex(ano_ids)
-        anoid_to_Gpid[ano_ids[i]] = i
-    end
+    f_(x::Vector{Int}) = fev(x...)
 
-    # svd kernels if requested
-    if svd_kernel
-        kwargs_dict = Dict(qtcikwargs)
-        cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
-        println("  SVD-decompose kernels with cut=$cutoff...")
-        for Gp in GF.Gps
-            size_old = size(Gp.tucker.center)
-            svd_kernels!(Gp.tucker; cutoff=cutoff)
-            size_new = size(Gp.tucker.center)
-            println(" Reduced tucker center from $size_old to $size_new")
+    R = grid_R(GF)
+    localdims = fill(2^R, D)
+    fc_ = TCI.CachedFunction{T}(f_, localdims)
+    tt, _, _ = TCI.crossinterpolate2(T, fc_, localdims; tcikwargs...)
+
+    return tt
+end
+
+"""
+Obtain qtt for full correlator by pointwise evaluation.
+"""
+function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; qtcikwargs...) where {D}
+    # check external frequency grids
+    R = grid_R(GF)
+
+    kwargs_dict = Dict(qtcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    fev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff)
+
+    # collect anomalous term pivots
+    pivots = [zeros(Int, D)]
+    for i in eachindex(GF.Gps)
+        if fev.ano_terms_required[i]
+            Gp = GF.Gps[i]
+            bos_idx = get_bosonic_idx(Gp)
+            zero_idx = findfirst(x -> abs(x)<=1.e-2*Gp.T, Gp.tucker.ωs_legs[bos_idx])
+            w_int = collect(ntuple(i -> div(size(Gp.tucker.legs[i],1), 2), D))
+            w_int[bos_idx] = zero_idx
+            w_ext = Gp.ωconvMat \ (w_int - Gp.ωconvOff)
+            pivot = round.(Int, w_ext)
+            push!(pivots, pivot)
         end
     end
 
-    function _qtcifun(w::Vararg{Int,D})
-        ret = zero(ComplexF64)
-        for i in eachindex(GF.Gps)
-            if ano_terms_required[i]
-                # ret += GF.Gps[i](w...) + evaluate_ano_with_ωconversion(GF.Gps[i], w...)
-                anev_act = anevs[anoid_to_Gpid[i]]
-                ret += GF.Gps[i](w...) + anev_act(w...)
-            else
-                ret += GF.Gps[i](w...)
-            end
-        end
-        return ret
-    end
+    qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), fev, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
 
-    tqtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), _qtcifun, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
-
-    return tqtt
+    return qtt
 end
 
 # ========== TESTS & PLOTTING

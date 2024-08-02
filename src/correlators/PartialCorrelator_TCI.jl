@@ -593,27 +593,22 @@ end
 """
 Get some dummy frequency convention matrix
 """
-function dummy_frequency_convention(npt::Int)
-    ωconvMat_t = [
-        0 -1  0;
-        1  1  0;
-        -1  0 -1;
-        0  0  1;
-    ]
+function dummy_frequency_convention(npt::Int; channel::String="t")
+    ωconvMat = channel_trafo(channel)
     if npt==2
         ωconvMat_K1t = reshape([
-            sum(view(ωconvMat_t, [1,2], 1), dims=1);
-            sum(view(ωconvMat_t, [3,4], 1), dims=1);
+            sum(view(ωconvMat, [1,2], 1), dims=1);
+            sum(view(ωconvMat, [3,4], 1), dims=1);
         ], (2,1))
         return ωconvMat_K1t
     elseif npt==3
         ωconvMat_K2prime_t = [
-            sum(view(ωconvMat_t, [1,2], [1,3]), dims=1);
-            view(ωconvMat_t, [3,4], [1,3])
+            sum(view(ωconvMat, [1,2], [1,3]), dims=1);
+            view(ωconvMat, [3,4], [1,3])
         ]
         return ωconvMat_K2prime_t
     elseif npt==4
-        return ωconvMat_t
+        return ωconvMat
     end
 end
 
@@ -635,10 +630,10 @@ end
 """
 Load sample Matsubara full correlator.
 """
-function dummy_correlator(npt::Int, R::Int; beta::Float64=1.e3, Ops::Union{Nothing,Vector{String}}=nothing) :: Vector{FullCorrelator_MF}
+function dummy_correlator(npt::Int, R::Int; beta::Float64=1.e3, channel::String="t", Ops::Union{Nothing,Vector{String}}=nothing) :: Vector{FullCorrelator_MF}
     PSFpath = joinpath(datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     Ops_loc = isnothing(Ops) ?  dummy_operators(npt) : Ops
-    ωconvMat = dummy_frequency_convention(npt)
+    ωconvMat = dummy_frequency_convention(npt; channel=channel)
     GFs = load_npoint(PSFpath, Ops_loc, npt, R, ωconvMat; nested_ωdisc=false, beta=beta)
     return GFs
 end

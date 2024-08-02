@@ -1018,7 +1018,8 @@ function TD_to_MPS_via_TTworld(broadenedPsf_::TCI4Keldysh.AbstractTuckerDecomp{2
     R = grid_R(broadenedPsf)
 
     # @warn "Singular values are not shifted to center!"
-    TCI4Keldysh.@TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
+    # TCI4Keldysh.@TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
+    TCI4Keldysh.@TIME svd_kernels!(broadenedPsf; cutoff=tolerance*1.e-2) "Shifting singular values."
 
     # find nonzero value
     pivot = findfirst(x -> abs(x)>tolerance, broadenedPsf.center)
@@ -1158,7 +1159,15 @@ function TD_to_MPS_via_TTworld(broadenedPsf_::TCI4Keldysh.AbstractTuckerDecomp{3
     R = grid_R(broadenedPsf)
 
     # @warn "Singular values are not shifted to center!"
-    @TIME TCI4Keldysh.shift_singular_values_to_center!(broadenedPsf) "Shifting singular values."
+    begin
+        psf_copy = deepcopy(broadenedPsf)
+        printstyled("  Before old shift: $(size(psf_copy.center))\n"; color=:cyan)
+        shift_singular_values_to_center!(psf_copy)
+        printstyled("  After old shift: $(size(psf_copy.center))\n"; color=:cyan)
+    end
+    printstyled("  Before new shift: $(size(broadenedPsf.center))\n"; color=:cyan)
+    @TIME svd_kernels!(broadenedPsf; cutoff=tolerance*1.e-2) "Shifting singular values."
+    printstyled("  After new shift: $(size(broadenedPsf.center))\n"; color=:cyan)
 
     qtt_Adisc, _, _ = quanticscrossinterpolate(
         zeropad_array(broadenedPsf.center, R); tolerance=tolerance

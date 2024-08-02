@@ -150,35 +150,22 @@ function (td::TuckerDecomposition{T,2})(idx::Vararg{Int,2})  ::T where {T}
 end
 
 #=
+"""
+Pointwise tucker decomposition evaluation with BLAS.
+A bit slower than direct summation.
+"""
 function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3})  ::T where {T}
-    N = size(td.legs[3])[2]
-    #temp = [dot(view(td.legs[1], idx[1], :),view(td.center, :,:,i),view(td.legs[2], idx[2], :)) for i in 1:N]
-    #return dot(temp,view(td.legs[3], idx[3], :))
-    temp = [LinearAlgebra.BLAS.dot(view(td.legs[1], idx[1], :), LinearAlgebra.BLAS.gemv('N',view(td.center, :,:,i),view(td.legs[2], idx[2], :))) for i in 1:N]
-    return LinearAlgebra.BLAS.dot(temp,view(td.legs[3], idx[3], :))
+    @inbounds N = size(td.legs[3])[2]
+    # cenleg2 = [LinearAlgebra.BLAS.gemv('N',view(td.center, :,:,i),view(td.legs[2], idx[2], :)) for i in 1:N]
+    # @show typeof.(cenleg2)
+    @inbounds @views temp = [LinearAlgebra.BLAS.dotu(td.legs[1][idx[1],:], LinearAlgebra.BLAS.gemv('N',td.center[:,:,i],td.legs[2][idx[2],:])) for i in 1:N]
+    # temp = [LinearAlgebra.BLAS.dotu(view(td.legs[1], idx[1], :), LinearAlgebra.BLAS.gemv('N',view(td.center, :,:,i),view(td.legs[2], idx[2], :))) for i in 1:N]
+    @inbounds return LinearAlgebra.BLAS.dotu(temp, td.legs[3][idx[3],:])
 end
 =#
 
 """
-Pointwise eval. by direct summation
-"""
-# function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
-#     ret = zero(T)    
-
-#     n1, n2, n3 = size(td.center)
-#     @inbounds for k in 1:n3
-#         for j in 1:n2
-#             for i in 1:n1
-#                 ret += td.legs[1][idx[1], i] * td.legs[2][idx[2], j] * td.legs[3][idx[3], k] * td.center[i, j, k]
-#             end
-#         end
-#     end
-
-#     return ret
-# end
-
-"""
-Pointwise eval. by direct summation, optimized.
+Pointwise eval. by direct summation.
 Tried linear indexing for tucker center, yields no improvement.
 """
 function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
@@ -203,7 +190,8 @@ function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
 end
 
 """
-Struct to accelerate pointwise evaluation of 3D tucker decompositions
+Struct to accelerate pointwise evaluation of 3D tucker decompositions.
+Does NOT yield improvement.
 """
 mutable struct TuckerEvaluator3D{T}
     td::TuckerDecomposition{T,3}

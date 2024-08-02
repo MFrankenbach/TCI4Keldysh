@@ -71,6 +71,9 @@ function compute_K2r_symmetric_estimator(
 end
 
 # 3d
+"""
+cf. eq. (132) Lihm et. al.
+"""
 function compute_Γcore_symmetric_estimator(
     formalism ::String,
     PSFpath::String,
