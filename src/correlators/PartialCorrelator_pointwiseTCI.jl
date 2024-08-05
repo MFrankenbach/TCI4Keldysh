@@ -174,7 +174,15 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel:
         end
     end
 
+    # N_inner = 64
+    # function innerpoint(w) :: Bool
+    #     return all([abs(iw - 2^(R-1)) <= N_inner for iw in w])
+    # end
+    # ecfev = EvaluationCounter(fev, innerpoint)
+
     qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), fev, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
+
+    # reportcount(ecfev)
 
     return qtt
 end

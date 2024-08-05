@@ -1,5 +1,43 @@
 using JSON
 
+"""
+Counts number of evaluations of a function.
+Can also count number of evaluations where arguments satisfy a given condition
+"""
+mutable struct EvaluationCounter
+    f # something callable
+    evalcount::Int
+    specialcond::Function # condition on function input when to
+    specialcount::Int
+
+    function EvaluationCounter(f, specialcond::Function)
+        return new(f, 0, specialcond, 0)
+    end
+end
+
+function (ec::EvaluationCounter)(x)
+    ec.evalcount += 1
+    if ec.specialcond(x)
+        ec.specialcount += 1
+    end
+    return ec.f(x)
+end
+
+function (ec::EvaluationCounter)(x::Vararg{Any, D}) where {D}
+    ec.evalcount += 1
+    if ec.specialcond(x)
+        ec.specialcount += 1
+    end
+    return ec.f(x...)
+end
+
+
+function reportcount(ec::EvaluationCounter)
+    printstyled("  No. of evaluations: $(ec.evalcount)\n"; color=:cyan)
+    printstyled("  No. of special evaluations: $(ec.specialcount)\n"; color=:cyan)
+    printstyled("  Ratio: $(ec.specialcount / ec.evalcount)\n"; color=:cyan)
+end
+
 function allconcrete(x::T) where T 
     return all(isconcretetype, fieldtypes(T))
 end
@@ -422,6 +460,15 @@ function MF_grid(T::Float64, Nhalf::Int, fermi::Bool)
 end
 
 """
+Return D symmetric Matsubara grids, starting with one bosonic grid.
+"""
+function MF_npoint_grid(T::Float64, Nhalf::Int, D::Int)
+    ωbos = MF_grid(T, Nhalf, false)
+    ωfer = MF_grid(T, Nhalf, true)
+    return ntuple(i -> (i==1) ? ωbos : ωfer, D)
+end
+
+"""
 
 Deduce missing S[O₁,O₂,O₃,O₄] by use of symmetries => relate to exchange of the 2 creation (annihilation) operators
 """
@@ -774,6 +821,55 @@ function channel_trafo(channel::String)
     return ωconvMat
 end
 
+function merged_legs_K2(channel::String, prime::Bool)
+    noprime_dict = Dict("a" => (2,3), "p" => (2,4), "t" => (3,4))
+    prime_dict = Dict("a" => (1,4), "p" => (1,3), "t" => (1,2))
+    if !prime
+        return noprime_dict[channel]
+    else
+        return prime_dict[channel]
+    end
+end
+
+function channel_trafo_K2(channel::String, prime::Bool)
+    ωconvMat = channel_trafo(channel)
+    if !prime
+        if channel=="a"
+            return [
+                sum(view(ωconvMat, [2,3], [1,2]), dims=1);
+                view(ωconvMat, [1,4], [1,2])
+            ]
+        elseif channel=="p"
+            return [
+                sum(view(ωconvMat, [2,4], [1,2]), dims=1);
+                view(ωconvMat, [1,3], [1,2])
+            ]
+        elseif channel=="t"
+            return [
+                sum(view(ωconvMat, [3,4], [1,2]), dims=1);
+                view(ωconvMat, [1,2], [1,2])
+            ]
+        end
+    else
+        if channel=="a"
+            return [
+                sum(view(ωconvMat, [1,4], [1,3]), dims=1);
+                view(ωconvMat, [2,3], [1,3])
+            ]
+        elseif channel=="p"
+            return [
+                sum(view(ωconvMat, [1,3], [1,3]), dims=1);
+                view(ωconvMat, [2,4], [1,3])
+            ]
+        elseif channel=="t"
+            return [
+                sum(view(ωconvMat, [1,2], [1,3]), dims=1);
+                view(ωconvMat, [3,4], [1,3])
+            ]
+        end
+    end
+end
+
 # ==== JSON
 function logJSON(data::Any, filename::String, folder::String="tci_data"; verbose=true)
     fullname = filename*".json"
@@ -799,6 +895,11 @@ function updateJSON(filename::String, key::String, val::Any, folder::String="tci
     logJSON(data, filename, folder; verbose=false)
 end
 # ==== JSON END
+
+
+function tolstr(tolerance::Float64)
+    return "$(round(Int, log10(tolerance)))"
+end
 
 """
 Get plotting object with reasonable font sizes.

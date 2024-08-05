@@ -1,3 +1,4 @@
+using BenchmarkTools
 #=
 Compute interection vertex with symmetric improved estimators and TCI
 =#
@@ -79,12 +80,16 @@ function (sev::SigmaEvaluator_MF{D})(row::Int, w::Vararg{Int,D}) where {D}
 end
 
 
+"""
+First row in Fig 13, Lihm et. al.
+Return 3*R bit quantics tensor train.
+"""
 function Γ_core_TCI_MF(
     PSFpath::String,
     R::Int;
     ωconvMat::Matrix{Int},
     T::Float64,
-    flavor_idx::Int=1, # why not Vector{Int}?
+    flavor_idx::Int=1,
     qtcikwargs...
 )
 
@@ -102,12 +107,16 @@ function Γ_core_TCI_MF(
     op_labels_symm = ("3", "3dag", "1", "1dag")
     is_incoming = (false, true, false, true)
 
-    GFs = Vector{FullCorrelator_MF}(undef, length(letter_combinations))
+    Ncorrs = length(letter_combinations)
+
+    GFs = Vector{FullCorrelator_MF}(undef, Ncorrs)
 
     # create correlator objects
     PSFpath_4pt = joinpath(PSFpath, "4pt")
     filelist = readdir(PSFpath_4pt)
-    for (l,letts) in enumerate(letter_combinations)
+    # Threads.@threads for l in 1:Ncorrs # can two threads try to read the same file here?
+    for l in 1:Ncorrs
+        letts = letter_combinations[l]
         println("letts: ", letts)
         ops = [letts[i]*op_labels[i] for i in 1:4]
         if !any(parse_Ops_to_filename(ops) .== filelist)
@@ -119,7 +128,10 @@ function Γ_core_TCI_MF(
     # create full correlator evaluators
     kwargs_dict = Dict(qtcikwargs)
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
-    GFevs = [FullCorrEvaluator_MF(GF, true; cutoff=cutoff) for GF in GFs]
+    GFevs = Vector{FullCorrEvaluator_MF{ComplexF64, 3, 2}}(undef, Ncorrs)
+    Threads.@threads for l in 1:Ncorrs
+        GFevs[l] = FullCorrEvaluator_MF(GFs[l], true; cutoff=cutoff)
+    end
 
     # create self-energy evaluator
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
@@ -127,20 +139,106 @@ function Γ_core_TCI_MF(
 
     # function to interpolate
     function eval_Γ_core(w::Vararg{Int,3})
-        ret = zero(ComplexF64)
-        for (i, letts) in enumerate(letter_combinations)
-            addval = GFevs[i](w...)
-            for il in eachindex(letts)
-                if letts[il]=='F'
-                    addval *= -sev(il, w...)
+        addvals = Vector{ComplexF64}(undef, Ncorrs)
+        Threads.@threads for i in 1:Ncorrs
+            addvals[i] = GFevs[i](w...)
+            for il in eachindex(letter_combinations[i])
+                if letter_combinations[i][il]==='F'
+                    addvals[i] *= -sev(il, w...)
                 end
             end
-            ret += addval
+        end
+        return sum(addvals)
+    end
+
+    # t = @belapsed $eval_Γ_core(rand(1:2^$R, 3)...)
+    # printstyled(" Γcore evaluation: $(t*1.e3) ms\n"; color=:red)
+
+    # # old function (no threading)
+    # function eval_Γ_core(w::Vararg{Int,3})
+    #     ret = zero(ComplexF64)
+    #     for (i, letts) in enumerate(letter_combinations)
+    #         addval = GFevs[i](w...)
+    #         for il in eachindex(letts)
+    #             if letts[il]=='F'
+    #                 addval *= -sev(il, w...)
+    #             end
+    #         end
+    #         ret += addval
+    #     end
+    #     return ret
+    # end
+
+    qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D); qtcikwargs...)
+
+    return qtt
+end
+
+"""
+Second+third row in Fig 13, Lihm et. al., split in 6 terms in a, p, t channels
+Return 2*R bit quantics tensor train (2D function)
+"""
+function K2_TCI(
+    PSFpath::String,
+    R::Int,
+    channel::String,
+    prime::Bool;
+    T::Float64,
+    flavor_idx::Int=1,
+    qtcikwargs...
+)
+    # grids
+    Nhalf = 2^(R-1)
+    ωs_ext = MF_npoint_grid(T, Nhalf, 2)    
+
+    # for treating fat dots
+    letter_combinations = ["FF", "FQ", "QF", "QQ"]
+    op_labels = ["1", "1dag", "3", "3dag"]
+    incoming_label = [false, true, false, true]
+
+    # process channel specification and load correlators
+    ωconvMat_3p = channel_trafo_K2(channel, prime)
+    (i,j) = merged_legs_K2(channel, prime)
+    nonij = sort(setdiff(1:4, (i,j)))
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{FullCorrelator_MF}(undef, Ncorrs)
+    is_incoming = (incoming_label[nonij[1]], incoming_label[nonij[2]])
+    for (cc, letts) in enumerate(letter_combinations)
+        Ops = ["Q$i$j", letts[1] * op_labels[nonij[1]], letts[2] * op_labels[nonij[2]]]
+        GFs[cc] = FullCorrelator_MF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat_3p)
+    end
+
+    # create full correlator evaluators
+    kwargs_dict = Dict(qtcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    GFevs = Vector{FullCorrEvaluator_MF{ComplexF64, 2, 1}}(undef, Ncorrs)
+    Threads.@threads for l in 1:Ncorrs
+        GFevs[l] = FullCorrEvaluator_MF(GFs[l], true; cutoff=cutoff)
+    end
+
+
+    # self-energy
+    incoming_trafo = diagm([1, is_incoming[1] ? -1 : 1, is_incoming[2] ? -1 : 1])
+    sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat_3p; flavor_idx=flavor_idx)
+
+    # compress K2
+    function eval_K2(w::Vararg{Int, 2})
+        ret = zero(ComplexF64)
+        for i in 1:Ncorrs        
+            val = GFevs[i](w...)
+            for il in eachindex(letter_combinations[i])
+                if letter_combinations[i][il]==='F'
+                    # il+1 because first index is composite operator and gets no self-energy
+                    val *= -sev(il+1, w...)
+                end
+            end
+            ret += val
         end
         return ret
     end
 
-    qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D); qtcikwargs...)
+    pivots = [[2^(R-1) + 1, 2^(R-1)]]
+    qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_K2, ntuple(i -> 2^R, 2), pivots; qtcikwargs...)
 
     return qtt
 end

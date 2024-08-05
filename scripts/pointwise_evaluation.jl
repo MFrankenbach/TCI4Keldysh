@@ -13,7 +13,8 @@ function benchmark_Gp()
     GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=100.0, nωdisc=100)
     Gp = GF.Gps[1]
     # compile
-    x = Gp(rand(1:2^R,3)...)
+    x = Gp(1,1,1)
+    @show x
     # benchmark
     @btime x = $Gp(rand(1:2^$R, 3)...)
 end
@@ -33,11 +34,11 @@ function benchmark_GF(R::Int, beta::Float64)
     # benchmark
     printstyled("Benchmark pointwise eval...\n"; color=:blue)
     bmp = @benchmark x = $fev(rand(1:2^$R, 3)...)
-    @show mean(bmp).time/1.e3
+    printstyled("    Mean time: $(mean(bmp).time/1.e3) μs \n")
     printstyled("Benchmark TT eval...\n"; color=:blue)
     @show TCI4Keldysh.rank(qtt)
     bmtt = @benchmark x = $qtt(rand(1:2^$R, 3)...)
-    @show mean(bmtt).time/1.e3
+    printstyled("    Mean time: $(mean(bmtt).time/1.e3) μs \n")
     return (bmp, bmtt)
 end
 
@@ -152,11 +153,7 @@ function profile_FullCorrelator(npt=3)
 end
 
 function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
-    return "timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(tolstr(tolerance))_beta=$beta"
-end
-
-function tolstr(tolerance)
-    return "$(round(Int, log10(tolerance)))"
+    return "timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
 end
 
 """
@@ -308,5 +305,5 @@ function plot_FullCorrelator_timing(param_range, mode="R"; beta=10.0, tolerance=
     end
 end
 
-time_FullCorrelator()
-time_FullCorrelator_sweep("R"; beta=1000.0, Rs=9:10)
+# time_FullCorrelator()
+# time_FullCorrelator_sweep("R"; beta=1000.0, Rs=9:10)

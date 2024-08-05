@@ -326,6 +326,10 @@ function MPS_to_fatTensor(mps::MPS, slices::Vector{T}; reverse_idx=false, tags) 
     return out_arr
 end
 
+function QTT_to_fatTensor(qtt::QuanticsTCI.QuanticsTensorCI2{T}, slice) :: Array{T} where {T}
+    return reshape([qtt(id...) for id in Iterators.product(slice...)], length.(slice)...)
+end
+
 """
 Does not seem to be faster than normal eval...
 """

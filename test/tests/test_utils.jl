@@ -158,3 +158,23 @@ end
 
 
 end
+
+@testset "Misc. utils" begin
+
+    function test_MF_grid()
+        T = 0.01
+        Nhalf = 2^4
+        ombos = TCI4Keldysh.MF_grid(T, Nhalf, false)
+        omfer = TCI4Keldysh.MF_grid(T, Nhalf, true)
+        @test length(ombos)==2*Nhalf+1
+        @test length(omfer)==2*Nhalf
+        @test all(ombos .+ reverse(ombos) .<= 1.e-12)
+        @test all(omfer .+ reverse(omfer) .<= 1.e-12)
+
+        Dgrid = TCI4Keldysh.MF_npoint_grid(T, Nhalf, 3)
+        @test length(Dgrid) == 3
+        @test length.(Dgrid) == (length(ombos), length(omfer), length(omfer))
+    end
+
+    test_MF_grid()
+end

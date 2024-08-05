@@ -125,14 +125,24 @@ struct FullCorrEvaluator_MF{T,D,N}
     ano_terms_required::Vector{Bool}
     anoid_to_Gpid::Vector{Int}
 
-    function FullCorrEvaluator_MF(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cutoff::Float64=1.e-12) where {D}
+    function FullCorrEvaluator_MF(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cutoff::Float64=1.e-12, cachesize=64) where {D}
 
         @assert intact(GF)
         ano_terms_required = ano_term_required.(GF.Gps)
         ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
 
-        # create anomalous term evaluators
         T = eltype(GF.Gps[1].tucker.center)
+        # # populate cache
+        # cache = zeros(T, fill(cachesize, D))
+        # cache_ranges = []
+        # for i in 1:D
+        #     cenid = div(length(GF.ωs_ext[i]), 2)
+        #     lowid = cenid - div(cachesize, 2)
+        #     upid = cenid + div(cachesize, 2)
+        #     push!(cache_ranges, max(1, lowid):min(length(GF.ωs_ext[i]), upid))
+        # end
+
+        # create anomalous term evaluators
         anevs = Vector{AnomalousEvaluator{T,D,D-1}}(undef, length(ano_ids))
         for i in eachindex(ano_ids)
             anevs[i] = AnomalousEvaluator(GF.Gps[ano_ids[i]])
@@ -146,7 +156,7 @@ struct FullCorrEvaluator_MF{T,D,N}
         if svd_kernel
             println("  SVD-decompose kernels with cut=$cutoff...")
             for Gp in GF.Gps
-                if any(size(Gp.tucker.center) .> 300) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
+                if any(size(Gp.tucker.center) .> 1000) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
                 size_old = size(Gp.tucker.center)
                 svd_kernels!(Gp.tucker; cutoff=cutoff)
                 size_new = size(Gp.tucker.center)
