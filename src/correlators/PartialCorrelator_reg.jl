@@ -350,6 +350,80 @@ function evaluate_with_ωconversion_KF(Gp::PartialCorrelator_reg{D}, idx::Vararg
     return evaluate_without_ωconversion_KF(Gp, (Gp.ωconvMat * SA[idx...] + Gp.ωconvOff)...)
 end
 
+"""
+Evaluate Partial Keldysh correlator on given retarded component iR=1...(D+1)
+"""
+function evaluate_with_ωconversion_KF(Gp::PartialCorrelator_reg{D}, iR::Int, idx::Vararg{Int,D})::ComplexF64 where{D}
+    return evaluate_without_ωconversion_KF(Gp, iR, (Gp.ωconvMat * SA[idx...] + Gp.ωconvOff)...)
+end
+
+"""
+Evaluate Partial Keldysh correlator on given retarded component iR=1...(D+1): Generic fallback
+"""
+function evaluate_without_ωconversion_KF(Gp::PartialCorrelator_reg{D}, iR::Int, idx::Vararg{Int,D})::ComplexF64 where {D}
+    return evaluate_without_ωconversion_KF(Gp, idx...)[iR]
+end
+
+
+"""
+Evaluate Partial Keldysh correlator on given retarded component iR=1...4: Direct loop\\
+            K^[iR=1](ω₁,ω₂,ω₃,ω₄)  =       K^R(ω₁)K^R(ω₂)K^R(ω₃)  \\
+            K^[iR=2](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^R(ω₂)K^R(ω₃)  \\
+            K^[iR=3](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^R(ω₃)  \\
+            K^[iR=4](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^A(ω₃)  \\
+Stored kernel is retarded (K^R).\\
+CAREFUL: Assumes tucker center is real-valued.
+"""
+function evaluate_without_ωconversion_KF(Gp::PartialCorrelator_reg{3}, iR::Int, idx::Vararg{Int,3})::ComplexF64
+
+    #=
+    ret = zero(ComplexF64)    
+    n1, n2, n3 = size(Gp.tucker.center)
+    @inbounds for k in 1:n3
+        ret3 = zero(ComplexF64)
+        for j in 1:n2
+            ret2 = zero(ComplexF64)
+            for i in 1:n1
+                ret2 += Gp.tucker.legs[1][idx[1], i] * Gp.tucker.center[i, j, k]
+            end
+            if iR==2
+                ret2 = conj(ret2)
+            end
+            ret3 += ret2 * Gp.tucker.legs[2][idx[2], j] 
+        end
+        if iR==3
+            ret3 = conj(ret3)
+        end
+        ret += ret3 * Gp.tucker.legs[3][idx[3], k] 
+    end
+
+    if iR==4
+        return conj(ret)
+    else
+        return ret
+    end
+    =#
+
+    # # much slower
+    # @inbounds N = size(Gp.tucker.legs[3])[2]
+    # @inbounds @views temp = [LinearAlgebra.BLAS.dotu(Gp.tucker.legs[1][idx[1],:], LinearAlgebra.BLAS.gemv('N',Gp.tucker.center[:,:,i],Gp.tucker.legs[2][idx[2],:])) for i in 1:N]
+    # @inbounds @views return LinearAlgebra.BLAS.dotu(temp, Gp.tucker.legs[3][idx[3],:])
+
+    res = Gp.tucker.center
+    sz_Adisc = size(res)
+    D = 3
+    @inbounds for i in 1:D
+        res = view(Gp.tucker.legs[i], idx[i]:idx[i], :) * reshape(res, (sz_Adisc[i], prod(sz_Adisc[i+1:D])))    # version for Kernels[idx_ext, idx_int]
+        if i==iR-1
+            res = conj.(res)
+        end
+        res = reshape(res, prod(sz_Adisc[i+1:D]))
+        # res = cat(res, conj.(res[:,1]), dims=2)
+    end
+    return only(res)
+end
+
+
 function evaluate_without_ωconversion_KF(Gp::PartialCorrelator_reg{D}, idx::Vararg{Int,D})  ::Vector{ComplexF64} where {D}
     res = Gp.tucker.center
     sz_Adisc = size(res)

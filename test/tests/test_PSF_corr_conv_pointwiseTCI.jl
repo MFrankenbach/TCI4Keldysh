@@ -1,4 +1,5 @@
 using ITensors
+using QuanticsTCI
 
 @testset "PSF -> Correlator @ pointwise TCI" begin
 
@@ -56,6 +57,21 @@ using ITensors
         @test maxdiff < 5.0 * tolerance
     end
 
+    function test_FullCorrelator_batch(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
+        GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)[1]
+        data_ref = TCI4Keldysh.precompute_all_values(GF)
+        tt, fevbatch = TCI4Keldysh.compress_FullCorrelator_batched(GF, true; tolerance=tolerance) 
+
+        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, fevbatch.grid, fevbatch.qf) 
+
+        slice = fill(1:2^R, 3)
+        data = TCI4Keldysh.QTT_to_fatTensor(qtt, slice)
+
+        maxref = maximum(abs.(data_ref))
+        @test maximum(abs.(data .- data_ref[slice...])) / maxref <= 5 * tolerance
+    end
+
+
     # FullCorrelator with actual data
     function test_compress_FullCorrelator_pointwise2(npt::Int, svd_kernel=false; tolerance=1.e-8, channel="t")
         R = 5
@@ -100,4 +116,44 @@ using ITensors
     test_compress_FullCorrelator_pointwise2(4, true; tolerance=1.e-8, channel="p")
     test_compress_FullCorrelator_pointwise2(3, true; tolerance=1.e-8, channel="p")
     test_compress_FullCorrelator_pointwise2(2, true; tolerance=1.e-8, channel="p")
+end
+
+@testset "Keldysh: PSF -> Correlator @ pointwise TCI" begin
+    
+    function test_FullCorrEvaluator_KF(npt::Int, iK::Int)
+        # create correlator
+        addpath = npt==4 ? "4pt" : ""
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg", addpath)
+        D = npt-1
+        Ops = TCI4Keldysh.dummy_operators(npt)
+        T = 5 * 1.e-4
+
+        ωmax = 1.0
+        ωmin = -ωmax
+        R = 4
+        ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+        ωconvMat = if npt==4
+                TCI4Keldysh.channel_trafo("t")
+            elseif npt==3
+                TCI4Keldysh.channel_trafo_K2("t", false)
+            else
+                TCI4Keldysh.ωconvMat_K1()
+            end
+        γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
+        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
+
+        KFev = TCI4Keldysh.FullCorrEvaluator_KF(KFC, iK)
+        function KFC_(idx::Vararg{Int,N}) where {N}
+            return TCI4Keldysh.evaluate(KFC, idx...; iK=iK)        
+        end
+
+        for _ in 1:10
+            idx = rand(1:2^R, D)
+            @test isapprox(KFC_(idx...), KFev(idx...); atol=1.e-12)
+        end
+    end
+
+    test_FullCorrEvaluator_KF(2, 2)
+    test_FullCorrEvaluator_KF(3, 3)
+    test_FullCorrEvaluator_KF(4, 6)
 end

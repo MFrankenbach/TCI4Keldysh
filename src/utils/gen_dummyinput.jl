@@ -89,3 +89,63 @@ function multipeak_tucker_decomp(npt::Int, R; beta::Float64=1.e3, peakdens::Floa
     Gp = TCI4Keldysh.PartialCorrelator_reg(T, "MF", Adisc, ωdisc, ωs_ext, ωconvMat; is_compactAdisc=false)
     return Gp.tucker
 end
+
+# ========== Keldysh
+
+"""
+Overload to create small correlator with 2^D peaks
+"""
+function multipeak_correlator_KF(
+    ωs_ext::NTuple{D,Vector{Float64}}, 
+    ωdisc::Float64=1.0
+    ; 
+    T::Float64=5.0,
+    name::Vector{String}=["2^D-peak correlator"], 
+    sigmak  ::Vector{Float64}=[1.0],
+    γ       ::Float64=1.0,
+    broadening_kwargs...
+    ) where {D}
+    @assert abs(ωdisc) > 1.e-8 "ωdisc should not be zero"
+    Adiscs = fill(ones(Float64, fill(2, D)...), factorial(D+1))
+    ωdisc_vec = [-abs(ωdisc), abs(ωdisc)]
+    return multipeak_correlator_KF(ωs_ext, Adiscs, ωdisc_vec; T=T, name=name, sigmak=sigmak, γ=γ)
+end
+
+"""
+Create Keldysh FullCorrelator with given (D+1)! PSFs (Adiscs) and ωdisc.
+"""
+function multipeak_correlator_KF(
+    ωs_ext::NTuple{D,Vector{Float64}},
+    Adiscs::Vector{Array{Float64, D}},
+    ωdisc::Vector{Float64}
+    ; 
+    T::Float64=5.0,
+    name::Vector{String}=["multipeak correlator"], 
+    sigmak  ::Vector{Float64}=[1.0],
+    γ       ::Float64=1.0,
+    broadening_kwargs...
+    ) where{D}
+
+    ωconvMat = if D==1
+            TCI4Keldysh.ωconvMat_K1()
+        elseif D==2
+            TCI4Keldysh.channel_trafo_K2("a", false)
+        elseif D==3
+            TCI4Keldysh.channel_trafo("a")
+        end
+    
+    print("Loading stuff: ")
+    @time begin
+    perms = permutations(collect(1:D+1))
+    isBos = BitVector(ntuple(i -> (i==1 && mod(D,2)==0), D+1))
+    @assert length(Adiscs)==factorial(D+1) "Wrong number of PSFs"
+    end
+    print("Creating Broadened PSFs: ")
+    function get_Acont_p(i, p)
+        ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+        return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
+    end
+    @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
+
+    return FullCorrelator_KF(Aconts; T, isBos, ωs_ext, ωconvMat, name=name)
+end

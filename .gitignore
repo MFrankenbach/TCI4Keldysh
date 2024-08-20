@@ -2,3 +2,5 @@ data/*
 Manifest.toml
 scripts/plots/*
 *.ipynb
+vienna_talk/**
+*png

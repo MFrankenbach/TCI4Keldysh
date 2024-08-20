@@ -150,6 +150,103 @@ end
 
 """
 Obtain qtt for full correlator by pointwise evaluation.
+Here, we count how many evaluations take place in a given region.
+"""
+function compress_FullCorrelator_pointwise_evalcount(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; qtcikwargs...) where {D}
+    # check external frequency grids
+    R = grid_R(GF)
+
+    kwargs_dict = Dict(qtcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    fev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff)
+
+    # collect anomalous term pivots
+    pivots = [zeros(Int, D)]
+    for i in eachindex(GF.Gps)
+        if fev.ano_terms_required[i]
+            Gp = GF.Gps[i]
+            bos_idx = get_bosonic_idx(Gp)
+            zero_idx = findfirst(x -> abs(x)<=1.e-2*Gp.T, Gp.tucker.ωs_legs[bos_idx])
+            w_int = collect(ntuple(i -> div(size(Gp.tucker.legs[i],1), 2), D))
+            w_int[bos_idx] = zero_idx
+            w_ext = Gp.ωconvMat \ (w_int - Gp.ωconvOff)
+            pivot = round.(Int, w_ext)
+            push!(pivots, pivot)
+        end
+    end
+
+    N_inner = 64
+    N_stripe = 10
+    name = "MF corr eval, tol=$(kwargs_dict[:tolerance]), R=$R, T=$(GF.Gps[1].T)"
+
+    function innerpoint(w) :: Bool
+        return all([abs(iw - 2^(R-1)) <= N_inner for iw in w])
+    end
+
+    function stripe_point(w) :: Bool
+        if innerpoint(w)
+            return false
+        end
+        return sum(ntuple(i -> abs(w[i] - 2^(R-1))<=N_stripe ? 0 : 1, D)) <= 1
+    end
+
+    midpoints = Vector{Vector{Int}}(undef, length(GF.Gps))
+    for i in eachindex(GF.Gps)
+        midpoints[i] = [div(length(GF.Gps[i].tucker.ωs_legs[i]), 2) for i in 1:D]
+    end
+    # are internal frequencies in any partial correlator close to some axis?
+    function partial_stripe(w) :: Bool
+        for (g,Gp) in enumerate(GF.Gps)
+            w_int = Gp.ωconvMat * SA[w...] + Gp.ωconvOff
+            if sum(ntuple(i -> abs(w_int[i] - midpoints[g][i])<=N_stripe ? 0 : 1, D)) <= 1
+                return true
+            end
+        end
+        return false
+    end
+
+    ecfev = EvaluationCounter(fev, [innerpoint, stripe_point, partial_stripe], name)
+
+    qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), ecfev, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
+
+    reportcount(ecfev; log="evalcounts.log")
+
+    return qtt
+end
+
+"""
+Obtain qtt for full correlator by combining block- and pointwise evaluation.
+"""
+function compress_FullCorrelator_batched(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; tcikwargs...) where {D}
+
+    kwargs_dict = Dict(tcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    fevbatch = FullCorrBatchEvaluator_MF(GF, svd_kernel; cutoff=cutoff)
+
+    # collect anomalous term pivots
+    pivots = [ones(Int, length(fevbatch.localdims))]
+    for i in eachindex(GF.Gps)
+        if fevbatch.GFev.ano_terms_required[i]
+            Gp = GF.Gps[i]
+            bos_idx = get_bosonic_idx(Gp)
+            zero_idx = findfirst(x -> abs(x)<=1.e-2*Gp.T, Gp.tucker.ωs_legs[bos_idx])
+            w_int = collect(ntuple(i -> div(size(Gp.tucker.legs[i],1), 2), D))
+            w_int[bos_idx] = zero_idx
+            w_ext = Gp.ωconvMat \ (w_int - Gp.ωconvOff)
+            pivot = round.(Int, w_ext)
+            qpivot = QuanticsGrids.origcoord_to_quantics(fevbatch.grid, Tuple(pivot)) 
+            push!(pivots, qpivot)
+        end
+    end
+
+    tt, _, _ = TCI.crossinterpolate2(eltype(GF.Gps[1].tucker.center), fevbatch, fevbatch.localdims, pivots; tcikwargs...)
+
+    return (tt, fevbatch)
+end
+
+
+"""
+Obtain qtt for full correlator by pointwise evaluation.
 """
 function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; qtcikwargs...) where {D}
     # check external frequency grids
@@ -174,15 +271,7 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel:
         end
     end
 
-    # N_inner = 64
-    # function innerpoint(w) :: Bool
-    #     return all([abs(iw - 2^(R-1)) <= N_inner for iw in w])
-    # end
-    # ecfev = EvaluationCounter(fev, innerpoint)
-
     qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), fev, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
-
-    # reportcount(ecfev)
 
     return qtt
 end

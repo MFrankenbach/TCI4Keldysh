@@ -1,3 +1,4 @@
+using HDF5
 """
     FullCorrelator_MF{D}
 
@@ -190,53 +191,139 @@ NOT YET IMPLEMENTED (not clear whether batch evaluation makes sense here)
 """
 struct FullCorrBatchEvaluator_MF{T,D,N} <: TCI.BatchEvaluator{T}
 
-    GF::FullCorrelator_MF{D}
-    anevs::Vector{AnomalousEvaluator{T,D,N}}
-    ano_terms_required::Vector{Bool}
-    anoid_to_Gpid::Vector{Int}
+    qf::TCI.CachedFunction{T} # cached FullCorrEvaluator that eats quantics index vectors
+    GFev::FullCorrEvaluator_MF{T,D,N}
     grid::QuanticsGrids.InherentDiscreteGrid{D}
     localdims::Vector{Int}
+    max_blocklegs::Int # up to which size in each direction whole blocks of the correlator are precomputed
 
-    function FullCorrEvaluator_MF(GF::FullCorrelator_MF{D}, localdims::Vector{Int}, svd_kernel::Bool=false; cutoff::Float64=1.e-12, unfoldingscheme=:interleaved) where {D}
-
-        @assert intact(GF)
-        ano_terms_required = ano_term_required.(GF.Gps)
-        ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
-
-        # create anomalous term evaluators
-        T = eltype(GF.Gps[1].tucker.center)
-        anevs = Vector{AnomalousEvaluator{T,D,D-1}}(undef, length(ano_ids))
-        for i in eachindex(ano_ids)
-            anevs[i] = AnomalousEvaluator(GF.Gps[ano_ids[i]])
-        end
-        anoid_to_Gpid = zeros(Int, length(GF.Gps))
-        for i in eachindex(ano_ids)
-            anoid_to_Gpid[ano_ids[i]] = i
-        end
-
-        # svd kernels if requested
-        if svd_kernel
-            println("  SVD-decompose kernels with cut=$cutoff...")
-            for Gp in GF.Gps
-                if any(size(Gp.tucker.center) .> 300) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
-                size_old = size(Gp.tucker.center)
-                svd_kernels!(Gp.tucker; cutoff=cutoff)
-                size_new = size(Gp.tucker.center)
-                println(" Reduced tucker center from $size_old to $size_new")
-            end
-        end
-
-        # grid
+    function FullCorrBatchEvaluator_MF(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cutoff::Float64=1.e-12, max_Rblock=5) where {D}
+        # quantics grid
         R = grid_R(GF)
-        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
-        return new{T,D,D-1}(GF, anevs, ano_terms_required, anoid_to_Gpid, grid, localdims)
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        GFev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff)        
+
+        # cached function
+        qf_ = (D == 1
+            ? q -> GFev(only(QuanticsGrids.quantics_to_origcoord(grid, q)))
+            : q -> GFev(QuanticsGrids.quantics_to_origcoord(grid, q)...))
+        T = eltype(GF.Gps[1].tucker.center)
+        qf = TCI.CachedFunction{T}(qf_, localdims)
+
+        max_blocklegs = grid.unfoldingscheme==:fused ? max_Rblock : D*max_Rblock
+        return new{T,D,D-1}(qf, GFev, grid, localdims, max_blocklegs)
     end
 end
 
+"""
+When is blockwise evaluation faster?
+     ___
+d --|___|-- d'
+     | |
+
+time pointwise = d*d' * 2*2 * tpoint
+time block = d * 2*2 * tblock
+hence we need d' * tpoint > tblock
+
+TODO: Try to cover frequency rotated set:
+P = leftindexsset × cindexset × rightindexsset (i.e. the set where we need function values)
+with cuboids such that each cuboid C is not too large and contains a 'large' amount of required points e.g. |C∩P|/|C| > 0.1.
+"""
 function (fbev::FullCorrBatchEvaluator_MF{T,D,N})(
     leftindexsset::Vector{Vector{Int}}, rightindexsset::Vector{Vector{Int}}, ::Val{M}
     ) where {T,D,N,M}
-    error("NYI")
+    nright = length(first(rightindexsset))
+    nleft = length(first(leftindexsset))
+    #=
+    if nright<=fbev.max_blocklegs
+        error("NYI")
+        add physical legs to block
+        Mblock = min(M, fbev.max_blocklegs - nright)
+        Mnonblock = M - Mblock
+        cnonblock = Mnonblock!=0 ? vec(collect(Iterators.product(ntuple(i -> 1:fbev.localdims[nleft+i], Mnonblock)...))) : [0]
+        cindexset = vec(collect(Iterators.product(ntuple(i -> 1:fbev.localdims[nleft+i], M)...)))
+        for l in eachindex(leftindexsset)
+            for c in eachindex(cindexset)
+                evaluate block of GF
+            end
+        end
+    else
+    =#
+        # pointwise eval
+        cindexset = vec(collect(Iterators.product(ntuple(i -> 1:fbev.localdims[nleft+i], M)...)))
+        outshape = (length(leftindexsset), length(cindexset), length(rightindexsset))
+        elements = Iterators.product(Base.OneTo.(outshape)...)
+        out = Array{T,M+2}(undef, (length(leftindexsset), ntuple(i->fbev.localdims[nleft+i],M)..., length(rightindexsset)))
+        for el in elements
+            idx = vcat(leftindexsset[el[1]], cindexset[el[2]]..., rightindexsset[el[3]])
+            out[el[1], cindexset[el[2]]..., el[3]] = fbev.qf(idx)
+        end
+
+        # investigate pivot distribution; only worth it if a certain number of points must be evaluated
+        if length(elements) > 4000
+            coords = Vector{NTuple{D,Int}}(undef, length(elements))
+            for (ie,el) in enumerate(elements)
+                idx = vcat(leftindexsset[el[1]], cindexset[el[2]]..., rightindexsset[el[3]])
+                coord = QuanticsGrids.quantics_to_origcoord(fbev.grid, idx)
+                coords[ie] = coord
+            end
+            point_dist = zeros(Int, ntuple(_->2^fbev.grid.R, D))
+            pd_size = size(point_dist)
+            point_dens = length(coords)/prod(pd_size)
+            halfbox = 2^4
+            cover_thresh = 1/10 # estimated lower bound for coverage where block eval is worth it.
+            # this has size (2*halfbox+1)^D
+            _getbox(coord) = ntuple(i -> max(1, coord[i]-halfbox):min(pd_size[i], coord[i]+halfbox), D)
+            for coord in coords
+                box = _getbox(coord)
+                point_dist[box...] .+= 1
+            end
+            # cover large portion of space with boxes
+            # nbox = round(Int, 0.8 * prod(pd_size) / boxsize)
+            nbox = 10
+            coverage = Float64[]
+            box_centers = []
+            for _ in 1:nbox
+                box_cen = argmax(point_dist)
+                box = _getbox(box_cen)
+                cover_act = point_dist[box_cen]/prod(length.(box))
+                if cover_act>cover_thresh
+                    push!(coverage, cover_act)
+                    push!(box_centers, collect(Tuple(box_cen)))
+                    # remove contributions from points in chosen box
+                    for coord in Iterators.product(box...)
+                        point_dist[_getbox(coord)...] .-= 1
+                    end
+                else
+                    break
+                end
+            end
+            if !isempty(coverage)
+                open("pivot_dist.log", "a") do io
+                    log_message(io, "Point density: $(point_dens) -- Peak densities: $(sort(coverage; rev=true))")
+                    log_message(io, "No. of required point evals: $(length(elements))")
+                    total_cov = sum([coverage[i] * prod(length.(_getbox(box_centers[i]))) for i in eachindex(coverage)])
+                    log_message(io, "Total coverage: $(total_cov / length(elements))")
+                    log_message(io, "Box centers:")
+                    for box_cen in box_centers
+                        log_message(io, "  $(box_cen)")
+                    end
+                    log_message(io, "")
+                end
+            end
+        end
+    # end
+
+    return out
+end
+
+"""
+Single point evaluation. Careful: index is now a quantics index [1,2,1,1,...]
+"""
+function (fbev::FullCorrBatchEvaluator_MF{T,D,N})(index::Vector{Int}) where {T,D,N}
+    return fbev.qf(index)
 end
 
 
@@ -371,6 +458,7 @@ struct FullCorrelator_KF{D}
         flavor_idx::Int, 
         ωs_ext::NTuple{D,Vector{Float64}}, 
         ωconvMat::Matrix{Int}, 
+        write_Aconts::Union{Nothing,String}=nothing,    # whether to write evaluated broadened PSFs to file; specify folder name
         name::String="", 
         sigmak  ::Vector{Float64},              # Sensitivity of logarithmic position of spectral
                                                 # weight to z-shift, i.e. |d[log(|omega|)]/dz|. These values will
@@ -400,6 +488,20 @@ struct FullCorrelator_KF{D}
             return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
         end
         @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
+
+        # write to HDF5 format
+        if !isnothing(write_Aconts)
+            for (i,A) in enumerate(Aconts)
+                Adata = contract_1D_Kernels_w_Adisc_mp(A.legs, A.center)
+                fname = Acont_h5fname(i, D; Acont_folder=write_Aconts)
+                # remove old file
+                if isfile(fname)
+                    rm(fname)
+                end
+                # write new one
+                h5write(fname, "Acont$i", Adata)
+            end
+        end
 
         return FullCorrelator_KF(Aconts; T, isBos, ωs_ext, ωconvMat, name=[Ops; name])
     end
@@ -467,6 +569,82 @@ function evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}) where{D}
     end
     return result
     #return mapreduce(gp -> evaluate_with_ωconversion_KF(gp, idx...)' * G.GR_to_GK, +, G.Gps)
+end
+
+"""
+To evaluate FullCorrelator_KF pointwise.
+"""
+struct FullCorrEvaluator_KF{D, T}
+
+    KFC::FullCorrelator_KF{D}
+    iK::Int # Keldysh component
+    iRs_required::Vector{Vector{Int}} # required fully retarded components for each Gp
+    iso_kernels::Matrix{Matrix{ComplexF64}} # Dx|Gp| matrix of left isometries in SVD-decomp of kernels: K=USV
+    # length |Gp| vector of kernels contracted with SV or S*conj.(V)
+    #      (different centers for different retarded components)
+    tucker_centers::Vector{Vector{Array{T,D}}} 
+
+    """
+    Discard singvals <cutoff in Tucker legs (i.e., Kernels).
+    """
+    function FullCorrEvaluator_KF(KFC::FullCorrelator_KF{D}, iK::Int; cutoff::Float64=1.e-20) where {D}
+        iRs_required = Vector{Vector{Int}}(undef, factorial(D+1))
+        # relevant retarded components
+        GRK = KFC.GR_to_GK
+        for p in axes(GRK, 3)
+            iRs_required[p] = [i for i in eachindex(GRK[:,iK,p]) if GRK[i,iK,p]!=0]
+            if length(iRs_required[p])==size(GRK,1)
+                @warn "Nothing saved in FullCorrEvaluator_KF in perm $p"
+            end
+        end
+
+        # svd-decompose tucker legs
+        T = eltype(KFC.Gps[1].tucker.center)
+        iso_kernels = Matrix{Matrix{ComplexF64}}(undef, D, factorial(D+1))
+        tucker_centers = [Vector{Array{T,D}}(undef, 0) for _ in 1:factorial(D+1)]
+        for (p, Gp) in enumerate(KFC.Gps)
+            tmp_legs = Vector{eltype(Gp.tucker.legs)}(undef, D)
+            # decompose legs
+            for d in 1:D
+                U, S, V = svd(Gp.tucker.legs[d])
+                notcut = S .> cutoff
+                iso_kernels[d, p] = U[:,notcut]
+                tmp_legs[d] = Diagonal(S[notcut]) * V'[notcut, :]
+            end
+            # build centers
+            # TODO: Centers for iR and D+2-iR are related by complex conjugation!
+            for iR in iRs_required[p]
+                iR_legs = [i+1<=iR ? conj.(tmp_legs[i]) : tmp_legs[i] for i in eachindex(tmp_legs)]
+                push!(tucker_centers[p], contract_1D_Kernels_w_Adisc_mp(iR_legs, Gp.tucker.center))
+            end
+        end
+        return new{D,T}(KFC, iK, iRs_required, iso_kernels, tucker_centers)
+    end
+end
+
+function (fev::FullCorrEvaluator_KF{D})(idx::Vararg{Int,D}) where {D}    
+    ret = zero(ComplexF64)
+    for (p,Gp) in enumerate(fev.KFC.Gps)
+        # rotate frequency
+        idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
+
+        # contract tuckers
+        # TODO: Efficient implementation for multiple iRs
+        for (j, iR) in enumerate(fev.iRs_required[p])
+            res = fev.tucker_centers[p][j]
+
+            sz_res = size(res)
+            @inbounds for i in 1:D
+                mod_fun = (i+1)<=iR ? conj : identity 
+                # mod_fun outside view better?
+                res = (view(mod_fun(fev.iso_kernels[i,p]), idx_int[i]:idx_int[i], :)) * reshape(res, (sz_res[i], prod(sz_res[i+1:D])))
+                res = reshape(res, prod(sz_res[i+1:D]))
+            end
+
+            ret += fev.KFC.GR_to_GK[iR, fev.iK, p] * only(res)
+        end
+    end
+    return ret
 end
 
 

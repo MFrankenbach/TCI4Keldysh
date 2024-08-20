@@ -28,6 +28,33 @@ function time_Γcore()
     println(" TIME: $t")
 end
 
+"""
+Check Γcore values at the fringes of the grid and compare to tolerance.
+"""
+function max_Γcore_tail(;R::Int=5, tolerance::Float64=1.e-5, beta::Float64=10.0)
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    ωconvMat = TCI4Keldysh.channel_trafo("t")
+    T = 1.0/beta
+    @time qtt = TCI4Keldysh.Γ_core_TCI_MF(
+        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved
+        )
+    Nhalf = 2^(R-1)
+    frval = abs(qtt(1,Nhalf,Nhalf))
+    yvals = [qtt(i, Nhalf, Nhalf) for i in 1:2^R]
+    cenval = maximum(abs.(yvals))
+    printstyled("Fringe value: $frval\n"; color=:blue)
+    printstyled("Center max value: $cenval\n"; color=:blue)
+    printstyled("Ratio: $(frval/cenval) (tol=$tolerance)\n"; color=:blue)
+
+    # plot line section
+    plot(1:2^R, abs.(yvals) ./ cenval; yscale=:log10, label=nothing, linewidth=2)
+    ylabel!("|Γcore(ω)| / max|Γcore(ω)|")
+    xlabel!("ω1")
+    hline!(tolerance; label="tol", color=:red, linestyle=:dashed)
+    savefig("gammacore_tail.png")
+    return nothing
+end
+
 function Γcore_filename(mode::String, xmin, xmax, tolerance::Float64, beta::Float64)
     return "gammacore_timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
 end
@@ -67,6 +94,37 @@ function time_Γcore_sweep(param_range, mode="R"; beta=10.0, tolerance=1.e-8)
         end
     else
         error("Invalid mode $mode")
+    end
+end
+
+function RAM_usage_3D(R::Int)
+    return 16 * 2^(3*R) / 1.e9
+end
+
+function plot_vertex_timing(param_range, mode="R"; beta=10.0, tolerance=1.e-6, plot_mem=true)
+    folder = "pwtcidata"    
+    filename = Γcore_filename(mode, minimum(param_range), maximum(param_range), tolerance, beta)
+    data = TCI4Keldysh.readJSON(filename, folder)
+
+    if mode=="R"
+        Rs = convert.(Int, data["Rs"])
+        RAM_usage = RAM_usage_3D.(Rs)
+        times = convert.(Float64, data["times"])
+        p = TCI4Keldysh.default_plot()
+
+        plot!(p, Rs, times; marker=:diamond, color=:blue, label=nothing)
+        xlabel!(p, "R")
+        ylabel!(p, "Wall time [s]")
+        title!(p, "Timings Γ core, β=$beta, tol=$tolerance")
+
+        if plot_mem
+            ptwin = twinx(p)
+            plot!(ptwin, Rs, RAM_usage; marker=:circle, color=:black, linestyle=:dash, yscale=:log10, label=nothing)
+            yticks!(ptwin, 10.0 .^ (round(Int, log10(minimum(RAM_usage))) : round(Int, log10(maximum(RAM_usage)))))
+            ylabel!(ptwin, "Memory for dense corr. [GB]")
+        end
+
+        savefig(p, "vertextiming_beta=$(beta)_tol=$(round(Int,log10(tolerance))).png")
     end
 end
 
@@ -254,13 +312,5 @@ function test_K2_TCI(; channel="a", R=4, beta=50.0, tolerance=1.e-5, prime=false
     savefig("K2_ref.png")
 end
 
-# time_Γcore_sweep(5:7; beta=10.0, tolerance=1.e-6)
-# time_Γcore_sweep(5:7; beta=100.0, tolerance=1.e-6)
-# time_Γcore_sweep(8:14; beta=10.0, tolerance=1.e-6)
-# time_Γcore_sweep(5:10; beta=1000.0, tolerance=1.e-6)
-
-# for p in [true, false]
-#     for c in ["a", "p", "t"]
-#         test_K2_TCI(;channel=c, prime=p)
-#     end
-# end
+time_Γcore()
+time_Γcore_sweep(5:8; beta=2000.0, tolerance=1.e-6)

@@ -7,35 +7,62 @@ Can also count number of evaluations where arguments satisfy a given condition
 mutable struct EvaluationCounter
     f # something callable
     evalcount::Int
-    specialcond::Function # condition on function input when to
-    specialcount::Int
+    specialcond::Vector{Function} # conditions on function input when to increase specialcount
+    specialcount::Vector{Int}
+    name::String
 
-    function EvaluationCounter(f, specialcond::Function)
-        return new(f, 0, specialcond, 0)
+    function EvaluationCounter(f, specialcond::Vector{Function}, name="")
+        return new(f, 0, specialcond, fill(0, length(specialcond)), name)
     end
+end
+
+function EvaluationCounter(f, specialcond::Function, name="")
+    return EvaluationCounter(f, [specialcond], name)
 end
 
 function (ec::EvaluationCounter)(x)
     ec.evalcount += 1
-    if ec.specialcond(x)
-        ec.specialcount += 1
+    for i in eachindex(ec.specialcond)
+        if ec.specialcond[i](x)
+            ec.specialcount[i] += 1
+        end
     end
     return ec.f(x)
 end
 
 function (ec::EvaluationCounter)(x::Vararg{Any, D}) where {D}
     ec.evalcount += 1
-    if ec.specialcond(x)
-        ec.specialcount += 1
+    for i in eachindex(ec.specialcond)
+        if ec.specialcond[i](x)
+            ec.specialcount[i] += 1
+        end
     end
     return ec.f(x...)
 end
 
 
-function reportcount(ec::EvaluationCounter)
+function reportcount(ec::EvaluationCounter; log::Union{String,Nothing}=nothing)
     printstyled("  No. of evaluations: $(ec.evalcount)\n"; color=:cyan)
-    printstyled("  No. of special evaluations: $(ec.specialcount)\n"; color=:cyan)
-    printstyled("  Ratio: $(ec.specialcount / ec.evalcount)\n"; color=:cyan)
+    # print out
+    for i in eachindex(ec.specialcond)
+        fname = nameof(ec.specialcond[i])
+        printstyled("  No. of special evaluations: $(ec.specialcount[i]) (function: $(String(fname)))\n"; color=:cyan)
+        printstyled("  Ratio: $(ec.specialcount[i] / ec.evalcount)\n"; color=:cyan)
+        println("\n")
+    end
+    # log to file
+    if !isnothing(log)
+        open(log, "a") do f
+            write(f, "==== $(ec.name)\n")
+            write(f, "  No. of evaluations: $(ec.evalcount)\n")
+            for i in eachindex(ec.specialcond)
+                fname = nameof(ec.specialcond[i])
+                write(f, "  No. of special evaluations: $(ec.specialcount[i]) (function: $(String(fname)))\n")
+                write(f, "  Ratio: $(ec.specialcount[i] / ec.evalcount)\n")
+                write(f, "\n")
+            end
+        end
+    end
 end
 
 function allconcrete(x::T) where T 
@@ -149,13 +176,37 @@ function contract_1D_Kernels_w_Adisc_mp(Kernels, Adisc)
     return Acont
 end
 
+# """
+# see `contract_KF_Kernels_w_Adisc_mp`, but here kernels are singular-value decomposed with a given cutoff.
+# """
+# function contract_KF_Kernels_w_Adisc_mp_svd(Kernels, Adisc; cutoff::Float64=1.e-15)
+    
+#     sz = [size(Adisc)...]
+#     D = ndims(Adisc)
+    
+#     Acont = copy(Adisc)  # Initialize
+#     for it1 in 1:D
+#         Acont = reshape(Acont, (sz[it1], prod(sz) ÷ sz[it1] * it1))
+#         Acont = Kernels[it1] * Acont
+#         sz[it1] = size(Kernels[it1])[1]
+#         Acont = reshape(Acont, ((sz[it1], sz[[it1+1:end; 1:it1-1]]..., it1)))
+#         Acont = cat(Acont, conj.(Acont[[Colon() for _ in 1:D]...,1]), dims=D+1)
+
+#         if D>1
+#             Acont = permutedims(Acont, (collect(2:D)..., 1, D+1))
+#         end
+#     end
+
+#     return Acont
+# end
+
 
 """
     contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc)
 
 Contracts retarded kernels with Adisc and deduces all fully-retarded kernels.
 
-For 3p correlators we e.g. get K^{R/A}[i,a] K^{R/A}[j,b] Adisc[a,b]
+For 3p correlators we e.g. get K^{R/A}[i,a] K^{R/A}[j,b] Adisc[a,b].\\
 
 # Returns
 Array with contracted data with all available external frequencies in the first D dimensions.
@@ -172,9 +223,20 @@ for 4p:     K^[1](ω₁,ω₂,ω₃,ω₄)  =       K^R(ω₁)K^R(ω₂)K^R(ω�
             K^[3](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^R(ω₃)  /
             K^[4](ω₁,ω₂,ω₃,ω₄)  =       K^A(ω₁)K^A(ω₂)K^A(ω₃)   = c.c.of first line
 """
-function contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc)
+function contract_KF_Kernels_w_Adisc_mp(Kernels, Adisc; cutoff::Float64=-1.0)
     sz = [size(Adisc)...]
     D = ndims(Adisc)
+
+    # leaves kernel sizes invariant -> no speedup; just for checking truncation errors
+    if cutoff > 0.0
+        Kernels = deepcopy(Kernels)
+        for i in eachindex(Kernels)
+            U, S, V = svd(Kernels[i])
+            Snew_mask = S .>= cutoff
+            knew = U[:, Snew_mask] * Diagonal(S[Snew_mask]) * adjoint(V[:, Snew_mask])
+            Kernels[i] = knew
+        end
+    end
     
     ##########################################################
     ### EFFICIENCY IN TERMS OF   CPU TIME: 😄     RAM: 🙈  ###
@@ -449,7 +511,6 @@ end
 
 """
 Return symmetric 1D Matsubara grid.
-TODO: TEST
 """
 function MF_grid(T::Float64, Nhalf::Int, fermi::Bool)
     if fermi
@@ -457,6 +518,30 @@ function MF_grid(T::Float64, Nhalf::Int, fermi::Bool)
     else
         return π * T * collect(-Nhalf:Nhalf) * 2
     end
+end
+
+function KF_grid(ωmin::Float64, ωmax::Float64, R::Int, D::Int)
+    return ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)   
+end
+
+"""
+Linear iK ∈ {1,...,2^D} to tuple (k1, ..., kD)
+"""
+function KF_idx(iK::Int, D::Int)
+    TCI4Keldysh.@DEBUG 1<=iK<=2^D "Invalid Keldysh index"
+    iK_it = Iterators.product(fill(1:2, D+1)...)
+    return collect(iK_it)[iK]
+end
+
+
+"""
+Tuple (k1, ..., kD) to linear idx iK ∈ {1,...,2^D}
+"""
+function KF_idx(K::NTuple{N, Int}, D::Int) :: Int where {N}
+    TCI4Keldysh.@DEBUG all(1 .<=K .<=2) "Invalid Keldysh index"
+    K_it = collect(Iterators.product(fill(1:2, D+1)...))
+    c_idx = findfirst(k -> k==K, K_it)
+    return LinearIndices(K_it)[c_idx]
 end
 
 """
@@ -553,6 +638,63 @@ function svd_kernels!(td::AbstractTuckerDecomp{D}; cutoff::Float64=1.e-15) where
     td.center = center_new
     td.modified = true
     return nothing
+end
+
+"""
+Automatic svd cutoff to guarantee a pointwise error below the tolerance:
+|G(ω) - G'(ω)| ≤ (∑_ϵ (K(ω-ϵ)-K'(ω-ϵ))^2) ^ (1/2) * || A ||_2 (A≡PSF)
+≤ ( ||S1 - S'1||_∞ * ||S2||_∞ * ||S3||_∞ + 
+    ||S1||_∞ * ||S2 - S'2||_∞ * ||S3||_∞ + 
+    ||S1||_∞ * ||S2||_∞ * ||S3 - S'3||_∞ ) * ||A||_2 !≤ tolerance
+
+where Si is the singular value vector of the i-th tucker leg.
+Analogously:
+|G(ω)| ≤ ||S1||_∞ * ||S2||_∞ * ||S3||_∞ * ||A||_2
+
+For estimator=1, we estimate ∑_ϵ |K(ω-ϵ)|^2 ≤ ||S||_∞
+For estimator=2, we estimate ∑_ϵ |K(ω-ϵ)|^2 ≤ max_ω ∑_ϵ |K(ω-ϵ)|^2 (only slightly better estimate...)
+
+If requested, the tolerance can be divided by an estimate of max_ω G(ω) to get a relative error bound.
+CAREFUL: Estimate seems to be very conservative, at least for Matsubara
+"""
+function auto_svd_cutoff(td::AbstractTuckerDecomp{D}, tolerance::Float64, relative=false; estimator::Int=1) where {D}
+    AL2 = norm(td.center)    
+    # obtain singular values info
+    Ss = Vector{Vector{Float64}}(undef, D)
+    Sprod = ones(D)
+    if estimator==1
+        for d in 1:D
+            _, S, _ = svd(td.legs[d])
+            Ss[d] = S
+        end
+        Smax = [S[1] for S in Ss]
+        Sprod = [prod(i -> i==j ? 1.0 : Smax[i], 1:D) for j in 1:D]
+    elseif estimator==2
+        Kws = []
+        for d in 1:D
+            _, S, _ = svd(td.legs[d])
+            Ss[d] = S
+            Kw = sqrt(maximum(sum(abs.(td.legs[d]) .^ 2; dims=2)))
+            push!(Kws, Kw)
+        end
+        Sprod = [prod(i -> i==j ? 1.0 : Kws[i], 1:D) for j in 1:D]
+    else
+        error("Invalid estimator $estimator")
+    end
+    @show Sprod
+    Ss = nothing
+    # ensures |G(ω) - G'(ω)| ≤ tolerance
+    cutoff = tolerance / (sum(Sprod) * AL2)
+    if relative
+        # lower bound on max_ω G(ω), assuming maximum is in the middle
+        N = 2^4
+        windowsz = [div(min(N, size(leg, 1)), 2) - 1 for leg in td.legs]
+        halfsz = [div(size(leg,1),2) for leg in td.legs]
+        window_Kernels = [td.legs[i][halfsz[i]-windowsz[i] : halfsz[i]+windowsz[i], :] for i in eachindex(td.legs)]
+        data_middle = contract_1D_Kernels_w_Adisc_mp(window_Kernels, td.center)
+        cutoff *= maximum(abs.(data_middle))
+    end
+    return cutoff
 end
 
 
@@ -790,6 +932,10 @@ function iterate_binvec(R::Int)
     return Iterators.product(fill([1,2], R)...)
 end
 
+function Acont_h5fname(perm_idx::Int, D::Int; Acont_folder="Acontdata")
+    return joinpath(Acont_folder, "Acont$(D)D_$perm_idx.h5")
+end
+
 """
 * channel: a, p or t
 """
@@ -870,6 +1016,13 @@ function channel_trafo_K2(channel::String, prime::Bool)
     end
 end
 
+"""
+External -> internal frequency conversion for 2pt functions
+"""
+function ωconvMat_K1()
+    return reshape([1; -1], (2,1))
+end
+
 # ==== JSON
 function logJSON(data::Any, filename::String, folder::String="tci_data"; verbose=true)
     fullname = filename*".json"
@@ -896,6 +1049,10 @@ function updateJSON(filename::String, key::String, val::Any, folder::String="tci
 end
 # ==== JSON END
 
+function log_message(io, message::String; color=:cyan)
+    printstyled(message * "\n"; color=color)
+    println(io, message)
+end
 
 function tolstr(tolerance::Float64)
     return "$(round(Int, log10(tolerance)))"
@@ -904,12 +1061,12 @@ end
 """
 Get plotting object with reasonable font sizes.
 """
-function default_plot()
+function default_plot(kwargs...)
     tfont = 12
     titfont = 16
     gfont = 16
     lfont = 12
-    p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont)
+    p = plot(;guidefontsize=gfont, titlefontsize=titfont, tickfontsize=tfont, legendfontsize=lfont, kwargs...)
     return p
 end
 

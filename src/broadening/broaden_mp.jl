@@ -80,7 +80,7 @@ function _prepare_broadening_mp(
     #sz = [prod(size(x)) for x in ωdiscs]
     ωcont_lengths = length.(ωconts)
     ωcont_largest = ωconts[argmax(ωcont_lengths)]
-    # Broadening kernels
+    # Broadening kernels, obtained by creating Acont with identity matrix Adisc
     ωcont, Kernel = getAcont(ωdisc, Matrix{Float64}(LinearAlgebra.I, (ones(Int, 2).*length(ωdisc))...), sigmak .+ zeros(length(ωdisc)), γ; ωcont=ωcont_largest, kwargs...)
     
     # Delete rows/columns that contain only zeros
@@ -119,3 +119,10 @@ function BroadenedPSF(
     return TuckerDecomposition(Adisc, Kernels; ωs_center=ωdiscs, ωs_legs=[ωconts...])
 end
 
+"""
+Broadening as in symmetric estimators paper (Lihm et al. 2024), appendix E2, Sec. 2
+"""
+function default_broadening_γσ(T::Float64)
+    # γ, σ_k
+    return (0.5*T, [0.3])
+end

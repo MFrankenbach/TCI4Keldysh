@@ -2,6 +2,7 @@ using BenchmarkTools
 using Plots
 using ITensors
 using Profile
+using QuanticsTCI
 using StatProfilerHTML
 import TensorCrossInterpolation as TCI
 
@@ -17,6 +18,30 @@ function benchmark_Gp()
     @show x
     # benchmark
     @btime x = $Gp(rand(1:2^$R, 3)...)
+end
+
+"""
+Compare times of block-wise vs. pointwise evaluation of full correlator.
+"""
+function compare_block_vs_pointwise_eval(R::Int, beta::Float64=2000.0, tolerance=1.e-6)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)[1]
+    t = @elapsed begin 
+            data = TCI4Keldysh.precompute_all_values(GF)
+        end
+    GFev = TCI4Keldysh.FullCorrEvaluator_MF(GF, true; cutoff=tolerance*1.e-2)
+    data_pt = zeros(ComplexF64, size(data))
+    t_pt = @elapsed begin
+            for ic in CartesianIndices(data_pt)
+                data_pt[ic] = GFev(Tuple(ic)...)
+            end
+        end
+    open("compare_block_pointwise_eval.log", "a") do io
+        TCI4Keldysh.log_message(io, "Parameters: R=$R, β=$beta, tol=$tolerance")
+        TCI4Keldysh.log_message(io, "Time for block evaluation: $t [s]")
+        TCI4Keldysh.log_message(io, "Time for pointwise evaluation: $t_pt [s]")
+        TCI4Keldysh.log_message(io, "Ratio (point/block): $(t_pt/t)")
+        TCI4Keldysh.log_message(io, "")
+    end
 end
 
 """
@@ -76,11 +101,58 @@ function time_PartialCorrelator(perm_idx ;R::Int=5, tolerance::Float64=1.e-8, be
     return t
 end
 
-function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
+"""
+Check correlator values at the fringes of the grid and compare to tolerance.
+"""
+function max_correlator_tail(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
+    # GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
+    GF_center = TCI4Keldysh.dummy_correlator(4, 6; beta=beta)[1]
+    data_center = TCI4Keldysh.precompute_all_values(GF_center)
+    cenval = maximum(abs.(data_center))
+    @time qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved) 
+    frval = abs(qtt(1,2^(R-1),2^(R-1)))
+    printstyled("Fringe value: $frval\n"; color=:blue)
+    printstyled("Center max value: $cenval\n"; color=:blue)
+    printstyled("Ratio: $(frval/cenval) (tol=$tolerance)\n"; color=:blue)
+
+
+    # plot line section
+    Nhalf = 2^(R-1)
+    yvals = [qtt(i, Nhalf, Nhalf) for i in 1:2^R]
+    plot(1:2^R, abs.(yvals) ./ cenval; yscale=:log10, label=nothing, linewidth=2)
+    ylabel!("|G(ω)|/max|G(ω)|")
+    xlabel!("ω1")
+    hline!(tolerance; label="tol", color=:red, linestyle=:dashed)
+    savefig("corr_tail.png")
+    return nothing
+end
+
+function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0, nomdisc=10)
     # GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
     GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
     t = @elapsed begin
         qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved) 
+    end
+    @show TCI4Keldysh.rank(qtt)
+    printstyled("==== Time: $t for tolerance=$tolerance, R=$R\n"; color=:blue)
+    return t
+end
+
+function time_FullCorrelator_batch(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
+    t = @elapsed begin
+        tt, _ = TCI4Keldysh.compress_FullCorrelator_batched(GF[1], true; tolerance=tolerance) 
+    end
+    @show TCI.linkdims(tt)
+    printstyled("==== Time: $t for tolerance=$tolerance, R=$R\n"; color=:blue)
+    return t
+end
+
+function time_FullCorrelator_evalcount(;R::Int=5, tolerance::Float64=1.e-6, beta::Float64=2000.0)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
+    t = @elapsed begin
+        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise_evalcount(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved) 
     end
     @show TCI4Keldysh.rank(qtt)
     printstyled("==== Time: $t for tolerance=$tolerance, R=$R\n"; color=:blue)
@@ -143,8 +215,9 @@ Profile pointwise TCI of full correlator.
 function profile_FullCorrelator(npt=3)
     Profile.clear()
     R = 6
-    tolerance = 1.e-8
-    GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=10.0, nωdisc=10)
+    tolerance = 1.e-6
+    # GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=10.0, nωdisc=10)
+    GF = TCI4Keldysh.dummy_correlator(npt, R; beta=2000.0)[1]
     # compile
     @time TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=tolerance, unfoldingscheme=:interleaved)
     # profile
@@ -159,7 +232,7 @@ end
 """
 Compute error introduced in regular partial correlators when the kernels are truncated with via SVD.
 """
-function svd_error_GF(R::Int, beta::Float64, cutoff::Float64=1.e-15)
+function svd_error_MF(R::Int, beta::Float64, cutoff::Union{Float64, Nothing}=nothing, tolerance=1.e-8)
     GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)[1]
 
     # truncate
@@ -168,6 +241,10 @@ function svd_error_GF(R::Int, beta::Float64, cutoff::Float64=1.e-15)
         ref = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
         @show size(Gp.tucker.center)
         @show size.(Gp.tucker.legs)
+        if isnothing(cutoff)
+            cutoff = TCI4Keldysh.auto_svd_cutoff(Gp.tucker, tolerance, true)
+            printstyled("Automatic cutoff: $cutoff\n"; color=:blue)
+        end
         TCI4Keldysh.svd_kernels!(Gp.tucker; cutoff=cutoff)
         println(" -- After")
         @show size(Gp.tucker.center)
@@ -306,4 +383,4 @@ function plot_FullCorrelator_timing(param_range, mode="R"; beta=10.0, tolerance=
 end
 
 # time_FullCorrelator()
-# time_FullCorrelator_sweep("R"; beta=1000.0, Rs=9:10)
+# time_FullCorrelator_sweep("R"; beta=2000.0, Rs=5:8)

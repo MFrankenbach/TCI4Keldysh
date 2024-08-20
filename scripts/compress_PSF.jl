@@ -36,6 +36,45 @@ function PSF_2pt(;beta=2000.0, R=12)
     # compress Adisc
 end
 
+function PSF_4pt_magnitude(;beta=2000.0)
+    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    Ops = ["F1", "F1dag", "F3", "F3dag"]
+
+    
+    # histogram of spectral weights
+    Adisc = TCI4Keldysh.load_Adisc(joinpath(PSFpath, "4pt"), Ops, 1)
+    ωdisc = TCI4Keldysh.load_ωdisc(joinpath(PSFpath, "4pt"), Ops; nested_ωdisc=false)
+    _, ωdiscs, Adisc = TCI4Keldysh.compactAdisc(ωdisc, Adisc)
+    max_Adisc = maximum(abs.(Adisc))
+    @show max_Adisc
+    npeaks = prod(size(Adisc))
+    @show npeaks
+    p = histogram(reshape(-1 .* log10.(abs.(Adisc) ./ max_Adisc), npeaks); label="Adisc")
+    xlabel!("-log10(Adisc)")
+    savefig(p, "Adisc_hist.png")
+
+    corrbound = copy(Adisc)
+    min_ωfer_sq = (π/beta)^2
+    has_zero_eps = [minimum(abs.(omdisc)) <= 1.e-10 for omdisc in ωdiscs]
+    for ic in CartesianIndices(corrbound)
+        # bosonic
+        if has_zero_eps[1]
+            corrbound[ic] = 0.0
+        else
+            corrbound[ic] /= abs(ωdiscs[1][ic[1]])
+        end
+        # fermionic
+        for i in 2:3
+            corrbound[ic] /= sqrt(min_ωfer_sq + ωdiscs[i][ic[i]]^2)
+        end
+    end
+    max_corrbound = maximum(abs.(corrbound))
+    @show max_corrbound
+    p = histogram(reshape(-1 .* log10.(abs.(corrbound) ./ max_corrbound), npeaks); label="GFbound")
+    xlabel!("-log10(GFbound)")
+    savefig(p, "corrbound_hist.png")
+end
+
 function PSF_4pt(;beta=2000.0, R=7, tolerance=1.e-6)
 
     PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"

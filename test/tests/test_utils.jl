@@ -176,5 +176,15 @@ end
         @test length.(Dgrid) == (length(ombos), length(omfer), length(omfer))
     end
 
+    function test_KF_idx()
+        D = 3
+        iK = 3
+        K = TCI4Keldysh.KF_idx(iK, D)
+        iK_ = TCI4Keldysh.KF_idx(K, D)
+        @test iK_==iK
+    end
+
+
     test_MF_grid()
+    test_KF_idx()
 end

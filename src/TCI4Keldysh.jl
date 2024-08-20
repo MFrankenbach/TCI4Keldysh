@@ -67,6 +67,7 @@ include("improved_estimators/symmetric_estimators_2D3D.jl")
 include("correlators/PartialCorrelator_TCI.jl")
 include("correlators/ImaginarytimeCorrelator.jl")
 include("correlators/PartialCorrelator_pointwiseTCI.jl")
+include("correlators/KeldyshCorrelators_TCI.jl")
 include("improved_estimators/improved_estimator_TCI.jl")
 
 @compile_workload begin

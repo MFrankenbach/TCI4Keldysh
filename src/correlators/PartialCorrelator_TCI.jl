@@ -1,7 +1,7 @@
 using Plots
 
 #=
-Compute PartialCorrelators by convolution with frequency kernels, all in interleaved quantics representation.
+Compute PartialCorrelators & FullCorrelators (Matsubara) by convolution with frequency kernels, all in interleaved quantics representation.
 Performance: 🤯😢
 =#
 
