@@ -19,7 +19,7 @@ function TCI_precompute_reg_values_rotated(
 
     # anomalous term if required
     if include_ano
-        if ano_term_required(Gp)
+        if ano_term_required(Gp) && maximum(abs.(Gp.Adisc_anoβ))>tolerance
             @info "Adding anomalous term"
             Gano_mps = anomalous_TD_to_MPS_full(Gp; tolerance=tolerance, cutoff=cutoff)
             println("  Anomalous corr. rank before rotation: $(rank(Gp_mps))")
@@ -479,7 +479,7 @@ end
 """
 Load spin up and down of a given 2-4 point function.
 """
-function load_npoint(PSFpath::String, ops::Vector{String}, npt::Int, R, ωconvMat; beta::Float64=2000.0, nested_ωdisc=false)
+function load_npoint(PSFpath::String, ops::Vector{String}, npt::Int, R, ωconvMat; beta::Float64=2000.0, nested_ωdisc=false, kwargs...)
 
     # define grids
     T = 1.0/beta
@@ -490,13 +490,13 @@ function load_npoint(PSFpath::String, ops::Vector{String}, npt::Int, R, ωconvMa
     ωfer = π * T *(collect(-Nωcont_pos:Nωcont_pos-1) * 2 .+ 1)
 
     if npt==2
-        K1ts = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx=1, ωs_ext=(ωbos,), ωconvMat=ωconvMat, name="SIAM $(npt)pG", nested_ωdisc=nested_ωdisc)]
+        K1ts = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx=1, ωs_ext=(ωbos,), ωconvMat=ωconvMat, name="SIAM $(npt)pG", nested_ωdisc=nested_ωdisc, kwargs...)]
         return K1ts
     elseif npt==3
-        K1ts = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat, name="SIAM $(npt)pG", nested_ωdisc=nested_ωdisc) for i in 1:2]
+        K1ts = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat, name="SIAM $(npt)pG", nested_ωdisc=nested_ωdisc, kwargs...) for i in 1:2]
         return K1ts
     elseif npt==4
-        K1ts = [TCI4Keldysh.FullCorrelator_MF(joinpath(PSFpath, "4pt"), ops; T, flavor_idx=i, ωs_ext=(ωbos,ωfer,ωfer), ωconvMat=ωconvMat, name="SIAM $(npt)pG", nested_ωdisc=nested_ωdisc) for i in 1:2]
+        K1ts = [TCI4Keldysh.FullCorrelator_MF(joinpath(PSFpath, "4pt"), ops; T, flavor_idx=i, ωs_ext=(ωbos,ωfer,ωfer), ωconvMat=ωconvMat, name="SIAM $(npt)pG", nested_ωdisc=nested_ωdisc, kwargs...) for i in 1:2]
         return K1ts
     else
         error("npt=$npt invalid")
@@ -630,10 +630,10 @@ end
 """
 Load sample Matsubara full correlator.
 """
-function dummy_correlator(npt::Int, R::Int; beta::Float64=1.e3, channel::String="t", Ops::Union{Nothing,Vector{String}}=nothing) :: Vector{FullCorrelator_MF}
+function dummy_correlator(npt::Int, R::Int; beta::Float64=1.e3, channel::String="t", Ops::Union{Nothing,Vector{String}}=nothing, kwargs...) :: Vector{FullCorrelator_MF}
     PSFpath = joinpath(datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     Ops_loc = isnothing(Ops) ?  dummy_operators(npt) : Ops
     ωconvMat = dummy_frequency_convention(npt; channel=channel)
-    GFs = load_npoint(PSFpath, Ops_loc, npt, R, ωconvMat; nested_ωdisc=false, beta=beta)
+    GFs = load_npoint(PSFpath, Ops_loc, npt, R, ωconvMat; nested_ωdisc=false, beta=beta, kwargs...)
     return GFs
 end

@@ -135,6 +135,13 @@ function (td::TuckerDecomposition{T,D})(idx::Vararg{Int,D})  ::T where {T,D}
 end
 
 
+"""
+TODO: prune tucker center for D<3
+"""
+function (td::TuckerDecomposition{T,1})(::Int, idx::Vararg{Int,1})  ::T where {T}
+    return conj(td.legs[1][idx[1],:]') * td.center
+end
+
 function (td::TuckerDecomposition{T,1})(idx::Vararg{Int,1})  ::T where {T}
     #return mapreduce(*,+,view(td.legs[1], idx[1], :),td.center)
     #return dot(view(td.legs[1], idx[1], :),td.center)
@@ -142,6 +149,12 @@ function (td::TuckerDecomposition{T,1})(idx::Vararg{Int,1})  ::T where {T}
     return conj(td.legs[1][idx[1],:]') * td.center
 end
 
+"""
+TODO: prune tucker center for D<3
+"""
+function (td::TuckerDecomposition{T,2})(::Int, idx::Vararg{Int,2})  ::T where {T}
+    return conj(td.legs[1][idx[1],:]') * ( td.center * td.legs[2][idx[2],:])
+end
 
 function (td::TuckerDecomposition{T,2})(idx::Vararg{Int,2})  ::T where {T}
     # return LinearAlgebra.BLAS.dot(view(td.legs[1], idx[1], :), LinearAlgebra.BLAS.gemv('N',td.center,view(td.legs[2], idx[2], :)))
@@ -164,10 +177,35 @@ function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3})  ::T where {T}
 end
 =#
 
-# """
-# Pointwise eval. by direct summation.
-# Tried linear indexing for tucker center, yields no improvement.
-# """
+"""
+Pointwise eval. by direct summation.
+Tried linear indexing for tucker center, yields no improvement.
+* tucker_cut: In the Tucker center, elements (i,j,k) with i+j+k > prune_idx are neglected
+"""
+function (td::TuckerDecomposition{T,3})(tucker_cut::Int, idx::Vararg{Int,3}) :: T where {T}
+    ret = zero(T)    
+
+    n1, n2, n3 = size(td.center)
+    @inbounds for k in 1:n3
+        ret3 = zero(T)
+        cutk = tucker_cut - k
+        for j in 1:n2
+            ret2 = zero(T)
+            for i in 1:min(cutk - j, n1)
+                ret2 += td.legs[1][idx[1], i] * td.center[i, j, k]
+            end
+            ret3 += ret2 * td.legs[2][idx[2], j] 
+        end
+        ret += ret3 * td.legs[3][idx[3], k]
+    end
+
+    return ret
+end
+
+"""
+Pointwise eval. by direct summation.
+Tried linear indexing for tucker center, yields no improvement.
+"""
 function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
     ret = zero(T)    
 
@@ -253,4 +291,49 @@ function (te::TuckerEvaluator3D{T})(idx::Vararg{Int,3}) :: T where {T}
     ret = sum(v3 .* te.inter1D)
 
     return ret
+end
+
+"""
+Return number of elements el in tucker center with abs(el) < zero_thresh * maximum(abs.(tucker.center))
+"""
+function sparsity(td::TuckerDecomposition, zero_thresh::Float64=1.e-14)
+    maxcen = maximum(abs.(td.center))
+    sparsecount = 0
+    relthresh = maxcen * zero_thresh
+    for i in eachindex(td.center)
+        if abs(td.center[i]) < relthresh
+            sparsecount += 1
+        end
+    end
+    return sparsecount
+end
+
+"""
+Upper bound on maximum value of the tucker decomposition (Hoelder):
+|td(ω)| ≤ |K(ω - ⋅)|_p * |S|_q
+where |K(ω - ⋅)|_p factorizes
+"""
+function upperbound(td::TuckerDecomposition, p::Float64=1.0)
+    q = 1.0/(1.0 - 1.0/p)    
+    if abs(p-1.0)<1.e-6
+        q = Inf
+    end
+
+    Sq = norm(td.center, q)
+    
+    return Sq * legnorm(td, p)
+end
+
+function lowerbound(td::TuckerDecomposition{T,D}) where {T,D}
+    idx = ntuple(i -> div(size(td.legs[i],1),2), D)
+    return abs(td(idx...))
+end
+
+function legnorm(td::TuckerDecomposition, p=1.0)
+    lps = Float64[]
+    for leg in td.legs
+        lp = maximum([norm(leg[i,:],p) for i in axes(leg,1)])
+        push!(lps, lp)
+    end
+    return prod(lps)
 end

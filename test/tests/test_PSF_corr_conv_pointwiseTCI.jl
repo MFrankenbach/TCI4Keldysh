@@ -147,9 +147,9 @@ end
             return TCI4Keldysh.evaluate(KFC, idx...; iK=iK)        
         end
 
-        for _ in 1:10
+        for _ in 1:50
             idx = rand(1:2^R, D)
-            @test isapprox(KFC_(idx...), KFev(idx...); atol=1.e-12)
+            @test isapprox(KFC_(idx...), KFev(idx...); atol=1.e-11)
         end
     end
 

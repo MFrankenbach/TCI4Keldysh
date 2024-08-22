@@ -210,6 +210,26 @@ end
 
 """
 Evaluate regular part with frequency transformation.
+Prune tucker center.
+"""
+function (Gp :: PartialCorrelator_reg{D})(tucker_cut::Int, w::Vararg{Int, D})::ComplexF64 where {D}
+    return evaluate_with_ωconversion(tucker_cut, Gp, w...)
+end
+
+"""
+Evaluate regular part with frequency transformation.
+Prune tucker center.
+"""
+function evaluate_with_ωconversion(
+    tucker_cut::Int,
+    Gp  :: PartialCorrelator_reg{D},
+    w   :: Vararg{Union{Int, Colon}, D}
+    )   :: Union{ComplexF64, AbstractArray{ComplexF64}} where {D}
+    return Gp.tucker(tucker_cut, (Gp.ωconvMat * SA[w...] + Gp.ωconvOff)...)
+end
+
+"""
+Evaluate regular part with frequency transformation.
 """
 function evaluate_with_ωconversion(
     Gp  :: PartialCorrelator_reg{D},
@@ -258,13 +278,18 @@ function evaluate_ano_with_ωconversion(
 end
 
 """
-struct designed to evaluate anomalous term of PartialCorrelator efficiently
+struct designed to evaluate anomalous term of PartialCorrelator efficiently, i.e., compute:
+    -0.5*(β + sum_i≠j 1/(iω_j - ϵ_j)) ⋅ ∏_i≠j 1/(iω_j - ϵ_j)
+* Adisc_ano_red: needed when number of PartialCorrelators has been reduced: Then
+Adisc_ano = Adisc_ano(Gp1) + (-1)^(D-1) * Adisc_ano(Gp2)
+Adisc_ano_red = Adisc_ano(Gp1) + (-1)^(D) * Adisc_ano(Gp2)
 """
 struct AnomalousEvaluator{T,D,N}
     beta::Float64
     bos_zero_idx::Int
     nonbos_idx::NTuple{N,Int}
     Adisc_ano::Array{T,N}
+    Adisc_ano_red::Array{T,N}
     ωlegs::Vector{Matrix{T}}
     ωlegs_sq::Vector{Matrix{T}} # pointwise squared
     ωconvMat::SMatrix{D,D,Int}
@@ -285,6 +310,11 @@ struct AnomalousEvaluator{T,D,N}
         beta = 1.0/Gp.T
 
         Adisc_ano = copy(dropdims(Gp.Adisc_anoβ; dims=(bos_idx,)))
+        ano_slice = Vector{Any}(undef, D)
+        ano_slice[:] .= Colon()
+        zero_idx = findfirst(ϵ -> abs(ϵ)<1.e-14, Gp.tucker.ωs_center[bos_idx])
+        ano_slice[bos_idx] = zero_idx:zero_idx
+        Adisc_ano_red = dropdims(Gp.tucker.center[ano_slice...]; dims=(bos_idx,))
         ωlegs = copy.([Gp.tucker.legs[i] for i in nonbos_idx])
         ωlegs_sq = [Gp.tucker.legs[i] .^ 2 for i in nonbos_idx]
         T = eltype(Adisc_ano)
@@ -292,9 +322,10 @@ struct AnomalousEvaluator{T,D,N}
         # check
         for i in eachindex(ωlegs)
             @assert size(ωlegs[i], 2)==size(Adisc_ano, i)
+            @assert size(ωlegs[i], 2)==size(Adisc_ano_red, i)
         end
 
-        return new{T, D, D-1}(beta, bos_zero_idx, nonbos_idx, Adisc_ano, ωlegs, ωlegs_sq, ωconvMat, ωconvOff)
+        return new{T, D, D-1}(beta, bos_zero_idx, nonbos_idx, Adisc_ano, Adisc_ano_red, ωlegs, ωlegs_sq, ωconvMat, ωconvOff)
     end
 end
 
@@ -307,8 +338,8 @@ function (anev::AnomalousEvaluator{T,3,2})(w::Vararg{Int,3}) where {T}
     if w_int[1] == anev.bos_zero_idx
         # IN anomalous range
         bterm = anev.beta * transpose(anev.ωlegs[1][w_int[2],:]) * anev.Adisc_ano * anev.ωlegs[2][w_int[3],:]
-        lsqterm = transpose(anev.ωlegs_sq[1][w_int[2],:]) * anev.Adisc_ano * anev.ωlegs[2][w_int[3],:]
-        rsqterm = transpose(anev.ωlegs[1][w_int[2],:]) * anev.Adisc_ano * anev.ωlegs_sq[2][w_int[3],:]
+        lsqterm = transpose(anev.ωlegs_sq[1][w_int[2],:]) * anev.Adisc_ano_red * anev.ωlegs[2][w_int[3],:]
+        rsqterm = transpose(anev.ωlegs[1][w_int[2],:]) * anev.Adisc_ano_red * anev.ωlegs_sq[2][w_int[3],:]
         return -0.5 * (bterm + lsqterm + rsqterm)
     else
         # not in anomalous range
@@ -325,7 +356,7 @@ function (anev::AnomalousEvaluator{T,2,1})(w::Vararg{Int,2}) where {T}
     if w_int[1] == anev.bos_zero_idx
         # IN anomalous range
         bterm = anev.beta * transpose(anev.Adisc_ano) * anev.ωlegs[1][w_int[2],:]
-        sqterm = transpose(anev.Adisc_ano) * anev.ωlegs_sq[1][w_int[2],:]
+        sqterm = transpose(anev.Adisc_ano_red) * anev.ωlegs_sq[1][w_int[2],:]
         return -0.5 * (bterm + sqterm)
     else
         # not in anomalous range

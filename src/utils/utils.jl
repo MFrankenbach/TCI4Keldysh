@@ -81,10 +81,13 @@ end
 Make the discrete spectral data ("Adisc") of a partial spectral function
 compact, by removing the rows, columns, or slices of "Adisc" that contain
 zeros only.
+* keep_symmetry: whether to discard only ϵ's where -ϵ also corresponds to a slice of 0s;
+can be set true in combination with reduce_Gps!
 """
 function compactAdisc(
     ωdisc   ::Vector{Float64}, 
-    Adisc   ::Array{Float64}
+    Adisc   ::Array{Float64};
+    keep_symmetry::Bool=false
     )
     # Make the discrete spectral data ("Adisc") of a partial spectral function
     # compact by removing the rows, columns, or slices of "Adisc" that contain
@@ -101,7 +104,11 @@ function compactAdisc(
     end
 
     oks = [BitVector(undef, length(ωdisc)) for i in 1:nO]
-    AdiscIsZero = abs.(Adisc) .< (maxabs(Adisc) * 1.e-14)
+    AdiscIsZero = if keep_symmetry
+                    abs.(Adisc .+ reverse(Adisc)) .< (maxabs(Adisc) * 1.e-14)
+                else
+                    abs.(Adisc) .< (maxabs(Adisc) * 1.e-14)
+                end
     for i in 1:nO
         # find slices that contain only zeros:
         all!(reshape(oks[i], (ones(Int, i-1)..., length(ωdisc))), AdiscIsZero)

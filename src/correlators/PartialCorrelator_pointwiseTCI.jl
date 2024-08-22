@@ -248,13 +248,13 @@ end
 """
 Obtain qtt for full correlator by pointwise evaluation.
 """
-function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; qtcikwargs...) where {D}
+function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cut_tucker=true, qtcikwargs...) where {D}
     # check external frequency grids
     R = grid_R(GF)
 
     kwargs_dict = Dict(qtcikwargs)
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
-    fev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff)
+    fev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff, tucker_cutoff=cutoff*10.0)
 
     # collect anomalous term pivots
     pivots = [zeros(Int, D)]
@@ -271,9 +271,17 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel:
         end
     end
 
-    qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), fev, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
+    if cut_tucker
+        function _eval(w::Vararg{Int,D}) where {D}
+            return fev(Val{:cut}(), w...)
+        end
+        qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), _eval, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
 
-    return qtt
+        return qtt
+    else
+        qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), fev, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
+        return qtt
+    end
 end
 
 # ========== TESTS & PLOTTING

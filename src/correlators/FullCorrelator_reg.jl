@@ -40,7 +40,7 @@ mutable struct FullCorrelator_MF{D}
     ωconvMat::Matrix{Int}                       
     isBos   ::BitVector                         
 
-    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, T::Float64, name::String="", is_compactAdisc::Bool=true, nested_ωdisc::Bool=false) where{D}
+    function FullCorrelator_MF(path::String, Ops::Vector{String}; flavor_idx::Int, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, T::Float64, name::String="", is_compactAdisc::Bool=false, nested_ωdisc::Bool=false) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if length(Ops) != D+1
@@ -57,7 +57,7 @@ mutable struct FullCorrelator_MF{D}
     end
 
 
-    function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; T::Float64, isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=true) where{D}
+    function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; T::Float64, isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=false) where{D}
         if DEBUG()
             println("Constructing FullCorrelator_MF.")
         end
@@ -117,7 +117,18 @@ function (G::FullCorrelator_MF{D})(idx::Vararg{Int,D}) where{D}
 end
 
 """
+Lower bound on maxabs of G
+"""
+function lowerbound(G::FullCorrelator_MF{D}) where {D}
+    mid_idx = [div(length(omext), 2) for omext in G.ωs_ext]
+    midrange = [max(1, mid_idx[i] - 5):min(length(G.ωs_ext[i]), mid_idx[i]+5) for i in 1:D]
+    vals = [G(idx...) for idx in Iterators.product(midrange...)]
+    return maximum(abs.(vals))
+end
+
+"""
 To evaluate FullCorrelator_MF pointwise.
+* tucker_cuts: In the Tucker center, elements (i,j,k) with i+j+k > prune_idx are neglected
 """
 struct FullCorrEvaluator_MF{T,D,N}
 
@@ -125,23 +136,21 @@ struct FullCorrEvaluator_MF{T,D,N}
     anevs::Vector{AnomalousEvaluator{T,D,N}}
     ano_terms_required::Vector{Bool}
     anoid_to_Gpid::Vector{Int}
+    tucker_cuts::Vector{Int}
 
-    function FullCorrEvaluator_MF(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cutoff::Float64=1.e-12, cachesize=64) where {D}
+    function FullCorrEvaluator_MF(
+        GF::FullCorrelator_MF{D}, svd_kernel::Bool=false;
+        cutoff::Float64=1.e-12, tucker_cutoff::Union{Float64, Nothing}=nothing
+    ) where {D}
 
-        @assert intact(GF)
+        if length(GF.Gps)==factorial(D+1)
+          reduce_Gps!(GF)
+        end
+
         ano_terms_required = ano_term_required.(GF.Gps)
         ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
 
         T = eltype(GF.Gps[1].tucker.center)
-        # # populate cache
-        # cache = zeros(T, fill(cachesize, D))
-        # cache_ranges = []
-        # for i in 1:D
-        #     cenid = div(length(GF.ωs_ext[i]), 2)
-        #     lowid = cenid - div(cachesize, 2)
-        #     upid = cenid + div(cachesize, 2)
-        #     push!(cache_ranges, max(1, lowid):min(length(GF.ωs_ext[i]), upid))
-        # end
 
         # create anomalous term evaluators
         anevs = Vector{AnomalousEvaluator{T,D,D-1}}(undef, length(ano_ids))
@@ -164,7 +173,67 @@ struct FullCorrEvaluator_MF{T,D,N}
                 println(" Reduced tucker center from $size_old to $size_new")
             end
         end
-        return new{T,D,D-1}(GF, anevs, ano_terms_required, anoid_to_Gpid)
+
+        # analyze sparsity AFTER SVD-ing kernels
+        if isnothing(tucker_cutoff)
+            tucker_cutoff = cutoff
+        end
+        GFmin = lowerbound(GF)
+        @show GFmin
+        tucker_cuts = Int[]
+        for Gp in GF.Gps
+            p = 2.0
+            q = 1.0/(1.0 - 1.0/p)
+            Knorm = legnorm(Gp.tucker, p)
+            # see how far tucker center can be pruned
+            cen_  = Gp.tucker.center
+            prune_idx = 0
+            sum_act = 0.0
+            sum_count = 0
+
+            # slow but simple...
+            for idx_sum in sum(size(cen_)):-1:D
+                sum_count = 0
+                sum_act = 0.0
+                for ic in CartesianIndices(cen_)
+                    if sum(Tuple(ic)) > idx_sum
+                        sum_act += abs(cen_[ic]) ^ q
+                        sum_count += 1
+                    end
+                end
+                if (sum_act ^ (1/q)) * Knorm >= GFmin * tucker_cutoff
+                    break
+                else
+                    prune_idx = idx_sum
+                end
+            end
+
+        #     for idx_sum in reverse(3:sum(size(cen_)))
+        #         for k in reverse(axes(cen_, 3))
+        #             for j in reverse(axes(cen_, 2))
+        #                 i = idx_sum - k - j
+        #                 if 1 <= i <= size(cen_, 1)
+        #                     sum_act += abs(cen_[i,j,k]) ^ q
+        #                     sum_count += 1
+        #                 end
+        #             end
+        #         end
+        #         if (sum_act ^ (1/q) * Knorm) >= GFmin * tucker_cutoff
+        #             @show (sum_act ^ (1/q) * Knorm) / GFmin
+        #             break
+        #         else
+        #             prune_idx = idx_sum
+        #         end
+        #     end
+
+            @show sum_count / length(Gp.tucker.center)
+            @show Knorm
+            println("----")
+            push!(tucker_cuts, prune_idx)
+        end
+
+        @show tucker_cuts
+        return new{T,D,D-1}(GF, anevs, ano_terms_required, anoid_to_Gpid, tucker_cuts)
     end
 end
 
@@ -179,6 +248,22 @@ function (fev::FullCorrEvaluator_MF{T,D,N})(w::Vararg{Int,D}) where {T,D,N}
             ret += fev.GF.Gps[i](w...) + anev_act(w...)
         else
             ret += fev.GF.Gps[i](w...)
+        end
+    end
+    return ret
+end
+
+"""
+Evaluate full Matsubara correlator, including anomalous terms.
+"""
+function (fev::FullCorrEvaluator_MF{T,D,N})(::Val{:cut}, w::Vararg{Int,D}) where {T,D,N}
+    ret = zero(ComplexF64)
+    for i in eachindex(fev.GF.Gps)
+        if fev.ano_terms_required[i]
+            anev_act = fev.anevs[fev.anoid_to_Gpid[i]]
+            ret += fev.GF.Gps[i](fev.tucker_cuts[i], w...) + anev_act(w...)
+        else
+            ret += fev.GF.Gps[i](fev.tucker_cuts[i], w...)
         end
     end
     return ret
@@ -328,6 +413,9 @@ end
 
 
 function intact(GF::FullCorrelator_MF{D}) where {D}
+    if length(GF.Gps) != factorial(D+1)
+        @warn "The full correlator you are using here has a reduced number of partial correlators!"
+    end
     return all(intact.(GF.Gps))
 end
 
@@ -387,8 +475,8 @@ function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
         if ipr != -1
             Adiscs_new[i] += reverse(permutedims(G_in.Gps[ipr].tucker.center, (reverse(collect(1:D))))) .* (-1)^D
             Adiscs_ano_new[i] += reverse(permutedims(G_in.Gps[ipr].Adisc_anoβ, (reverse(collect(1:D))))) .* (-1)^(D-1)
-            @DEBUG all([maxabs(G_in.Gps[ip].ωdiscs[d] + reverse(G_in.Gps[ipr].ωdiscs[D-d+1])) < 1e-10 for d in 1:D]) "Kernels for p and reverse(p) are not equivalent."
-            @DEBUG all([maxabs(G_in.Gps[ip].Kernels[d] - G_in.Gps[ipr].Kernels[D-d+1]) < 1e-10 for d in 1:D]) "Kernels for p and reverse(p) are not equivalent."
+            @assert all([maxabs(G_in.Gps[ip].tucker.ωs_center[d] + reverse(G_in.Gps[ipr].tucker.ωs_center[D-d+1])) < 1e-10 for d in 1:D]) "Discrete energy grids for p and reverse(p) are not equivalent. Maybe you compactified the spectral functions?"
+            @DEBUG all([maxabs(G_in.Gps[ip].tucker.legs[d] - G_in.Gps[ipr].tucker.legs[D-d+1]) < 1e-10 for d in 1:D]) "Kernels for p and reverse(p) are not equivalent."
         end
     end
     G_in.ps = ps[i_indepps]
