@@ -179,7 +179,6 @@ struct FullCorrEvaluator_MF{T,D,N}
             tucker_cutoff = cutoff
         end
         GFmin = lowerbound(GF)
-        @show GFmin
         tucker_cuts = Int[]
         for Gp in GF.Gps
             p = 2.0
@@ -226,9 +225,6 @@ struct FullCorrEvaluator_MF{T,D,N}
         #         end
         #     end
 
-            @show sum_count / length(Gp.tucker.center)
-            @show Knorm
-            println("----")
             push!(tucker_cuts, prune_idx)
         end
 
@@ -240,7 +236,7 @@ end
 """
 Evaluate full Matsubara correlator, including anomalous terms.
 """
-function (fev::FullCorrEvaluator_MF{T,D,N})(w::Vararg{Int,D}) where {T,D,N}
+function (fev::FullCorrEvaluator_MF{T,D,N})(::Val{:nocut}, w::Vararg{Int,D}) where {T,D,N}
     ret = zero(ComplexF64)
     for i in eachindex(fev.GF.Gps)
         if fev.ano_terms_required[i]
@@ -256,7 +252,7 @@ end
 """
 Evaluate full Matsubara correlator, including anomalous terms.
 """
-function (fev::FullCorrEvaluator_MF{T,D,N})(::Val{:cut}, w::Vararg{Int,D}) where {T,D,N}
+function (fev::FullCorrEvaluator_MF{T,D,N})(w::Vararg{Int,D}) where {T,D,N}
     ret = zero(ComplexF64)
     for i in eachindex(fev.GF.Gps)
         if fev.ano_terms_required[i]

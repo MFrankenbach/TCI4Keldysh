@@ -4,26 +4,58 @@ using StatProfilerHTML
 
 TCI4Keldysh.TIME() = false
 
+const DEFAULT_T::Float64 = 2000.0
+const DEFAULT_β::Float64 = 1.0/DEFAULT_T
+
+"""
+What is gained from caching central values?
+"""
+function time_cache_gain(;R=5, tolerance=1.e-6)
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    ωconvMat = TCI4Keldysh.channel_trafo("t")
+    beta = 2000.0
+    T = 1.0/beta
+
+    println("  No cache...")
+    t1 = @elapsed begin
+        foo = TCI4Keldysh.Γ_core_TCI_MF(
+            PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved
+            )
+    end
+    x = sum(foo)
+    println("  With cache...")
+    t2 = @elapsed begin
+        Γcore = TCI4Keldysh.Γ_core_TCI_MF(
+        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved,
+        cache_center=2^(R-2)
+        )
+    end 
+    x = sum(Γcore)
+    println(" TIME WITH CACHE: $t2")
+    println(" TIME WITHOUT CACHE: $t1")
+end
+
 function time_Γcore()
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     R = 5
-    tolerance = 1.e-5
+    tolerance = 1.e-6
     ωconvMat = TCI4Keldysh.channel_trafo("t")
-    beta = 100.0
+    beta = 2000.0
     T = 1.0/beta
 
     # compile
     println("  Compile run...")
     foo = TCI4Keldysh.Γ_core_TCI_MF(
-        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved
+        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=1.e-3, unfoldingscheme=:interleaved
         )
+    x = sum(foo)
     println("  Time...")
     t = @elapsed begin
         Γcore = TCI4Keldysh.Γ_core_TCI_MF(
-        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved
+        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved,
+        cache_center=2^(R-2)
         )
     end 
-    x = sum(foo)
     x = sum(Γcore)
     println(" TIME: $t")
 end
@@ -59,7 +91,7 @@ function Γcore_filename(mode::String, xmin, xmax, tolerance::Float64, beta::Flo
     return "gammacore_timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
 end
 
-function time_Γcore_sweep(param_range, mode="R"; beta=10.0, tolerance=1.e-8)
+function time_Γcore_sweep(param_range, mode="R"; beta=DEFAULT_β, tolerance=1.e-8)
     folder = "pwtcidata"
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     ωconvMat = TCI4Keldysh.channel_trafo("t")
@@ -130,8 +162,8 @@ end
 
 function profile_Γcore()
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-    R = 4
-    tolerance = 1.e-5
+    R = 6
+    tolerance = 1.e-6
     ωconvMat = 
         [
             0 -1  0;
@@ -139,13 +171,13 @@ function profile_Γcore()
             -1  0 -1;
             0  0  1;
         ]
-    beta = 50.0
+    beta = 2000.0
     T = 1.0/beta
 
     # compile
     println("  Compile run...")
     Γcore = TCI4Keldysh.Γ_core_TCI_MF(
-        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved
+        PSFpath, 4; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=1.e-3, unfoldingscheme=:interleaved
         )
     # profile
     Profile.clear()
@@ -229,7 +261,7 @@ function test_Gamma_core_TCI_MF(; freq_conv="a", R=4, beta=50.0, tolerance=1.e-5
     testdiff = abs.(refval[testslice...] .- test_qttval[testslice...]) ./ maxref
     printstyled("---- Γcore rank: $(TCI4Keldysh.rank(Γcore))\n"; color=:blue)
     printstyled("---- Maximum value Γcore: $(maxref)\n"; color=:green)
-    printstyled("---- Maximum error: $(maximum(testdiff))\n"; color=:green)
+    printstyled("---- Maximum error: $(maximum(testdiff)) (tol=$tolerance)\n"; color=:green)
 
     # plot
     slice = [1:2^R, 1:2^R, 2^(R-1)]
@@ -311,6 +343,3 @@ function test_K2_TCI(; channel="a", R=4, beta=50.0, tolerance=1.e-5, prime=false
     heatmap(log10.(abs.(K2ref)); clim=clim)
     savefig("K2_ref.png")
 end
-
-time_Γcore()
-time_Γcore_sweep(5:8; beta=2000.0, tolerance=1.e-6)

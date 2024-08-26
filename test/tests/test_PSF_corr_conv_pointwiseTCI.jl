@@ -157,3 +157,29 @@ end
     test_FullCorrEvaluator_KF(3, 3)
     test_FullCorrEvaluator_KF(4, 6)
 end
+
+@testset "Miscellaneous: PSF -> Correlator @ pointwise TCI" begin
+    
+    function test_tucker_cut()
+        R = 5 
+        npt = 4
+        GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=2000.0, nωdisc=20)
+        exact_data = TCI4Keldysh.precompute_all_values(GF)
+
+        cutoff = 1.e-8
+        tucker_cutoff = 1.e-7
+        fev = TCI4Keldysh.FullCorrEvaluator_MF(GF, true; cutoff=cutoff, tucker_cutoff=tucker_cutoff)
+
+        GFmax = maximum(abs.(exact_data))
+        errors = zeros(Float64, 2^(R*(npt-1)))
+        cc = 1
+        for w in Iterators.product(fill(1:2^R, npt-1)...)
+            error = abs(fev(w...) - fev(Val{:nocut}(),w...)) / GFmax
+            errors[cc] = error
+            cc += 1
+        end
+        @test maximum(errors) < tucker_cutoff
+    end
+
+    test_tucker_cut()
+end

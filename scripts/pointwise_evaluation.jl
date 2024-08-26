@@ -102,6 +102,36 @@ function time_PartialCorrelator(perm_idx ;R::Int=5, tolerance::Float64=1.e-8, be
 end
 
 """
+Compare evaluation of FullCorrelator with and without pruning the tucker center
+"""
+function time_tucker_cut()
+    R = 5 
+    npt = 4
+    GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=2000.0, nωdisc=20)
+    # GF = TCI4Keldysh.dummy_correlator(npt, R; beta=2000.0, is_compactAdisc=false)[1]
+    exact_data = TCI4Keldysh.precompute_all_values(GF)
+
+    cutoff = 1.e-8
+    tucker_cutoff = 1.e-7
+    fev = TCI4Keldysh.FullCorrEvaluator_MF(GF, true; cutoff=cutoff, tucker_cutoff=tucker_cutoff)
+
+    GFmax = maximum(abs.(exact_data))
+    @show GFmax
+    errors = zeros(Float64, 2^(R*(npt-1)))
+    cc = 1
+    for w in Iterators.product(fill(1:2^R, npt-1)...)
+        error = abs(fev(w...) - fev(Val{:nocut}(),w...)) / GFmax
+        errors[cc] = error
+        cc += 1
+    end
+    printstyled("Maximum error: $(maximum(errors))\n"; color=:red)
+    @assert maximum(errors) < tucker_cutoff
+
+    @btime $fev(rand(1:2^$R, $npt-1)...)
+    @btime $fev(Val{:nocut}(), rand(1:2^$R, $npt-1)...)
+end
+
+"""
 Check correlator values at the fringes of the grid and compare to tolerance.
 """
 function max_correlator_tail(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
@@ -128,11 +158,10 @@ function max_correlator_tail(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=
     return nothing
 end
 
-function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0, nomdisc=10)
-    # GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
-    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
+function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=false)
     t = @elapsed begin
-        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved) 
+        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved, cut_tucker=true) 
     end
     @show TCI4Keldysh.rank(qtt)
     printstyled("==== Time: $t for tolerance=$tolerance, R=$R\n"; color=:blue)
@@ -161,7 +190,6 @@ end
 
 # yields worst case at least up to R=7
 function time_FullCorrelator_natural(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
-    # GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=beta, nωdisc=nomdisc)
     GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
     t = @elapsed begin
         tt = TCI4Keldysh.compress_FullCorrelator_natural(GF[1], true; tolerance=tolerance) 
@@ -382,5 +410,13 @@ function plot_FullCorrelator_timing(param_range, mode="R"; beta=10.0, tolerance=
     end
 end
 
-# time_FullCorrelator()
-# time_FullCorrelator_sweep("R"; beta=2000.0, Rs=5:8)
+function test_reduce_Gps!()
+    R = 5
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=100.0, is_compactAdisc=false)[1]
+    data = TCI4Keldysh.precompute_all_values(GF)
+
+    TCI4Keldysh.reduce_Gps!(GF)
+    data_red = TCI4Keldysh.precompute_all_values(GF)
+
+    @assert maximum(abs.(data .- data_red)) < 1.e-11
+end

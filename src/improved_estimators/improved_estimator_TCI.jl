@@ -3,8 +3,11 @@ using BenchmarkTools
 Compute interection vertex with symmetric improved estimators and TCI
 =#
 
+# ========== MATSUBARA
+
 """
 Evaluate self-energy pointwise by symmetric improved estimator.
+(Eq. 108 Lihm et. al.)
 """
 struct SigmaEvaluator_MF{D}
     G_QQ::FullCorrEvaluator_MF{ComplexF64, 1, 0}
@@ -83,10 +86,13 @@ end
 """
 First row in Fig 13, Lihm et. al.
 Return 3*R bit quantics tensor train.
+* cache_center: if >0, precompute a block of size 2*cache_center along each dimension
+and use it to save pointwise evaluations
 """
 function Γ_core_TCI_MF(
     PSFpath::String,
     R::Int;
+    cache_center::Int=0,
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
@@ -130,48 +136,82 @@ function Γ_core_TCI_MF(
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
     GFevs = Vector{FullCorrEvaluator_MF{ComplexF64, 3, 2}}(undef, Ncorrs)
     Threads.@threads for l in 1:Ncorrs
-        GFevs[l] = FullCorrEvaluator_MF(GFs[l], true; cutoff=cutoff)
+        GFevs[l] = FullCorrEvaluator_MF(GFs[l], true; cutoff=cutoff, tucker_cutoff=10.0*cutoff)
     end
 
     # create self-energy evaluator
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
     sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
 
-    # function to interpolate
-    function eval_Γ_core(w::Vararg{Int,3})
-        addvals = Vector{ComplexF64}(undef, Ncorrs)
-        Threads.@threads for i in 1:Ncorrs
-            addvals[i] = GFevs[i](w...)
-            for il in eachindex(letter_combinations[i])
-                if letter_combinations[i][il]==='F'
-                    addvals[i] *= -sev(il, w...)
+
+    if cache_center > 0
+        printstyled("-- Preparing cache for core vertex of size ($(2*cache_center))^$D...\n"; color=:cyan)
+    # obtain cache values
+        cache_center = min(cache_center, 2^(R-1))
+        ω_cache_Σ = MF_grid(T, 2*cache_center, true)
+        Σ_calc_sIE = calc_Σ_MF_sIE(PSFpath, sev.Σ_H, ω_cache_Σ; flavor_idx=flavor_idx, T=T)
+        ωs_ext_cache = MF_npoint_grid(T, cache_center, D)
+        cacheval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+            "MF", PSFpath*"4pt/", Σ_calc_sIE; ωs_ext=ωs_ext_cache, T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx
+            )
+
+        # locate cached frequency grids in larger grids
+        cache_start = [findfirst(w -> abs(ωs_ext_cache[j][1] - w)<1.e-10, ωs_ext[j]) for j in 1:D]
+        cache_end =   [findfirst(w -> abs(ωs_ext_cache[j][end] - w)<1.e-10, ωs_ext[j]) for j in 1:D]
+        @assert !any(isnothing.(cache_start))
+        @assert !any(isnothing.(cache_end))
+
+        function is_cached(w::NTuple{3,Int})
+            return all((w .>= cache_start) .&& (w .<= cache_end))
+        end
+
+        # evaluation with caching
+        function eval_Γ_core_cache(w::Vararg{Int,3})
+            if is_cached(w)
+                w_c = w .- cache_start .+ 1
+                return cacheval[w_c...]
+            else
+                addvals = Vector{ComplexF64}(undef, Ncorrs)
+                Threads.@threads for i in 1:Ncorrs
+                    addvals[i] = GFevs[i](w...)
+                    for il in eachindex(letter_combinations[i])
+                        if letter_combinations[i][il]==='F'
+                            addvals[i] *= -sev(il, w...)
+                        end
+                    end
                 end
+            return sum(addvals)
             end
         end
-        return sum(addvals)
+
+        t = @elapsed begin
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core_cache, ntuple(i -> 2^R, D); qtcikwargs...)
+        end
+        @info "quanticscrossinterpolate time (cache): $t"
+        return qtt
+    else
+
+        # evaluation without caching
+        function eval_Γ_core(w::Vararg{Int,3})
+            addvals = Vector{ComplexF64}(undef, Ncorrs)
+            Threads.@threads for i in 1:Ncorrs
+                addvals[i] = GFevs[i](w...)
+                for il in eachindex(letter_combinations[i])
+                    if letter_combinations[i][il]==='F'
+                        addvals[i] *= -sev(il, w...)
+                    end
+                end
+            end
+            return sum(addvals)
+        end
+
+        t = @elapsed begin
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D); qtcikwargs...)
+        end
+        @info "quanticscrossinterpolate time (nocache): $t"
+        return qtt
     end
 
-    # t = @belapsed $eval_Γ_core(rand(1:2^$R, 3)...)
-    # printstyled(" Γcore evaluation: $(t*1.e3) ms\n"; color=:red)
-
-    # # old function (no threading)
-    # function eval_Γ_core(w::Vararg{Int,3})
-    #     ret = zero(ComplexF64)
-    #     for (i, letts) in enumerate(letter_combinations)
-    #         addval = GFevs[i](w...)
-    #         for il in eachindex(letts)
-    #             if letts[il]=='F'
-    #                 addval *= -sev(il, w...)
-    #             end
-    #         end
-    #         ret += addval
-    #     end
-    #     return ret
-    # end
-
-    qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D); qtcikwargs...)
-
-    return qtt
 end
 
 """
@@ -242,3 +282,43 @@ function K2_TCI(
 
     return qtt
 end
+
+# ========== MATSUBARA END
+
+# ========== KELDYSH
+
+# """
+# Evaluate self-energy pointwise by symmetric improved estimator.
+# (Eq. 108 Lihm et. al.)
+# """
+# struct SigmaEvaluator_KF{D}
+#     G_QQ::FullCorrEvaluator_KF{ComplexF64, 1, 0}
+#     G_QF::FullCorrEvaluator_KF{ComplexF64, 1, 0}
+#     G_FQ::FullCorrEvaluator_KF{ComplexF64, 1, 0}
+#     G::FullCorrEvaluator_KF{ComplexF64, 1, 0}
+#     Σ_H::Float64
+#     ωconvMat::Matrix{Int}
+#     ωconvOff::Vector{Int}
+
+#     function SigmaEvaluator_KF(
+#         G_QQ_::FullCorrelator_KF{1},
+#         G_QF_::FullCorrelator_KF{1},
+#         G_FQ_::FullCorrelator_KF{1},
+#         G_::FullCorrelator_KF{1},
+#         Σ_H::Float64,
+#         ωconvMat::Matrix{Int};
+#         )
+
+#         G_QQ = FullCorrEvaluator_MF(G_QQ_, true; cutoff=1.e-12)
+#         G_QF = FullCorrEvaluator_MF(G_QF_, true; cutoff=1.e-12)
+#         G_FQ = FullCorrEvaluator_MF(G_FQ_, true; cutoff=1.e-12)
+#         G = FullCorrEvaluator_MF(G_, true; cutoff=1.e-12)
+
+#         @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+
+#         D = size(ωconvMat, 2)
+#         Nfer = length(only(G_.ωs_ext))
+#         return new{D}(G_QQ, G_QF, G_FQ, G, Σ_H, ωconvMat, freq_shift_rot(ωconvMat, div(Nfer,2)))
+#     end
+# end
+# ========== KELDYSH END

@@ -25,6 +25,19 @@ function calc_Σ_MF_sIE(G_QQ_aux::Vector{ComplexF64}, G_QF_aux::Vector{ComplexF6
     return G_QQ_aux .+ Σ_H .- G_QF_aux ./ G .* G_FQ_aux
 end
 
+"""
+convenience overload
+"""
+function calc_Σ_MF_sIE(PSFpath, Σ_H::Float64, ω_fer::Vector{Float64}; flavor_idx::Int, T::Float64)
+    G        = FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+    G_aux    = FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+    G_QQ_aux = FullCorrelator_MF(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+    G_data      = precompute_all_values(G)
+    G_aux_data  = precompute_all_values(G_aux)
+    G_QQ_aux_data= precompute_all_values(G_QQ_aux)
+    return calc_Σ_MF_sIE(G_QQ_aux_data, G_aux_data, G_aux_data, G_data, Σ_H)
+end
+
 
 """
 precompute_Σs_MF(

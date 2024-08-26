@@ -271,9 +271,9 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel:
         end
     end
 
-    if cut_tucker
+    if !cut_tucker
         function _eval(w::Vararg{Int,D}) where {D}
-            return fev(Val{:cut}(), w...)
+            return fev(Val{:nocut}(), w...)
         end
         qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), _eval, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
 
