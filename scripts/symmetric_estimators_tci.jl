@@ -4,8 +4,8 @@ using StatProfilerHTML
 
 TCI4Keldysh.TIME() = false
 
-const DEFAULT_T::Float64 = 2000.0
-const DEFAULT_β::Float64 = 1.0/DEFAULT_T
+const DEFAULT_β::Float64 = 2000.0
+const DEFAULT_T::Float64 = 1.0/DEFAULT_β
 
 """
 What is gained from caching central values?
@@ -192,7 +192,8 @@ end
 test & plot
 """
 function test_Gamma_core_TCI_MF(; freq_conv="a", R=4, beta=50.0, tolerance=1.e-5)
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+    # PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     T = 1.0 / beta
     logtol = round(Int, log10(tolerance))
     spin = 1
@@ -284,6 +285,7 @@ test & plot
 """
 function test_K2_TCI(; channel="a", R=4, beta=50.0, tolerance=1.e-5, prime=false)
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
     T = 1.0 / beta
     logtol = round(Int, log10(tolerance))
     flavor = 1

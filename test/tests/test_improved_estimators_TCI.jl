@@ -1,3 +1,12 @@
+# data sets to check
+const PSFpath_list = [
+    joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/"),
+    joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+]
+for path in PSFpath_list
+    @assert isdir(PSFpath_list) "directory $path does not exist"
+end
+
 @testset "SIE: Self-energy" begin
         
     function test_freq_shift_rot()
@@ -12,9 +21,8 @@
     end
 
     # no TCI involved here
-    function test_SigmaEvaluator()
+    function test_SigmaEvaluator(PSFpath)
         R = 4
-        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
         beta = 60.0
         T = 1.0 / beta
         channel = "a"
@@ -43,13 +51,14 @@
     end
 
     test_freq_shift_rot()
-    test_SigmaEvaluator()
+    for PSFpath in PSFpath_list
+        test_SigmaEvaluator(PSFpath)
+    end
 end
 
 @testset "SIE: Vertex" begin
     
-    function test_Gamma_core_TCI_MF(; freq_conv="a", R=4, beta=15.0, tolerance=1.e-5)
-        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    function test_Gamma_core_TCI_MF(PSFpath; freq_conv="a", R=4, beta=15.0, tolerance=1.e-5)
         T = 1.0 / beta
         spin = 1
 
@@ -91,8 +100,7 @@ end
         @test maxerr < 5.0 * tolerance
     end
 
-    function test_K2_TCI(; channel="a", R=5, beta=100.0, tolerance=1.e-7, prime=false)
-        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    function test_K2_TCI(PSFpath; channel="a", R=5, beta=100.0, tolerance=1.e-7, prime=false)
         T = 1.0 / beta
         flavor = 1
 
@@ -138,10 +146,12 @@ end
         @test maxdiff < 5.0 * tolerance
     end
 
-    for channel in ["a", "p", "t"]
-        test_Gamma_core_TCI_MF(;freq_conv=channel)
-        for prime in [true, false]
-            test_K2_TCI(;channel=channel, prime=prime)
+    for PSFpath in PSFpath_list
+        for channel in ["a", "p", "t"]
+            test_Gamma_core_TCI_MF(PSFpath; freq_conv=channel)
+            for prime in [true, false]
+                test_K2_TCI(PSFpath; channel=channel, prime=prime)
+            end
         end
     end
 end

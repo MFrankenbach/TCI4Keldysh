@@ -564,7 +564,7 @@ end
 
 Deduce missing S[O₁,O₂,O₃,O₄] by use of symmetries => relate to exchange of the 2 creation (annihilation) operators
 """
-function symmetry_expand(path::String, Ops::Vector{String})
+function symmetry_expand(path::String, Ops::Vector{String}; nested_ωdisc=false)
     if !(length(Ops)==4)
         throw(ArgumentError("Ops must contain 4 strings."))
     end
@@ -573,7 +573,7 @@ function symmetry_expand(path::String, Ops::Vector{String})
     function deduce_Adisc(path, Ops::Vector{String}, perm::Vector{Int}; combination::Matrix{Int})
 
         Adiscs = [TCI4Keldysh.load_Adisc(path, Ops, i) for i in 1:2]
-        ωdisc = TCI4Keldysh.load_ωdisc(path, Ops)
+        ωdisc = TCI4Keldysh.load_ωdisc(path, Ops; nested_ωdisc=nested_ωdisc)
         
         filename = parse_Ops_to_filename(Ops[perm])
         fullfilename = joinpath(path, filename)
@@ -931,9 +931,32 @@ function absmax(v)
     return maximum(abs.(v))
 end
 
+"""
+Where to find PSF data
+"""
 function datadir()
     return joinpath(dirname(Base.current_project()), "data")
 end
+
+"""
+For given PSFpath, get corresponding temperature.
+"""
+function dir_to_T(PSFpath::String) :: Float64
+    d = Dict(
+        "SIAM_u=1.00"=>1.0/2000.0,
+        "SIAM_u=0.50"=>1.0/2000.0,
+        "SIAM_u=1.50"=>1.0/2000.0,
+        "siam05_U0.05_T0.005_Delta0.0318"=>1.0/200.0
+        )
+    for (key, val) in d
+        if contains(PSFpath, key)
+            return val
+        end
+    end
+    error("No temperature found for path: $PSFpath")
+    return 0.0
+end
+
 
 function iterate_binvec(R::Int)
     return Iterators.product(fill([1,2], R)...)
@@ -942,6 +965,19 @@ end
 function Acont_h5fname(perm_idx::Int, D::Int; Acont_folder="Acontdata")
     return joinpath(Acont_folder, "Acont$(D)D_$perm_idx.h5")
 end
+
+function report_mem(do_gc=false)
+    println("---------- MEMORY REPORT ----------")
+    if do_gc
+        Base.GC.gc()
+        println("  Available system memory (before gc()): $(Sys.free_memory() / 1024^2) MB")
+        println("  Garbage collected")
+    end
+    println("  Total system memory: $(Sys.total_memory() / 1024^2) MB")
+    println("  Available system memory: $(Sys.free_memory() / 1024^2) MB")
+    println("-----------------------------------")
+end
+
 
 """
 * channel: a, p or t

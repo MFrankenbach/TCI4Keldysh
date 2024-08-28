@@ -630,8 +630,13 @@ end
 """
 Load sample Matsubara full correlator.
 """
-function dummy_correlator(npt::Int, R::Int; beta::Float64=1.e3, channel::String="t", Ops::Union{Nothing,Vector{String}}=nothing, kwargs...) :: Vector{FullCorrelator_MF}
-    PSFpath = joinpath(datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+function dummy_correlator(
+    npt::Int, R::Int; 
+    beta::Float64=1.e3, channel::String="t", Ops::Union{Nothing,Vector{String}}=nothing,
+    PSFpath="SIAM_u=0.50/PSF_nz=2_conn_zavg/",
+    kwargs...
+    ) :: Vector{FullCorrelator_MF}
+    PSFpath = joinpath(datadir(), PSFpath)
     Ops_loc = isnothing(Ops) ?  dummy_operators(npt) : Ops
     ωconvMat = dummy_frequency_convention(npt; channel=channel)
     GFs = load_npoint(PSFpath, Ops_loc, npt, R, ωconvMat; nested_ωdisc=false, beta=beta, kwargs...)

@@ -143,9 +143,9 @@ struct FullCorrEvaluator_MF{T,D,N}
         cutoff::Float64=1.e-12, tucker_cutoff::Union{Float64, Nothing}=nothing
     ) where {D}
 
-        if length(GF.Gps)==factorial(D+1)
-          reduce_Gps!(GF)
-        end
+        # if length(GF.Gps)==factorial(D+1)
+        #   reduce_Gps!(GF)
+        # end
 
         ano_terms_required = ano_term_required.(GF.Gps)
         ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
@@ -689,6 +689,7 @@ struct FullCorrEvaluator_KF{D, T}
         for (p, Gp) in enumerate(KFC.Gps)
             tmp_legs = Vector{eltype(Gp.tucker.legs)}(undef, D)
             # decompose legs
+            old_size = size(Gp.tucker.center)
             for d in 1:D
                 U, S, V = svd(Gp.tucker.legs[d])
                 notcut = S .> cutoff
@@ -700,6 +701,7 @@ struct FullCorrEvaluator_KF{D, T}
             for iR in iRs_required[p]
                 iR_legs = [i+1<=iR ? conj.(tmp_legs[i]) : tmp_legs[i] for i in eachindex(tmp_legs)]
                 push!(tucker_centers[p], contract_1D_Kernels_w_Adisc_mp(iR_legs, Gp.tucker.center))
+                println("Reduced tucker center from $(old_size) to $(size(tucker_centers[p][end]))")
             end
         end
         return new{D,T}(KFC, iK, iRs_required, iso_kernels, tucker_centers)
@@ -713,15 +715,13 @@ function (fev::FullCorrEvaluator_KF{D})(idx::Vararg{Int,D}) where {D}
         idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
 
         # contract tuckers
-        # TODO: Efficient implementation for multiple iRs
         for (j, iR) in enumerate(fev.iRs_required[p])
             res = fev.tucker_centers[p][j]
 
             sz_res = size(res)
             @inbounds for i in 1:D
                 mod_fun = (i+1)<=iR ? conj : identity 
-                # mod_fun outside view better?
-                res = (view(mod_fun(fev.iso_kernels[i,p]), idx_int[i]:idx_int[i], :)) * reshape(res, (sz_res[i], prod(sz_res[i+1:D])))
+                res = mod_fun(view(fev.iso_kernels[i,p], idx_int[i]:idx_int[i], :)) * reshape(res, (sz_res[i], prod(sz_res[i+1:D])))
                 res = reshape(res, prod(sz_res[i+1:D]))
             end
 
@@ -730,6 +730,33 @@ function (fev::FullCorrEvaluator_KF{D})(idx::Vararg{Int,D}) where {D}
     end
     return ret
 end
+
+# function (fev::FullCorrEvaluator_KF{3})(idx::Vararg{Int,3})
+#     res = zero(ComplexF64)
+#     for (p,Gp) in enumerate(fev.KFC.Gps)
+#         idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
+
+#         ret = zero(ComplexF64)
+#         for (idr, iR) in enumerate(fev.iRs_required[p])
+#             tc_act = fev.tucker_centers[p][idr]
+#             n1, n2, n3 = size(tc_act)
+#             modfuns = [(i+1)<=iR ? conj : identity for i in 1:3]
+#             for k in 1:n3
+#                 ret3 = zero(ComplexF64)
+#                 for j in 1:n2
+#                     ret2 = zero(ComplexF64)
+#                     for i in 1:n1
+#                         ret2 += modfuns[1](fev.iso_kernels[1,p][idx_int[1], i]) * tc_act[i,j,k]
+#                     end
+#                     ret3 += modfuns[2](fev.iso_kernels[2,p][idx_int[2], j]) * ret2
+#                 end
+#                 ret += ret3 * modfuns[3](fev.iso_kernels[3,p][idx_int[3], k])
+#             end
+#         res += ret * fev.KFC.GR_to_GK[iR, fev.iK, p]
+#         end
+#     end
+#     return res
+# end
 
 
 """

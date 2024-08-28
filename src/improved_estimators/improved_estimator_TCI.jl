@@ -184,6 +184,8 @@ function Γ_core_TCI_MF(
             end
         end
 
+        report_mem()
+
         t = @elapsed begin
             qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core_cache, ntuple(i -> 2^R, D); qtcikwargs...)
         end
@@ -204,6 +206,8 @@ function Γ_core_TCI_MF(
             end
             return sum(addvals)
         end
+
+        report_mem()
 
         t = @elapsed begin
             qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D); qtcikwargs...)
@@ -286,6 +290,62 @@ end
 # ========== MATSUBARA END
 
 # ========== KELDYSH
+
+"""
+Compute Keldysh core vertex for single Keldysh component
+
+* iK: Keldysh component
+* sigmak, γ: broadening parameters
+"""
+function Γ_core_TCI_KF(
+    PSFpath::String,
+    R::Int,
+    iK::Int,
+    ωmin::Float64,
+    ωmax::Float64,
+    sigmak::Float64, # broadening
+    γ::Float64;
+    cache_center::Int=0, # later: cache central values
+    ωconvMat::Matrix{Int},
+    T::Float64,
+    flavor_idx::Int=1,
+    qtcikwargs...
+    )
+
+    error("NYI")
+    # make frequency grid
+    D = size(ωconvMat, 2)
+    @assert D==3
+    ωs_ext = KF_grid(ωmin, ωmax, R, D)
+
+    # all 16 4-point correlators
+    letters = ["F", "Q"]
+    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
+    op_labels = ("1", "1dag", "3", "3dag")
+    op_labels_symm = ("3", "3dag", "1", "1dag")
+    is_incoming = (false, true, false, true)
+
+    # create correlator objects
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{FullCorrelator_KF}(undef, Ncorrs)
+    PSFpath_4pt = joinpath(PSFpath, "4pt")
+    filelist = readdir(PSFpath_4pt)
+    for l in 1:Ncorrs
+        letts = letter_combinations[l]
+        println("letts: ", letts)
+        ops = [letts[i]*op_labels[i] for i in 1:4]
+        if !any(parse_Ops_to_filename(ops) .== filelist)
+            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
+        end
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=[sigmak], γ=γ);
+    end
+
+    # evaluate self-energy
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+    ΣωconvMat = incoming_trafo * ωconvMat
+    Σω_grid = range
+end
 
 # """
 # Evaluate self-energy pointwise by symmetric improved estimator.

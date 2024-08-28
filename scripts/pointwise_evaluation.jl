@@ -159,7 +159,8 @@ function max_correlator_tail(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=
 end
 
 function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
-    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=false)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=true, PSFpath="siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+    # GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=false)
     t = @elapsed begin
         qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved, cut_tucker=true) 
     end
@@ -201,7 +202,7 @@ end
 
 
 function compare_PartialFullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
-    tfull = time_FullCorrelator(;R=R, tolerance=tolerance, beta=beta, nomdisc=nomdisc)
+    tfull = time_FullCorrelator(;R=R, tolerance=tolerance, beta=beta)
     ts_partial = []
     for i in 1:24
         tp = time_PartialCorrelator(i ;R=R, tolerance=tolerance, beta=beta, nomdisc=nomdisc)

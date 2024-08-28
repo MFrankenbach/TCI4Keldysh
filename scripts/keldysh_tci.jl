@@ -154,7 +154,7 @@ function time_pointwise_eval()
 
     ωmax = 1.0
     ωmin = -ωmax
-    R = 4
+    R = 7
     ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
     ωconvMat = if npt==4
             TCI4Keldysh.channel_trafo("t")
@@ -167,7 +167,7 @@ function time_pointwise_eval()
     KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
 
     iK = 8
-    KFev = TCI4Keldysh.FullCorrEvaluator_KF(KFC, iK)
+    KFev = TCI4Keldysh.FullCorrEvaluator_KF(KFC, iK; cutoff=1.e-10)
     function KFC_(idx::Vararg{Int,3})
         return TCI4Keldysh.evaluate(KFC, idx...; iK=iK)        
     end
@@ -175,24 +175,29 @@ function time_pointwise_eval()
     @btime $KFC_(rand(1:2^$R, 3)...)
     @btime $KFev(rand(1:2^$R, 3)...)
 
+    v = rand(1:2^R, 3)
+    @show abs(KFC_(v...) - KFev(v...)) / abs(KFev(v...))
+
     # profile
-    Profile.clear()
-    Profile.@profile begin
-        dummy = zero(ComplexF64)
-        for _ in 1:1000
-            dummy += KFev(rand(1:2^R, 3)...)
-        end
-        println(dummy)
-    end
-    statprofilehtml()
+    # Profile.clear()
+    # Profile.@profile begin
+    #     dummy = zero(ComplexF64)
+    #     for _ in 1:1000
+    #         dummy += KFev(rand(1:2^R, 3)...)
+    #     end
+    #     println(dummy)
+    # end
+    # statprofilehtml()
 end
 
 function time_compress_FullCorrelator_KF(iK::Int; R=4, tolerance=1.e-3)
     npt = 4
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt")
+    # PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/4pt")
     D = npt-1
     Ops = TCI4Keldysh.dummy_operators(npt)
-    T = default_T()
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    @show T
 
     ωmax = 1.0
     ωmin = -ωmax
@@ -204,7 +209,8 @@ function time_compress_FullCorrelator_KF(iK::Int; R=4, tolerance=1.e-3)
         else
             TCI4Keldysh.ωconvMat_K1()
         end
-    γ, sigmak = beta2000_broadening(T)
+    # γ, sigmak = beta2000_broadening(T)
+    γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
     KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
 
     t = @elapsed begin
@@ -216,10 +222,11 @@ end
 
 function test_compress_FullCorrelator_KF(npt::Int, iK; R=4, tolerance=1.e-3, channel::String="t")
     addpath = npt==4 ? "4pt/" : ""
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg", addpath)
+    # PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg", addpath)
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg", addpath)
     D = npt-1
     Ops = TCI4Keldysh.dummy_operators(npt)
-    T = default_T()
+    T = TCI4Keldysh.dir_to_T(PSFpath)
 
     ωmax = 1.0
     ωmin = -ωmax
@@ -357,11 +364,42 @@ function compress_KFCdata_all(R; tcikwargs...)
 end
 
 """
+For each pivot (iK, σ1, ... σj), look how many tuples (iK', σ1, ..., σj) are also pivots
+"""
+function iK_pivots(tt::TCI.TensorCI2)
+    @assert tt.localdims[1]==16 "Is this really a Keldysh object with all Keldysh indices?"
+    bondcount = 2
+    for I in tt.Iset[2:end]
+        d = Dict{Vector{Float64}, Int}()
+        for i in I
+            isub = i[2:end]
+            if !haskey(d, isub)
+                d[isub]=1
+            else
+                d[isub]+=1
+            end
+        end
+        
+        # analyze
+        println("\n==== Bond $bondcount:")
+        mean_iKs = 0.0
+        for (_, val) in d
+            mean_iKs += val/16
+        end
+        mean_iKs /= length(d)
+        println("  Mean iKs per frequency point: $mean_iKs")
+        bondcount += 1
+    end
+end
+
+"""
 QTCI-compress all Keldysh components, using precomputed data from disk.
 """
 function compress_KFCdata_all(R, γ, sigmak; tcikwargs...)
     # has D frequency, D+1 Keldysh indices
-    data = h5read(corrdata_fnameh5(R,γ,sigmak), "KFCdata")
+    fname = corrdata_fnameh5(R,γ,sigmak)
+    @assert isfile(fname) "File $fname does not exist"
+    data = h5read(fname, "KFCdata")
     D = div(ndims(data)-1, 2)
     R = Int(log2(size(data, 1))) 
 
@@ -379,6 +417,8 @@ function compress_KFCdata_all(R, γ, sigmak; tcikwargs...)
     # c_eval = TCI.CachedFunction{eltype(data)}(_eval_KFC, localdims)
     @time tt, _, _ = TCI.crossinterpolate2(ComplexF64, _eval_KFC, localdims, [initpivot]; tcikwargs...)
     @show TCI.linkdims(tt)
+
+    iK_pivots(tt)
 end
 
 function compress_KFCdata(R; qtcikwargs...)
@@ -527,21 +567,19 @@ function plot_ranks(gammarange, sigmarange, iK; R=7, tolerance=1.e-6)
     savefig(p, "ranks_KFC.png")
 end
 
-function update_datalist(gammarange, sigmarange)
+function update_datalist(gammarange, sigmarange, R::Int)
     open("KFCdata/available_data.txt", "a") do f
-        towrite = "gamma=$(collect(gammarange)), sigma=$(collect(sigmarange))\n"
+        towrite = "gamma=$(collect(gammarange)), sigma=$(collect(sigmarange)), R=$R\n"
         write(f, towrite)
     end
 end
 
-# gammarange = (10:20:90)
-# sigmarange = [0.01, 0.1, 1.0]
-# for γfac in gammarange
-#     for sigmak in sigmarange
-#         store_KF_correlator(γfac, sigmak; R=7)
-#     end
+# gammarange = [30]
+# sigmarange = [0.1]
+# for R in 4:6
+#     store_KF_correlator(gammarange[1], sigmarange[1]; R=R)
+#     update_datalist(gammarange, sigmarange, R)
 # end
-# update_datalist(gammarange, sigmarange)
 
 # for R in 5:9
 #     time_compress_FullCorrelator_KF(2; R=R, tolerance=1.e-3)
