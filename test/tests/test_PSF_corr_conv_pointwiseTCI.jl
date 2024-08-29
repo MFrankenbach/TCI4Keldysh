@@ -126,12 +126,11 @@ end
         PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg", addpath)
         D = npt-1
         Ops = TCI4Keldysh.dummy_operators(npt)
-        T = 5 * 1.e-4
+        T = TCI4Keldysh.dir_to_T(PSFpath)
 
         ωmax = 1.0
-        ωmin = -ωmax
         R = 4
-        ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+        ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
         ωconvMat = if npt==4
                 TCI4Keldysh.channel_trafo("t")
             elseif npt==3
@@ -153,9 +152,49 @@ end
         end
     end
 
+
+    function test_compress_FullCorrelator_KF(npt::Int, iK; R=4, tolerance=1.e-5, channel::String="t")
+        addpath = npt==4 ? "4pt/" : ""
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg", addpath)
+        D = npt-1
+        Ops = TCI4Keldysh.dummy_operators(npt)
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+
+        ωmax = 1.0
+        ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
+        ωconvMat = if npt==4
+                TCI4Keldysh.channel_trafo(channel)
+            elseif npt==3
+                TCI4Keldysh.channel_trafo_K2(channel, false)
+            else
+                TCI4Keldysh.ωconvMat_K1()
+            end
+        γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
+        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
+
+        # reference
+        data_ref = TCI4Keldysh.precompute_all_values(KFC)[fill(Colon(),D)..., TCI4Keldysh.KF_idx(iK,D)...]
+        maxref = maximum(abs.(data_ref))
+
+        # TCI
+        qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(KFC, iK; tolerance=tolerance, unfoldingscheme=:fused)
+        qttval = TCI4Keldysh.QTT_to_fatTensor(qtt, Base.OneTo.(fill(2^R, D)))
+
+        slice = fill(1:2^R, D)
+        error = maximum(abs.(qttval .- data_ref[slice...]) ./ maxref)
+        @test error <= 3.0*tolerance
+    end
+
     test_FullCorrEvaluator_KF(2, 2)
     test_FullCorrEvaluator_KF(3, 3)
     test_FullCorrEvaluator_KF(4, 6)
+
+    test_compress_FullCorrelator_KF(4, 2)
+    test_compress_FullCorrelator_KF(4, 13)
+    test_compress_FullCorrelator_KF(3, 3)
+    test_compress_FullCorrelator_KF(3, 6)
+    test_compress_FullCorrelator_KF(2, 2)
+    test_compress_FullCorrelator_KF(2, 4)
 end
 
 @testset "Miscellaneous: PSF -> Correlator @ pointwise TCI" begin

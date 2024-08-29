@@ -64,7 +64,7 @@ end
     function test_linearAdisc_KF(npt::Int)
         D = npt-1
         R = 4
-        ωs_ext = TCI4Keldysh.KF_grid(-2.0, 2.0, R, D)
+        ωs_ext = TCI4Keldysh.KF_grid(2.0, R, D)
         γ=0.01
         sigmak=[0.2]
 
@@ -101,7 +101,7 @@ end
     function test_GR_to_GK()
         D = 3
         R = 4
-        ωs_ext = TCI4Keldysh.KF_grid(-1.0, 1.0, R, D)
+        ωs_ext = TCI4Keldysh.KF_grid(1.0, R, D)
 
         KFC = TCI4Keldysh.multipeak_correlator_KF(ωs_ext, 1.0)
         perm_idx = 2

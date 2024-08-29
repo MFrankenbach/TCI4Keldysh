@@ -50,7 +50,6 @@ function SigmaEvaluator_MF(PSFpath::String, R::Int, T::Float64, ωconvMat::Matri
     G_FQ = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
     G_QQ = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
 
-    # TODO: IS THIS CORRECT
     Adisc_Σ_H = load_Adisc_0pt(PSFpath, "Q12", flavor_idx)
     Σ_H = only(Adisc_Σ_H)
 
@@ -301,10 +300,9 @@ function Γ_core_TCI_KF(
     PSFpath::String,
     R::Int,
     iK::Int,
-    ωmin::Float64,
-    ωmax::Float64,
-    sigmak::Float64, # broadening
-    γ::Float64;
+    ωmax::Float64;
+    sigmak::Vector{Float64}, # broadening
+    γ::Float64,
     cache_center::Int=0, # later: cache central values
     ωconvMat::Matrix{Int},
     T::Float64,
@@ -312,11 +310,10 @@ function Γ_core_TCI_KF(
     qtcikwargs...
     )
 
-    error("NYI")
     # make frequency grid
     D = size(ωconvMat, 2)
     @assert D==3
-    ωs_ext = KF_grid(ωmin, ωmax, R, D)
+    ωs_ext = KF_grid(ωmax, R, D)
 
     # all 16 4-point correlators
     letters = ["F", "Q"]
@@ -337,14 +334,87 @@ function Γ_core_TCI_KF(
         if !any(parse_Ops_to_filename(ops) .== filelist)
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
-        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=[sigmak], γ=γ);
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ);
     end
 
     # evaluate self-energy
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
     @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+    ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
+    Σω_grid = KF_grid_fer(2*ωmax, R+1)
+    Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
+
     ΣωconvMat = incoming_trafo * ωconvMat
-    Σω_grid = range
+    # frequency grid offset
+    corner_low = [first(ωs_ext[i]) for i in 1:D]
+    corner_idx = ones(Int, D)
+    corner_image = ΣωconvMat * corner_low
+    idx_image = ΣωconvMat * corner_idx
+    desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
+    ωconvOff = desired_idx .- idx_image
+    function sev(row::Int, w::Vararg{Int,3})
+        w_int = dot(ΣωconvMat[row,:], SA[w...]) + ωconvOff[row]
+        return Σ[w_int,:,:]
+    end
+
+    X = [0 1; 1 0]
+    iK_tuple = KF_idx(iK, D)
+
+    function eval_Γ_core(w::Vararg{Int,3})
+        addvals = Vector{ComplexF64}(undef, Ncorrs)
+        Threads.@threads for i in 1:Ncorrs
+            # first all Keldysh indices
+            res = reshape(evaluate_all_iK(GFs[i], w...), ntuple(_->2, D+1))
+            val_legs = []
+            for il in eachindex(is_incoming)
+                mat = if letter_combinations[i][il]==='F'
+                        -sev(il, w...)
+                    else
+                        X
+                    end
+                leg = if is_incoming[il]
+                        vec(mat[:, iK_tuple[il]])
+                    else
+                        vec(mat[iK_tuple[il], :])
+                    end
+                push!(val_legs, leg)
+            end
+            for d in 1:D+1
+                res = res[1,ntuple(_->Colon(),D+1-d)...].*val_legs[d][1] .+ res[2,ntuple(_->Colon(),D+1-d)...].*val_legs[d][2]
+            end
+            addvals[i] = res
+        end
+        return sum(addvals)
+    end
+
+    # time eval
+    tavg = 0.0
+    N = 100
+    for _ in 1:N
+        t = @elapsed eval_Γ_core(rand(1:2^R, 3)...)
+        tavg += t/N
+    end
+    printstyled("  Time for one eval: $tavg\n"; color=:blue)
+
+    # evaluate full block
+    if R<=3
+        outsize = ntuple(_ -> 2^R, D)
+        Γcore = zeros(ComplexF64, outsize)
+        for w in Iterators.product(Base.OneTo.(outsize)...) 
+            Γcore[w...] = eval_Γ_core(w...)
+        end
+        fname = "Γcore_KF_R=$R.h5"
+        if isfile(fname)
+            rm(fname)
+        end
+        h5write(fname, "Γcore", Γcore)
+    end
+
+    t = @elapsed begin
+        qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D); qtcikwargs...)
+    end
+    @info "quanticscrossinterpolate time (nocache): $t"
+    return qtt
 end
 
 # """

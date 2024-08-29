@@ -26,8 +26,7 @@ function plot_2pt_KeldyshCorrelator()
 
     R = 7
     ωmax = 1.0
-    ωmin = -ωmax
-    ωs_ext = TCI4Keldysh.KF_grid(ωmin, ωmax, R, D)
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
     ωconvMat = reshape([1; -1], (2,1))
     γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
     KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
@@ -220,7 +219,7 @@ function time_compress_FullCorrelator_KF(iK::Int; R=4, tolerance=1.e-3)
     printstyled("  Time for single component, tol=$(tolerance), R=$R: $t[s]\n"; color=:blue)
 end
 
-function test_compress_FullCorrelator_KF(npt::Int, iK; R=4, tolerance=1.e-3, channel::String="t")
+function test_compress_FullCorrelator_KF(npt::Int, iK; R=4, tolerance=1.e-6, channel::String="t")
     addpath = npt==4 ? "4pt/" : ""
     # PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg", addpath)
     PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg", addpath)
@@ -229,8 +228,7 @@ function test_compress_FullCorrelator_KF(npt::Int, iK; R=4, tolerance=1.e-3, cha
     T = TCI4Keldysh.dir_to_T(PSFpath)
 
     ωmax = 1.0
-    ωmin = -ωmax
-    ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
     ωconvMat = if npt==4
             TCI4Keldysh.channel_trafo(channel)
         elseif npt==3
@@ -252,12 +250,79 @@ function test_compress_FullCorrelator_KF(npt::Int, iK; R=4, tolerance=1.e-3, cha
     qttval = TCI4Keldysh.QTT_to_fatTensor(qtt, Base.OneTo.(fill(2^R, D)))
     @show TCI4Keldysh.rank(qtt)
 
-    @assert maximum(abs.(qttval .- data_ref) ./ maxref) <= 3.0*tolerance
+    slice = fill(1:2^R, D)
+    error = maximum(abs.(qttval .- data_ref[slice...]) ./ maxref)
+    @assert error <= 3.0*tolerance
+    printstyled("  Max error (tol=$tolerance): $error\n"; color=:blue)
 end
 
 
 function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
     return "KF_timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
+end
+
+function test_Γcore_KF(iK::Int, channel::String="a")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    R = 3
+    tolerance = 1.e-3
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ωmax = 1.0
+    D = 3
+    iK_tuple = TCI4Keldysh.KF_idx(iK, D)
+    # γ, sigmak = beta2000_broadening(T)
+    γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
+    flavor_idx = 1
+
+    # reference
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
+    Σωgrid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
+    Σ_ref = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, sigmak, γ)
+    Γcore_ref = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+        "KF",
+        PSFpath*"4pt/",
+        Σ_ref
+        ;
+        T,
+        flavor_idx = flavor_idx,
+        ωs_ext = ωs_ext,
+        ωconvMat=ωconvMat,
+        sigmak, γ
+    )
+
+    # tci
+    qtt = TCI4Keldysh.Γ_core_TCI_KF(
+        PSFpath, R, iK, ωmax
+        ; 
+        sigmak=sigmak,
+        γ=γ,
+        T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+        )
+
+    # compare
+    Γcore_tci = TCI4Keldysh.QTT_to_fatTensor(qtt, Base.OneTo.(fill(2^R, D)))
+    @show size(Γcore_tci)
+    @show size(Γcore_ref)
+    scfun = x -> log10(abs(x))
+    diff = abs.(Γcore_tci .- Γcore_ref[1:2^R,:,:,iK_tuple...])
+    maxref =  maximum(abs.(Γcore_ref))
+    reldiff = diff ./ maxref
+    @assert maximum(reldiff) < 3.0*tolerance
+    amaxdiff = argmax(reldiff)[1]
+    ref_slice = Γcore_ref[amaxdiff,:,:,iK_tuple...]
+    tci_slice = Γcore_tci[amaxdiff,:,:]
+
+    heatmap(scfun.(ref_slice))
+    savefig("KFcore_ref.png")
+    heatmap(scfun.(tci_slice))
+    savefig("KFcore_tci.png")
+    heatmap(scfun.(tci_slice .- ref_slice))
+    savefig("diff.png")
+
+    @show maximum(diff / maximum(abs.(Γcore_ref)))
+    @show maximum(diff)
+    @show maxref
+
 end
 
 """
@@ -474,7 +539,7 @@ function test_singlepeak_KF(npt::Int)
     # peak of strength 1.0 at (-2.0, ..., -2.0) in each PSF
     ωdisc = [-2.0, 1.0]    
     Adiscs = [zeros(Float64, ntuple(i->2, D)) for _ in 1:factorial(D+1)]
-    ωs_ext = TCI4Keldysh.KF_grid(-1.0, 1.0, R, D)
+    ωs_ext = TCI4Keldysh.KF_grid(1.0, R, D)
 
     for A in Adiscs
         A[ones(Int, D)...] = 1.0

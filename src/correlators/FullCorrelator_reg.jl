@@ -143,9 +143,9 @@ struct FullCorrEvaluator_MF{T,D,N}
         cutoff::Float64=1.e-12, tucker_cutoff::Union{Float64, Nothing}=nothing
     ) where {D}
 
-        # if length(GF.Gps)==factorial(D+1)
-        #   reduce_Gps!(GF)
-        # end
+        if length(GF.Gps)==factorial(D+1)
+          reduce_Gps!(GF)
+        end
 
         ano_terms_required = ano_term_required.(GF.Gps)
         ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
@@ -648,7 +648,6 @@ function evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}) where{D}
     #Gp_values = eval_gps.(G.Gps)
     result = transpose(evaluate_with_ωconversion_KF(G.Gps[1], idx...)) * view(G.GR_to_GK, :, :, 1)# .* G.Gp_to_G[1]
     for i in 2:length(G.Gps)
-        println("i: ", i)
         result .+= transpose(evaluate_with_ωconversion_KF(G.Gps[i], idx...)) * view(G.GR_to_GK, :, :, i)# .* G.Gp_to_G[i]
     end
     return result

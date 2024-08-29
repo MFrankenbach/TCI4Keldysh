@@ -8,10 +8,10 @@ Compress Keldysh Correlator at given contour index.
 """
 function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; qtcikwargs...) where {D}
     R_f = log2(length(GF.ωs_ext[1]))
-    @assert isinteger(R_f) "Need the same number of grid points of the form 2^R in each direction"
     R = round(Int, R_f)
-    @assert all(2^R .== length.(GF.ωs_ext)) "Need the same number of grid points of the form 2^R in each direction"
-    @assert 1<=iK<=2^D
+    @assert length(GF.ωs_ext[1])==2^R+1
+    @assert all(length.(GF.ωs_ext[2:end]).==2^R)
+    @assert 1<=iK<=2^(D+1)
 
     function f(idx::Vararg{Int,D})
         return evaluate(GF, idx...; iK=iK)        

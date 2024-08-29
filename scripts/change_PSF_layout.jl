@@ -8,14 +8,15 @@ read(f, "Adisc")
 read(f, "odisc") (same as read(f, "PSF")["odisc_info"]["odisc"])
 =#
 
-data_dir = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/4pt";
-backup_dir = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/original_files/4pt"
+# data_dir = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/4pt";
+# backup_dir = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/original_files/4pt"
+data_dir = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg"
 
 using MAT
 
 function change_PSF_layout()
     for file in readdir(data_dir)
-        if !isfile(joinpath(data_dir, file))
+        if !isfile(joinpath(data_dir, file)) || !endswith(file, ".mat")
             continue
         end
         # backup
@@ -52,7 +53,7 @@ end
 
 function check_layout(dir::String; layout=:old)
     for file in readdir(dir)
-        if !isfile(joinpath(dir, file))
+        if !isfile(joinpath(dir, file)) || !endswith(file, ".mat")
             continue
         end
         f = matopen(joinpath(dir, file))
@@ -78,4 +79,40 @@ function check_layout(dir::String; layout=:old)
     end
 end
 
-# check_layout(data_dir; layout=:new)
+"""
+Check whether all files have the given number of flavors in Adisc
+"""
+function check_flavor_ids(dir::String; nflavor=2)
+    println("Reading $dir ...")
+    filecount= 0
+    failed_files = []
+    for file in readdir(dir)
+        if !isfile(joinpath(dir, file)) || !endswith(file, ".mat")
+            continue
+        end
+        filecount += 1
+        f = matopen(joinpath(dir, file), "r")
+        try
+            keys(f)
+        catch
+            keys(f)
+        end
+        Adisc = read(f, "Adisc")
+        if size(Adisc, 1)!=nflavor
+            if eltype(Adisc)==Float64 && nflavor==1
+                continue
+            else
+                push!(failed_files, file)
+            end
+        end
+        Adisc = nothing
+        close(f)
+    end
+    println("  Checked $filecount files")
+    println("  $(length(failed_files)) files do NOT have $nflavor flavors:")
+    for file in failed_files
+        println("    $file")
+    end
+end
+
+check_flavor_ids(data_dir)

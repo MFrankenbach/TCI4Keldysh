@@ -36,9 +36,11 @@ function PSF_2pt(;beta=2000.0, R=12)
     # compress Adisc
 end
 
-function PSF_4pt_magnitude(;beta=2000.0)
-    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+function PSF_4pt_magnitude()
+    # PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    PSFpath = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
     Ops = ["F1", "F1dag", "F3", "F3dag"]
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
 
     
     # histogram of spectral weights

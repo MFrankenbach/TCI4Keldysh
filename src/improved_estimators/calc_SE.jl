@@ -21,8 +21,24 @@ end
 """
 cf. eq (108) Lihm et. al.
 """
-function calc_Σ_MF_sIE(G_QQ_aux::Vector{ComplexF64}, G_QF_aux::Vector{ComplexF64}, G_FQ_aux::Vector{ComplexF64}, G::Vector{ComplexF64}, Σ_H) ::Vector{ComplexF64}
+function calc_Σ_MF_sIE(G_QQ_aux::Vector{ComplexF64}, G_QF_aux::Vector{ComplexF64}, G_FQ_aux::Vector{ComplexF64}, G::Vector{ComplexF64}, Σ_H::Float64) ::Vector{ComplexF64}
     return G_QQ_aux .+ Σ_H .- G_QF_aux ./ G .* G_FQ_aux
+end
+
+"""
+cf. eq (108) Lihm et. al.
+
+Keldysh version. 2-point correlators come in shape:
+(length(ωs_ext), 2, 2)
+"""
+function calc_Σ_KF_sIE(G_QQ_aux::Array{ComplexF64}, G_QF_aux::Array{ComplexF64}, G_FQ_aux::Array{ComplexF64}, G::Array{ComplexF64}, Σ_H) ::Array{ComplexF64}
+    error("not tested")
+    @assert size(G_QF_aux)==size(G_FQ_aux)==size(G_QQ_aux)
+    Σ_sIE = zeros(ComplexF64, size(G_QQ_aux))
+    for w in axes(G_QQ_aux, 1)
+        Σ_sIE[w,:,:] = G_QQ_aux[w,:,:] .+ Σ_H .- G_QF_aux[w,:,:] ./ G[w,:,:] .* G_FQ_aux[w,:,:]
+    end
+    return Σ_sIE
 end
 
 """
@@ -36,6 +52,22 @@ function calc_Σ_MF_sIE(PSFpath, Σ_H::Float64, ω_fer::Vector{Float64}; flavor_
     G_aux_data  = precompute_all_values(G_aux)
     G_QQ_aux_data= precompute_all_values(G_QQ_aux)
     return calc_Σ_MF_sIE(G_QQ_aux_data, G_aux_data, G_aux_data, G_data, Σ_H)
+end
+
+"""
+convenience overload
+"""
+function calc_Σ_KF_sIE_viaR(PSFpath, ω_fer::Vector{Float64}; flavor_idx::Int, T::Float64, sigmak::Vector{Float64}, γ::Float64)
+    G_FF_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, estep=2000)
+    G_FQ_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, estep=2000)
+    G_QF_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, estep=2000)
+    G_QQ_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, estep=2000)
+    Adisc_Σ_H = load_Adisc_0pt(PSFpath, "Q12", flavor_idx)
+    Σ_H = only(Adisc_Σ_H)
+    ΣR_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_R, G_QF_R, G_FQ_R, G_FF_R, Σ_H)
+    # why can we do this?
+    Σ = reshape(hcat(2*im*tanh.(ω_fer/2/T).*imag.(ΣR_sIE),conj.(ΣR_sIE),ΣR_sIE,0 .*ΣR_sIE), length(ω_fer),2,2)
+    return Σ
 end
 
 

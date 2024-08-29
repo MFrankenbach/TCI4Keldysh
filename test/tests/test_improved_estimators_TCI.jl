@@ -56,7 +56,7 @@ end
     end
 end
 
-@testset "SIE: Vertex" begin
+@testset "SIE: Vertex@Matsubara" begin
     
     function test_Gamma_core_TCI_MF(PSFpath; freq_conv="a", R=4, beta=15.0, tolerance=1.e-5)
         T = 1.0 / beta
@@ -154,4 +154,55 @@ end
             end
         end
     end
+end
+
+@testset "SIE: Vertex@Keldysh" begin
+    
+    function test_Γcore_KF(iK::Int, flavor_idx, channel::String="a")
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+        R = 3
+        tolerance = 1.e-5
+        ωconvMat = TCI4Keldysh.channel_trafo(channel)
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+        ωmax = 0.1
+        D = 3
+        iK_tuple = TCI4Keldysh.KF_idx(iK, D)
+        γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
+
+        # reference
+        ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
+        Σωgrid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
+        Σ_ref = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, sigmak, γ)
+        Γcore_ref = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+            "KF",
+            PSFpath*"4pt/",
+            Σ_ref
+            ;
+            T,
+            flavor_idx = flavor_idx,
+            ωs_ext = ωs_ext,
+            ωconvMat=ωconvMat,
+            sigmak, γ
+        )
+
+        # tci
+        qtt = TCI4Keldysh.Γ_core_TCI_KF(
+            PSFpath, R, iK, ωmax
+            ; 
+            sigmak=sigmak,
+            γ=γ,
+            T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+            )
+
+        # compare
+        Γcore_tci = TCI4Keldysh.QTT_to_fatTensor(qtt, Base.OneTo.(fill(2^R, D)))
+        diff = abs.(Γcore_tci .- Γcore_ref[1:2^R,:,:,iK_tuple...])
+        maxref =  maximum(abs.(Γcore_ref))
+        reldiff = diff ./ maxref
+        @test maximum(reldiff) < 3.0*tolerance
+    end
+
+    test_Γcore_KF(2, 1, "p")
+    test_Γcore_KF(7, 1, "a")
+    # test_Γcore_KF(14, 2, "t")
 end

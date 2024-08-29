@@ -473,12 +473,14 @@ function load_Adisc_0pt(path::String, Op::String, flavor_idx::Int) :: Float64
         keys(f)
     end
     Adisc = read(f, "Adisc")[flavor_idx]
+    close(f)
     return only(Adisc)
 end
 
 
 function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
-    f = matopen(joinpath(path, "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"), "r")
+    fname = "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"
+    f = matopen(joinpath(path, fname), "r")
     try 
         keys(f)
     catch
@@ -487,6 +489,7 @@ function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
     Adisc = read(f, "Adisc")[flavor_idx]
     Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
 
+    close(f)
     return Adisc 
 end
 
@@ -503,6 +506,7 @@ function load_ωdisc(path::String, Ops::Vector{String}; nested_ωdisc::Bool=fals
     else
         read(f, "PSF")["odisc_info"]["odisc"][:]
     end
+    close(f)
     return ωdisc 
 end
 
@@ -527,22 +531,45 @@ function MF_grid(T::Float64, Nhalf::Int, fermi::Bool)
     end
 end
 
-function KF_grid(ωmin::Float64, ωmax::Float64, R::Int, D::Int)
-    return ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)   
+"""
+Bosonic grid ranges from ωmin to ωmax
+"""
+function KF_grid(ωmax::Float64, R::Int, D::Int)
+    ωbos = KF_grid_bos(ωmax, R)
+    ωfer = KF_grid_fer(ωmax, R)
+    return ntuple(i -> ifelse(i==1, ωbos, ωfer), D)
+end
+
+"""
+1D grid
+"""
+function KF_grid_fer(ωmax::Float64, R::Int)
+    @assert ωmax > 0.0
+    ωmin = -ωmax
+    ωfer_off = 0.5*(ωmax - ωmin)/2^R
+    return collect(range(-ωmax + ωfer_off, ωmax - ωfer_off; length=2^R))
+end
+
+"""
+1D grid
+"""
+function KF_grid_bos(ωmax::Float64, R::Int)
+    @assert ωmax > 0.0
+    return collect(range(-ωmax, ωmax; length=2^R+1))
 end
 
 """
 Linear iK ∈ {1,...,2^D} to tuple (k1, ..., kD)
 """
 function KF_idx(iK::Int, D::Int)
-    TCI4Keldysh.@DEBUG 1<=iK<=2^D "Invalid Keldysh index"
+    TCI4Keldysh.@DEBUG 1<=iK<=2^(D+1) "Invalid Keldysh index"
     iK_it = Iterators.product(fill(1:2, D+1)...)
     return collect(iK_it)[iK]
 end
 
 
 """
-Tuple (k1, ..., kD) to linear idx iK ∈ {1,...,2^D}
+Tuple (k1, ..., kD+1) to linear idx iK ∈ {1,...,2^D+1}
 """
 function KF_idx(K::NTuple{N, Int}, D::Int) :: Int where {N}
     TCI4Keldysh.@DEBUG all(1 .<=K .<=2) "Invalid Keldysh index"
@@ -957,11 +984,18 @@ function dir_to_T(PSFpath::String) :: Float64
     return 0.0
 end
 
+function dir_to_beta(PSFpath::String) :: Float64
+    return 1.0 / dir_to_T(PSFpath)
+end
+
 
 function iterate_binvec(R::Int)
     return Iterators.product(fill([1,2], R)...)
 end
 
+"""
+Where to store broadened spectral function data
+"""
 function Acont_h5fname(perm_idx::Int, D::Int; Acont_folder="Acontdata")
     return joinpath(Acont_folder, "Acont$(D)D_$perm_idx.h5")
 end

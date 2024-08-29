@@ -158,9 +158,12 @@ function max_correlator_tail(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=
     return nothing
 end
 
-function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
-    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=true, PSFpath="siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-    # GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=false)
+function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-6)
+    PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
+    # PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    beta = 1.0/T
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=false, PSFpath=PSFpath)
     t = @elapsed begin
         qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved, cut_tucker=true) 
     end
