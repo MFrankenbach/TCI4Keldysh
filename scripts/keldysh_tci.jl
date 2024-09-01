@@ -261,6 +261,53 @@ function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
     return "KF_timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
 end
 
+
+function time_Γcore_KF(iK::Int, R=3, tolerance=1.e-3)
+    channel = "a"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ωmax = 1.0
+    D = 3
+    γ, sigmak = beta2000_broadening(T)
+    # γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
+    flavor_idx = 1
+
+    @time qtt = TCI4Keldysh.Γ_core_TCI_KF(
+        PSFpath, R, iK, ωmax
+        ; 
+        sigmak=sigmak,
+        γ=γ,
+        T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+        )
+
+end
+
+function profile_Γcore_KF(iK::Int, R=3, tolerance=1.e-3)
+    channel = "a"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ωmax = 1.0
+    D = 3
+    γ, sigmak = beta2000_broadening(T)
+    # γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
+    flavor_idx = 1
+    
+    Profile.clear()
+    Profile.@profile begin
+        @time qtt = TCI4Keldysh.Γ_core_TCI_KF(
+            PSFpath, R, iK, ωmax
+            ; 
+            sigmak=sigmak,
+            γ=γ,
+            T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+            )
+    end
+    statprofilehtml()
+end
+
+
 function test_Γcore_KF(iK::Int, channel::String="a")
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     R = 3
@@ -654,4 +701,105 @@ function main()
     time_compress_FullCorrelator_KF(2)
     beta = 200.0
     time_FullCorrelator_sweep(2, 30.0/beta, 0.1, "R"; tolerance=1.e-4, beta=beta, Rs=5:10)
+end
+
+
+
+function test_FullCorrEvaluator_KF(npt::Int, iK::Int)
+    # create correlator
+    addpath = npt==4 ? "4pt" : ""
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg", addpath)
+    D = npt-1
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    ωmax = 1.0
+    R = 4
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
+    ωconvMat = if npt==4
+            TCI4Keldysh.channel_trafo("t")
+        elseif npt==3
+            TCI4Keldysh.channel_trafo_K2("t", false)
+        else
+            TCI4Keldysh.ωconvMat_K1()
+        end
+    γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
+    KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
+
+    KFev = TCI4Keldysh.FullCorrEvaluator_KF_single(KFC, iK)
+    function KFC_(idx::Vararg{Int,N}) where {N}
+        return TCI4Keldysh.evaluate(KFC, idx...; iK=iK)        
+    end
+
+    for _ in 1:20
+        idx = rand(1:2^R, D)
+        @test isapprox(KFC_(idx...), KFev(idx...); atol=1.e-10)
+    end
+
+    KFev2 = TCI4Keldysh.FullCorrEvaluator_KF(KFC)
+    function KFC2_(idx::Vararg{Int,N}) where {N}
+        return TCI4Keldysh.evaluate_all_iK(KFC, idx...)
+    end
+
+    for _ in 1:20
+        idx = rand(1:2^R, D)
+        refval = vec(KFC2_(idx...))
+        totest_nocut = vec(KFev2(Val{:nocut}(), idx...))
+        totest_cut = vec(KFev2(idx...))
+        @test isapprox(norm(refval .- totest_cut), 0.0; atol=1.e-11)
+        @test isapprox(norm(refval .- totest_nocut), 0.0; atol=1.e-11)
+    end
+end
+
+
+function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
+    # create correlator
+    addpath = npt==4 ? "4pt" : ""
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg", addpath)
+    D = npt-1
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    ωmax = 1.0
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
+    ωconvMat = if npt==4
+            TCI4Keldysh.channel_trafo("t")
+        elseif npt==3
+            TCI4Keldysh.channel_trafo_K2("t", false)
+        else
+            TCI4Keldysh.ωconvMat_K1()
+        end
+    # γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
+    γ, sigmak = beta2000_broadening(T)
+    KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
+    KFC2 = deepcopy(KFC)
+
+    KFev2 = TCI4Keldysh.FullCorrEvaluator_KF(KFC2; cutoff=1.e-7)
+
+    function KFC2_(idx::Vararg{Int,N}) where {N}
+        return TCI4Keldysh.evaluate_all_iK(KFC, idx...)
+    end
+    printstyled("---- Benchmark\n"; color=:blue)
+    println(" Naive\n")
+    @btime $KFC2_(rand(1:2^$R, $D)...)
+    println(" Optimized (nocut)\n")
+    @btime $KFev2(rand(1:2^$R, $D)...)
+    println(" Optimized\n")
+    @btime $KFev2(Val{:cut}(), rand(1:2^$R, $D)...)
+
+
+    if profile
+        Profile.clear()
+        function _toprofile()
+            tot = zero(ComplexF64)
+            for _ in 1:100
+                KFev2(rand(1:2^R, D)...)
+            end
+            return tot
+        end
+        Profile.@profile _toprofile()
+        statprofilehtml()
+    end
+
+    return nothing
 end

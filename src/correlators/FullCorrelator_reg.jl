@@ -182,31 +182,7 @@ struct FullCorrEvaluator_MF{T,D,N}
         tucker_cuts = Int[]
         for Gp in GF.Gps
             p = 2.0
-            q = 1.0/(1.0 - 1.0/p)
-            Knorm = legnorm(Gp.tucker, p)
-            # see how far tucker center can be pruned
-            cen_  = Gp.tucker.center
-            prune_idx = 0
-            sum_act = 0.0
-            sum_count = 0
-
-            # slow but simple...
-            for idx_sum in sum(size(cen_)):-1:D
-                sum_count = 0
-                sum_act = 0.0
-                for ic in CartesianIndices(cen_)
-                    if sum(Tuple(ic)) > idx_sum
-                        sum_act += abs(cen_[ic]) ^ q
-                        sum_count += 1
-                    end
-                end
-                if (sum_act ^ (1/q)) * Knorm >= GFmin * tucker_cutoff
-                    break
-                else
-                    prune_idx = idx_sum
-                end
-            end
-
+            prune_idx = compute_tucker_cut(Gp.tucker, GFmin, tucker_cutoff, p)
         #     for idx_sum in reverse(3:sum(size(cen_)))
         #         for k in reverse(axes(cen_, 3))
         #             for j in reverse(axes(cen_, 2))
@@ -644,8 +620,6 @@ iK ∈ 1:2^D is the linear index for the 2x...x2 Keldysh structure.
 
 """
 function evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}) where{D}
-    #eval_gps(gp) = evaluate_with_ωconversion_KF(gp, idx...)
-    #Gp_values = eval_gps.(G.Gps)
     result = transpose(evaluate_with_ωconversion_KF(G.Gps[1], idx...)) * view(G.GR_to_GK, :, :, 1)# .* G.Gp_to_G[1]
     for i in 2:length(G.Gps)
         result .+= transpose(evaluate_with_ωconversion_KF(G.Gps[i], idx...)) * view(G.GR_to_GK, :, :, i)# .* G.Gp_to_G[i]
@@ -655,14 +629,156 @@ function evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}) where{D}
 end
 
 """
-To evaluate FullCorrelator_KF pointwise.
+Lower bound on maxabs of G, contour index.
+Return D+1 bounds for the R...R to A...A components.
 """
-struct FullCorrEvaluator_KF{D, T}
+function lowerbound(G::FullCorrelator_KF{D}) where {D}
+    mid_idx = [div(length(omext), 2) for omext in G.ωs_ext]
+    midrange = [max(1, mid_idx[i] - 5):min(length(G.ωs_ext[i]), mid_idx[i]+5) for i in 1:D]
+    vals = [evaluate_all_iK(G, idx...) for idx in Iterators.product(midrange...)]
+    return maximum(absmax.(vals))
+end
+
+
+
+"""
+To evaluate FullCorrelator_KF on all Keldysh components and a given frequency point.
+
+* iso_kernels: left isometries of SVD-decomp K^R=U^RSV^R of retarded kernels and conjugate of the first left isometry
+store everything TRANSPOSED
+* tucker_centers: tucker_centers contracted with SV from each decomposed kernel;
+for each Gp, need to store D centers
+
+This gives for D=3 the 3 contractions
+SV^R -- CEN -- SV^R
+         |
+         SV^R
+
+SV^A -- CEN -- SV^R
+         |
+         SV^R
+
+SV^A -- CEN -- SV^R
+         |
+         SV^A
+which are then written to tucker_centers
+"""
+struct FullCorrEvaluator_KF{D,T}
+    KFC::FullCorrelator_KF{D}
+    iso_kernels::Matrix{Matrix{T}}
+    tucker_centers::Vector{Vector{Array{T,D}}}
+    tucker_cuts::Matrix{Int}
+
+    function FullCorrEvaluator_KF(
+        KFC::FullCorrelator_KF{D};
+        cutoff=1.e-20, tucker_cutoff::Union{Nothing,Float64}=nothing
+        ) where {D}
+        T = eltype(KFC.Gps[1].tucker.center)
+        N_Gps = length(KFC.Gps)
+        iso_kernels = Matrix{Matrix{T}}(undef, 2*D-1, N_Gps)
+        N_tucker = D
+        tucker_centers = [Vector{Array{T,D}}(undef, N_tucker) for _ in 1:N_Gps]
+        tucker_cuts = Matrix{Int}(undef, N_Gps, D+1)
+
+        @time KFC_max = lowerbound(KFC)
+        for (p, Gp) in enumerate(KFC.Gps)
+            tmp_legs = Vector{eltype(Gp.tucker.legs)}(undef, D)
+            # decompose legs, get iso_kernels
+            old_size = size(Gp.tucker.center)
+            for d in 1:D
+                U, S, V = svd(Gp.tucker.legs[d])
+                notcut = S .> cutoff
+                # transpose for efficient indexing later
+                iso_kernels[d, p] = transpose(U[:,notcut])
+                tmp_legs[d] = Diagonal(S[notcut]) * V'[notcut, :]
+            end
+            for d in D+1:size(iso_kernels,1)
+                iso_kernels[d, p] = conj.(iso_kernels[d-D,p])
+            end
+            # build centers
+            for it in 1:N_tucker
+                legs = [ifelse(il+1>it, tmp_legs[il], conj.(tmp_legs[il])) for il in 1:D]
+                tucker_centers[p][it] = contract_1D_Kernels_w_Adisc_mp(legs, Gp.tucker.center)
+                println("Reduced tucker center from $(old_size) to $(size(tucker_centers[p][it]))")
+            end
+
+            # compute tucker cuts, one for each retarded component
+            # GR_GK_fac::Float64= maximum(sum(abs.(KFC.GR_to_GK); dims=2))
+            # iR_max *= GR_GK_fac
+            if isnothing(tucker_cutoff)
+                tucker_cutoff = cutoff
+            end
+            for i in 1:N_tucker
+                legs_act = [iso_kernels[ifelse(il+1>i, il, il+D), p] for il in 1:D]
+                tucker_cuts[p,i] = compute_tucker_cut(tucker_centers[p][i], legs_act, KFC_max, tucker_cutoff, 2.0; transpose_legs=true)
+            end
+            tucker_cuts[p,D+1] = tucker_cuts[p,1]
+            @show tucker_cuts[p,1:D]
+        end
+
+        return new{D,T}(KFC, iso_kernels, tucker_centers, tucker_cuts)
+    end
+end
+
+"""
+Generic evaluation method
+"""
+function (fev::FullCorrEvaluator_KF{D,T})(::Val{:nocut}, idx::Vararg{Int,D}) where {D,T}
+    res = zeros(T, 1, 2^(D+1))
+    for (p,Gp) in enumerate(fev.KFC.Gps)
+        # rotate frequency
+        retarded = zeros(T,D+1)
+        idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
+
+        # compute retarded
+        for i in 1:D
+            kernels_act = [fev.iso_kernels[ifelse(il+1>i, il, il+D), p] for il in 1:D]
+            retarded[i] = eval_tucker(fev.tucker_centers[p][i], kernels_act, idx_int...)
+        end
+        retarded[end] = conj(retarded[1])
+
+        # transform to Keldysh
+        res += transpose(retarded) * fev.KFC.GR_to_GK[:,:,p]
+    end
+    return vec(res)
+end
+
+function (fev::FullCorrEvaluator_KF{D,T})(idx::Vararg{Int,D}) where {D,T}
+    return fev(Val{:nocut}(), idx...)
+end
+
+function (fev::FullCorrEvaluator_KF{3,T})(idx::Vararg{Int,3}) where {T}
+    D = 3
+    res = zeros(T, 1, 2^(D+1))
+    for (p,Gp) in enumerate(fev.KFC.Gps)
+        # rotate frequency
+        retarded = zeros(T,D+1)
+        idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
+
+        # compute retarded
+        for i in 1:D
+            kernels_act = [fev.iso_kernels[ifelse(il+1>i, il, il+D), p] for il in 1:D]
+            retarded[i] = eval_tucker(fev.tucker_cuts[p,i], fev.tucker_centers[p][i], kernels_act, idx_int...)
+        end
+        retarded[end] = conj(retarded[1])
+
+        # transform to Keldysh
+        res += transpose(retarded) * fev.KFC.GR_to_GK[:,:,p]
+    end
+    return vec(res)
+end
+
+
+"""
+To evaluate FullCorrelator_KF pointwise.
+Specialized to evaluate a given Keldysh component.
+"""
+struct FullCorrEvaluator_KF_single{D, T}
 
     KFC::FullCorrelator_KF{D}
     iK::Int # Keldysh component
     iRs_required::Vector{Vector{Int}} # required fully retarded components for each Gp
-    iso_kernels::Matrix{Matrix{ComplexF64}} # Dx|Gp| matrix of left isometries in SVD-decomp of kernels: K=USV
+    iso_kernels::Matrix{Matrix{T}} # Dx|Gp| matrix of left isometries in SVD-decomp of retarded kernels: K=USV
     # length |Gp| vector of kernels contracted with SV or S*conj.(V)
     #      (different centers for different retarded components)
     tucker_centers::Vector{Vector{Array{T,D}}} 
@@ -670,7 +786,7 @@ struct FullCorrEvaluator_KF{D, T}
     """
     Discard singvals <cutoff in Tucker legs (i.e., Kernels).
     """
-    function FullCorrEvaluator_KF(KFC::FullCorrelator_KF{D}, iK::Int; cutoff::Float64=1.e-20) where {D}
+    function FullCorrEvaluator_KF_single(KFC::FullCorrelator_KF{D}, iK::Int; cutoff::Float64=1.e-20) where {D}
         iRs_required = Vector{Vector{Int}}(undef, factorial(D+1))
         # relevant retarded components
         GRK = KFC.GR_to_GK
@@ -683,7 +799,7 @@ struct FullCorrEvaluator_KF{D, T}
 
         # svd-decompose tucker legs
         T = eltype(KFC.Gps[1].tucker.center)
-        iso_kernels = Matrix{Matrix{ComplexF64}}(undef, D, factorial(D+1))
+        iso_kernels = Matrix{Matrix{T}}(undef, D, factorial(D+1))
         tucker_centers = [Vector{Array{T,D}}(undef, 0) for _ in 1:factorial(D+1)]
         for (p, Gp) in enumerate(KFC.Gps)
             tmp_legs = Vector{eltype(Gp.tucker.legs)}(undef, D)
@@ -707,7 +823,7 @@ struct FullCorrEvaluator_KF{D, T}
     end
 end
 
-function (fev::FullCorrEvaluator_KF{D})(idx::Vararg{Int,D}) where {D}    
+function (fev::FullCorrEvaluator_KF_single{D})(idx::Vararg{Int,D}) where {D}    
     ret = zero(ComplexF64)
     for (p,Gp) in enumerate(fev.KFC.Gps)
         # rotate frequency
@@ -730,7 +846,7 @@ function (fev::FullCorrEvaluator_KF{D})(idx::Vararg{Int,D}) where {D}
     return ret
 end
 
-# function (fev::FullCorrEvaluator_KF{3})(idx::Vararg{Int,3})
+# function (fev::FullCorrEvaluator_KF_single{3})(idx::Vararg{Int,3})
 #     res = zero(ComplexF64)
 #     for (p,Gp) in enumerate(fev.KFC.Gps)
 #         idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff

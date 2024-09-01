@@ -1,5 +1,14 @@
 abstract type AbstractTuckerDecomp{D} end
 
+DO_TUCKER_FASTMATH() = true
+macro TUCKER_FASTMATH(expr)
+    if DO_TUCKER_FASTMATH()
+        esc(:(@fastmath $expr))
+    else
+        esc(expr)
+    end
+end
+
 """
     TuckerDecomposition{T,D} <: AbstractTuckerDecomp{D}
 
@@ -186,7 +195,7 @@ function (td::TuckerDecomposition{T,3})(tucker_cut::Int, idx::Vararg{Int,3}) :: 
     ret = zero(T)    
 
     n1, n2, n3 = size(td.center)
-    @inbounds for k in 1:n3
+    @TUCKER_FASTMATH @inbounds for k in 1:n3
         ret3 = zero(T)
         cutk = tucker_cut - k
         for j in 1:n2
@@ -210,7 +219,7 @@ function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
     ret = zero(T)    
 
     n1, n2, n3 = size(td.center)
-    @inbounds for k in 1:n3
+    @TUCKER_FASTMATH @inbounds for k in 1:n3
         ret3 = zero(T)
         for j in 1:n2
             ret2 = zero(T)
@@ -224,6 +233,97 @@ function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
 
     return ret
 end
+
+"""
+CARFUL: Legs are TRANSPOSED, i.e. columns are contracted with center.
+"""
+function eval_tucker(center::Array{T,D}, legs::Vector{Matrix{T}}, idx::Vararg{Int,D})  ::T where {T,D}
+    res = center
+    sz = size(res)
+    for i in 1:D
+        j = D - i + 1
+        res = reshape(res, (prod(sz[1:j-1]), sz[j])) * legs[j][:,idx[j]]
+    end
+    return res[1]
+end
+
+function eval_tucker(center::Array{T,D}, legs_idx::Vector{Vector{T}})  ::T where {T,D}
+    res = center
+    sz = size(res)
+    for i in 1:D
+        j = D - i + 1
+        res = reshape(res, (prod(sz[1:j-1]), sz[j])) * legs_idx[j]
+    end
+    return res[1]
+end
+
+"""
+Pointwise eval. of a tucker decomposition by direct summation.
+Tried linear indexing for tucker center, yields no improvement.
+CARFUL: Legs are TRANSPOSED, i.e. columns are contracted with center.
+"""
+function eval_tucker(center::Array{T,3}, legs::Vector{Matrix{T}}, idx::Vararg{Int,3}) :: T where {T}
+    ret = zero(T)    
+
+    n1, n2, n3 = size(center)
+    @TUCKER_FASTMATH @inbounds for k in 1:n3
+        ret3 = zero(T)
+        for j in 1:n2
+            ret2 = zero(T)
+            for i in 1:n1
+                ret2 += legs[1][i, idx[1]] * center[i, j, k]
+            end
+            ret3 += ret2 * legs[2][j, idx[2]] 
+        end
+        ret += ret3 * legs[3][k, idx[3]] 
+    end
+
+    return ret
+end
+
+function eval_tucker(tucker_cut::Int, center::Array{T,3}, legs::Vector{Matrix{T}}, idx::Vararg{Int,3}) :: T where {T}
+    ret = zero(T)    
+
+    n1, n2, n3 = size(center)
+    @TUCKER_FASTMATH @inbounds for k in 1:n3
+        ret3 = zero(T)
+        cutk = tucker_cut - k
+        for j in 1:n2
+            ret2 = zero(T)
+            for i in 1:min(cutk - j, n1)
+                ret2 += legs[1][i, idx[1]] * center[i, j, k]
+            end
+            ret3 += ret2 * legs[2][j, idx[2]] 
+        end
+        ret += ret3 * legs[3][k, idx[3]]
+    end
+
+    return ret
+end
+
+
+"""
+* legs: corresponds to legs[i][idx[i],:] in other eval_tucker function
+"""
+function eval_tucker(center::Array{T,3}, legs::Vector{Vector{T}}) :: T where {T}
+    ret = zero(T)    
+
+    n1, n2, n3 = size(center)
+    @TUCKER_FASTMATH @inbounds for k in 1:n3
+        ret3 = zero(T)
+        for j in 1:n2
+            ret2 = zero(T)
+            for i in 1:n1
+                ret2 += legs[1][i] * center[i, j, k]
+            end
+            ret3 += ret2 * legs[2][j]
+        end
+        ret += ret3 * legs[3][k]
+    end
+
+    return ret
+end
+
 
 #= 
 const CPP_LIB ::String = "/Users/M.Frankenbach/tci4keldysh/build/tucker_eval.so"
@@ -330,10 +430,48 @@ function lowerbound(td::TuckerDecomposition{T,D}) where {T,D}
 end
 
 function legnorm(td::TuckerDecomposition, p=1.0)
+    return legnorm(td.legs)
+end
+
+function legnorm(legs::Vector{Matrix{T}}, p=1.0; transpose_legs=false) where {T}
     lps = Float64[]
-    for leg in td.legs
-        lp = maximum([norm(leg[i,:],p) for i in axes(leg,1)])
+    slice_fun  = i -> ifelse(transpose_legs, (Colon(), i), (i, Colon()))
+    for leg in legs
+        lp = maximum([norm(leg[slice_fun(i)...], p) for i in axes(leg,1)])
         push!(lps, lp)
     end
     return prod(lps)
+end
+
+function compute_tucker_cut(center::Array{T,D}, legs::Vector{Matrix{T}}, GFmin::Float64, tucker_cutoff::Float64, p::Float64=2.0; transpose_legs=false) where {T,D}
+    q = 1.0/(1.0 - 1.0/p)
+    # check whether legs are transposed
+    Knorm = legnorm(legs, p; transpose_legs=transpose_legs)
+    # see how far tucker center can be pruned
+    cen_  = center
+    cen_q = abs.(center) .^ q
+    sz_cen = size(cen_)
+    prune_idx = sum(sz_cen)
+    lower_thresh = GFmin * tucker_cutoff
+
+    idx_sums = zeros(Float64, sum(sz_cen))
+    for ic in CartesianIndices(cen_)
+        idx_sums[sum(Tuple(ic))] += cen_q[ic]
+    end
+
+    sums_acc = accumulate(+, reverse(idx_sums))
+    cuts = reverse(Knorm .* (sums_acc .^ (1.0/q)))
+    prune_idx = findfirst(s -> s<=lower_thresh, cuts)
+    if isnothing(prune_idx)
+        @warn "Tucker cutoff is pessimal"
+        prune_idx = sum(sz_cen)
+    elseif prune_idx==0
+        prune_idx = 1
+    end
+
+    return prune_idx
+end
+
+function compute_tucker_cut(tucker::TuckerDecomposition{T,D}, GFmin::Float64, tucker_cutoff::Float64, p::Float64=2.0) where {T,D}
+    return compute_tucker_cut(tucker.center, tucker.legs, GFmin, tucker_cutoff, p)
 end

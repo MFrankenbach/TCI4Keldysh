@@ -103,6 +103,24 @@ end
     @test TCI4Keldysh.maxabs(newdata_DIRTY - original_data) < 1e-12
     
     
+    function test_tucker_eval(D::Int)
+        center = randn(Float64, ntuple(i -> 5+i, D)) .+ 0.0.*im
+        Nw = 10
+        legs = [randn(ComplexF64, Nw, size(center,i)) for  i in 1:D]
+
+        td = TCI4Keldysh.TuckerDecomposition(center, legs)
+        w = rand(1:Nw, D)
+
+        tdval = td(w...)
+        evval = TCI4Keldysh.eval_tucker(center, [Matrix(transpose(legs[i])) for i in 1:D], w...)
+        evval_vec = TCI4Keldysh.eval_tucker(center, [legs[i][w[i],:] for i in 1:D])
+        @test isapprox(tdval, evval; atol=1.e-12)
+        @test isapprox(evval, evval_vec; atol=1.e-12)
+    end
+
+    test_tucker_eval(2)
+    test_tucker_eval(3)
+    test_tucker_eval(4)
 end
 
 @testset "Convert Tucker decomposition to QTT" begin

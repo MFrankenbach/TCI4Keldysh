@@ -19,7 +19,7 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; qt
 
     kwargs_dict = Dict(qtcikwargs...)
     cutoff = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance]*1.e-3 : 1.e-15
-    KFev = FullCorrEvaluator_KF(GF, iK; cutoff=cutoff)
+    KFev = FullCorrEvaluator_KF_single(GF, iK; cutoff=cutoff)
 
     qtt, _, _ = quanticscrossinterpolate(ComplexF64, KFev, ntuple(_ -> 2^R, D); qtcikwargs...)
 

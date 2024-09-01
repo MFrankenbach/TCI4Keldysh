@@ -141,14 +141,29 @@ end
         γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
         KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
 
-        KFev = TCI4Keldysh.FullCorrEvaluator_KF(KFC, iK)
+        KFev = TCI4Keldysh.FullCorrEvaluator_KF_single(KFC, iK)
         function KFC_(idx::Vararg{Int,N}) where {N}
             return TCI4Keldysh.evaluate(KFC, idx...; iK=iK)        
         end
 
-        for _ in 1:50
+        for _ in 1:30
             idx = rand(1:2^R, D)
             @test isapprox(KFC_(idx...), KFev(idx...); atol=1.e-11)
+        end
+
+
+        KFev2 = TCI4Keldysh.FullCorrEvaluator_KF(KFC)
+        function KFC2_(idx::Vararg{Int,N}) where {N}
+            return TCI4Keldysh.evaluate_all_iK(KFC, idx...)
+        end
+
+        for _ in 1:30
+            idx = rand(1:2^R, D)
+            refval = vec(KFC2_(idx...))
+            totest_nocut = vec(KFev2(Val{:nocut}(), idx...))
+            totest_cut = vec(KFev2(idx...))
+            @test isapprox(norm(refval .- totest_cut), 0.0; atol=1.e-11)
+            @test isapprox(norm(refval .- totest_nocut), 0.0; atol=1.e-11)
         end
     end
 
