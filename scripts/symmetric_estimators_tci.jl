@@ -37,16 +37,16 @@ end
 
 function time_Γcore()
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-    R = 5
-    tolerance = 1.e-6
+    R = 6
+    tolerance = 1.e-4
     ωconvMat = TCI4Keldysh.channel_trafo("t")
-    beta = 2000.0
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
     T = 1.0/beta
 
     # compile
     println("  Compile run...")
     foo = TCI4Keldysh.Γ_core_TCI_MF(
-        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=1.e-3, unfoldingscheme=:interleaved
+        PSFpath, 3; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=1.e-3, unfoldingscheme=:interleaved
         )
     x = sum(foo)
     println("  Time...")
@@ -54,10 +54,12 @@ function time_Γcore()
         Γcore = TCI4Keldysh.Γ_core_TCI_MF(
         PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved,
         cache_center=2^(R-2)
+        # cache_center=0
         )
     end 
     x = sum(Γcore)
     println(" TIME: $t")
+    @show TCI.linkdims(Γcore.tci)
 end
 
 """

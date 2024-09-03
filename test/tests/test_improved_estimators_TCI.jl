@@ -58,16 +58,22 @@ end
 
 @testset "SIE: Vertex@Matsubara" begin
     
-    function test_Gamma_core_TCI_MF(PSFpath; freq_conv="a", R=4, beta=15.0, tolerance=1.e-5)
+    function test_Gamma_core_TCI_MF(PSFpath; freq_conv="a", R=4, beta=15.0, tolerance=1.e-5, batched=false)
         T = 1.0 / beta
         spin = 1
 
         ωconvMat = TCI4Keldysh.channel_trafo(freq_conv)
 
-        # compute
-        Γcore = TCI4Keldysh.Γ_core_TCI_MF(
-            PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=spin, tolerance=tolerance, unfoldingscheme=:interleaved, verbosity=2
-            )
+        # tci
+        Γcore = if batched
+                TCI4Keldysh.Γ_core_TCI_MF_batched(
+                PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=spin, tolerance=tolerance, verbosity=2
+                )
+            else
+                TCI4Keldysh.Γ_core_TCI_MF(
+                PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=spin, tolerance=tolerance, unfoldingscheme=:interleaved, verbosity=2
+                )
+            end
 
             # grids
         ω_bos = TCI4Keldysh.MF_grid(T, 2^(R-1), false)
@@ -154,14 +160,17 @@ end
             end
         end
     end
+
+    # test BatchEvaluator
+    for PSFpath in PSFpath_list
+        test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.dir_to_beta(PSFpath), tolerance=1.e-6, batched=true)
+    end
 end
 
 @testset "SIE: Vertex@Keldysh" begin
     
-    function test_Γcore_KF(iK::Int, flavor_idx, channel::String="a")
+    function test_Γcore_KF(iK::Int, flavor_idx, channel::String="a"; R=3, tolerance=1.e-5, batched=false)
         PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-        R = 3
-        tolerance = 1.e-5
         ωconvMat = TCI4Keldysh.channel_trafo(channel)
         T = TCI4Keldysh.dir_to_T(PSFpath)
         ωmax = 0.1
@@ -191,7 +200,8 @@ end
             ; 
             sigmak=sigmak,
             γ=γ,
-            T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+            T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx,
+            tolerance=tolerance, unfoldingscheme=:interleaved, batched=batched
             )
 
         # compare
@@ -203,6 +213,8 @@ end
     end
 
     test_Γcore_KF(2, 1, "p")
-    test_Γcore_KF(7, 1, "a")
+    test_Γcore_KF(8, 1, "a"; R=4, tolerance=1.e-4, batched=true)
+    test_Γcore_KF(14, 1, "t"; R=3, tolerance=1.e-8, batched=true)
+    test_Γcore_KF(9, 1, "p"; R=3, tolerance=1.e-8, batched=false)
     # test_Γcore_KF(14, 2, "t")
 end

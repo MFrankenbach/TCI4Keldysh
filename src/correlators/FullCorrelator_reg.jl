@@ -635,7 +635,13 @@ Return D+1 bounds for the R...R to A...A components.
 function lowerbound(G::FullCorrelator_KF{D}) where {D}
     mid_idx = [div(length(omext), 2) for omext in G.ωs_ext]
     midrange = [max(1, mid_idx[i] - 5):min(length(G.ωs_ext[i]), mid_idx[i]+5) for i in 1:D]
-    vals = [evaluate_all_iK(G, idx...) for idx in Iterators.product(midrange...)]
+    vals = zeros(ComplexF64, ntuple(i -> (i<=D ? length(midrange[i]) : 2^(D+1)), D+1))
+    # vals = [evaluate_all_iK(G, idx...) for idx in Iterators.product(midrange...)]
+    range_start = minimum.(midrange)
+    Threads.@threads for idx in collect(Iterators.product(midrange...))
+        idx_val = idx .- range_start .+ 1
+        vals[idx_val..., :] .= vec(evaluate_all_iK(G, idx...))
+    end
     return maximum(absmax.(vals))
 end
 

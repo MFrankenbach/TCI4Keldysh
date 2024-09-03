@@ -85,6 +85,76 @@ end
 """
 First row in Fig 13, Lihm et. al.
 Return 3*R bit quantics tensor train.
+
+Use BatchEvaluator and CachedFunction. Intended to run on multiple threads.
+"""
+function Γ_core_TCI_MF_batched(
+    PSFpath::String,
+    R::Int;
+    # cache_center::Int=0,
+    ωconvMat::Matrix{Int},
+    T::Float64,
+    flavor_idx::Int=1,
+    tcikwargs...
+)
+
+    # make frequency grid
+    D = size(ωconvMat, 2)
+    Nhalf = 2^(R-1)
+    ombos = MF_grid(T, Nhalf, false)
+    omfer = MF_grid(T, Nhalf, true)
+    ωs_ext = ntuple(i -> i>1 ? omfer : ombos, D)
+
+    # all 16 4-point correlators
+    letters = ["F", "Q"]
+    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
+    op_labels = ("1", "1dag", "3", "3dag")
+    op_labels_symm = ("3", "3dag", "1", "1dag")
+    is_incoming = (false, true, false, true)
+
+    Ncorrs = length(letter_combinations)
+
+    GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
+
+    # create correlator objects
+    PSFpath_4pt = joinpath(PSFpath, "4pt")
+    filelist = readdir(PSFpath_4pt)
+    # Threads.@threads for l in 1:Ncorrs # can two threads try to read the same file here?
+    for l in 1:Ncorrs
+        letts = letter_combinations[l]
+        println("letts: ", letts)
+        ops = [letts[i]*op_labels[i] for i in 1:4]
+        if !any(parse_Ops_to_filename(ops) .== filelist)
+            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
+        end
+        GFs[l] = TCI4Keldysh.FullCorrelator_MF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat);
+    end
+
+    # create self-energy evaluator
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
+
+    # create core evaluator
+    kwargs_dict = Dict(tcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    gev = ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
+
+    # create batch evaluator
+    gbev = ΓcoreBatchEvaluator_MF(gev)
+
+    @info "BATCHED"
+    t = @elapsed begin
+        tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims; tcikwargs...)
+    end
+    qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
+    @info "quanticscrossinterpolate time batched (nocache): $t"
+    return qtt
+
+end
+
+"""
+First row in Fig 13, Lihm et. al.
+Return 3*R bit quantics tensor train.
 * cache_center: if >0, precompute a block of size 2*cache_center along each dimension
 and use it to save pointwise evaluations
 """
@@ -114,7 +184,7 @@ function Γ_core_TCI_MF(
 
     Ncorrs = length(letter_combinations)
 
-    GFs = Vector{FullCorrelator_MF}(undef, Ncorrs)
+    GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
 
     # create correlator objects
     PSFpath_4pt = joinpath(PSFpath, "4pt")
@@ -307,7 +377,9 @@ function Γ_core_TCI_KF(
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
-    qtcikwargs...
+    batched=true,
+    unfoldingscheme=:interleaved,
+    tcikwargs...
     )
 
     # make frequency grid
@@ -324,7 +396,7 @@ function Γ_core_TCI_KF(
 
     # create correlator objects
     Ncorrs = length(letter_combinations)
-    GFs = Vector{FullCorrelator_KF}(undef, Ncorrs)
+    GFs = Vector{FullCorrelator_KF{D}}(undef, Ncorrs)
     PSFpath_4pt = joinpath(PSFpath, "4pt")
     filelist = readdir(PSFpath_4pt)
     for l in 1:Ncorrs
@@ -344,111 +416,377 @@ function Γ_core_TCI_KF(
     Σω_grid = KF_grid_fer(2*ωmax, R+1)
     Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
 
+    # frequency grid offset for self-energy
     ΣωconvMat = incoming_trafo * ωconvMat
-    # frequency grid offset
     corner_low = [first(ωs_ext[i]) for i in 1:D]
     corner_idx = ones(Int, D)
     corner_image = ΣωconvMat * corner_low
     idx_image = ΣωconvMat * corner_idx
     desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
     ωconvOff = desired_idx .- idx_image
+
     function sev(row::Int, w::Vararg{Int,3})
         w_int = dot(ΣωconvMat[row,:], SA[w...]) + ωconvOff[row]
         return Σ[w_int,:,:]
     end
 
-    X = [0 1; 1 0]
-    iK_tuple = KF_idx(iK, D)
+    # function eval_Γ_core(w::Vararg{Int,3})
+    #     addvals = Vector{ComplexF64}(undef, Ncorrs)
+    #     Threads.@threads for i in 1:Ncorrs
+    #         # first all Keldysh indices
+    #         # res = reshape(evaluate_all_iK(GFs[i], w...), ntuple(_->2, D+1))
+    #         res = reshape(GFevs[i](w...), ntuple(_->2, D+1))
+    #         val_legs = Vector{Vector{ComplexF64}}(undef, length(is_incoming))
+    #         for il in eachindex(is_incoming)
+    #             mat = if letter_combinations[i][il]==='F'
+    #                     -sev(il, w...)
+    #                 else
+    #                     X
+    #                 end
+    #             leg = if is_incoming[il]
+    #                     vec(mat[:, iK_tuple[il]])
+    #                 else
+    #                     vec(mat[iK_tuple[il], :])
+    #                 end
+    #             val_legs[il] = leg
+    #         end
+    #         for d in 1:D+1
+    #             res = res[1,ntuple(_->Colon(),D+1-d)...].*val_legs[d][1] .+ res[2,ntuple(_->Colon(),D+1-d)...].*val_legs[d][2]
+    #         end
+    #         addvals[i] = res
+    #     end
+    #     return sum(addvals)
+    # end
 
-    function eval_Γ_core(w::Vararg{Int,3})
-        addvals = Vector{ComplexF64}(undef, Ncorrs)
-        Threads.@threads for i in 1:Ncorrs
-            # first all Keldysh indices
-            res = reshape(evaluate_all_iK(GFs[i], w...), ntuple(_->2, D+1))
-            val_legs = []
-            for il in eachindex(is_incoming)
-                mat = if letter_combinations[i][il]==='F'
-                        -sev(il, w...)
-                    else
-                        X
-                    end
-                leg = if is_incoming[il]
-                        vec(mat[:, iK_tuple[il]])
-                    else
-                        vec(mat[iK_tuple[il], :])
-                    end
-                push!(val_legs, leg)
-            end
-            for d in 1:D+1
-                res = res[1,ntuple(_->Colon(),D+1-d)...].*val_legs[d][1] .+ res[2,ntuple(_->Colon(),D+1-d)...].*val_legs[d][2]
-            end
-            addvals[i] = res
-        end
-        return sum(addvals)
-    end
+    kwargs_dict = Dict(tcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
 
     # time eval
-    tavg = 0.0
+    # tavg = 0.0
+    tavg_gev = 0.0
     N = 100
     for _ in 1:N
-        t = @elapsed eval_Γ_core(rand(1:2^R, 3)...)
-        tavg += t/N
+        v = rand(1:2^R, 3)
+        # t = @elapsed eval_Γ_core(v...)
+        t_gev = @elapsed gev(v...)
+        # tavg += t/N
+        tavg_gev += t_gev/N
     end
-    printstyled("  Time for one eval: $tavg\n"; color=:blue)
+    # printstyled("  Time for one eval (eval_Γcore): $tavg\n"; color=:blue)
+    printstyled("  Time for one eval (ΓcoreEvaluator_KF): $tavg_gev\n"; color=:blue)
 
-    # evaluate full block
-    if R<=3
-        outsize = ntuple(_ -> 2^R, D)
-        Γcore = zeros(ComplexF64, outsize)
-        for w in Iterators.product(Base.OneTo.(outsize)...) 
-            Γcore[w...] = eval_Γ_core(w...)
+    if batched
+        gbev = ΓcoreBatchEvaluator_KF(gev)
+        t = @elapsed begin
+            tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims; tcikwargs...)
         end
-        fname = "Γcore_KF_R=$R.h5"
-        if isfile(fname)
-            rm(fname)
+        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
+        @info "quanticscrossinterpolate time (nocache, batched): $t"
+        return qtt
+    else
+        t = @elapsed begin
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(i -> 2^R, D); unfoldingscheme=unfoldingscheme, tcikwargs...)
         end
-        h5write(fname, "Γcore", Γcore)
-    end
-
-    t = @elapsed begin
-        qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D); qtcikwargs...)
-    end
-    @info "quanticscrossinterpolate time (nocache): $t"
+        @info "quanticscrossinterpolate time (nocache, not batched): $t"
     return qtt
+    end
+
 end
 
-# """
-# Evaluate self-energy pointwise by symmetric improved estimator.
-# (Eq. 108 Lihm et. al.)
-# """
-# struct SigmaEvaluator_KF{D}
-#     G_QQ::FullCorrEvaluator_KF{ComplexF64, 1, 0}
-#     G_QF::FullCorrEvaluator_KF{ComplexF64, 1, 0}
-#     G_FQ::FullCorrEvaluator_KF{ComplexF64, 1, 0}
-#     G::FullCorrEvaluator_KF{ComplexF64, 1, 0}
-#     Σ_H::Float64
-#     ωconvMat::Matrix{Int}
-#     ωconvOff::Vector{Int}
+"""
+To evaluate Matsubara core vertex, wrapping the required setup and relevant data.
+* sev: callable with signature sev(i::Int, w::Vararg{Int,D}) to evaluate self-energy
+on i'th component of transformed frequency w
+"""
+struct ΓcoreEvaluator_MF{T}
+    GFevs::Vector{FullCorrEvaluator_MF{T,3,2}}
+    Ncorrs::Int # number of full correlators
+    is_incoming::NTuple{4,Bool}
+    letter_combinations::Vector{String}
+    sev::SigmaEvaluator_MF
 
-#     function SigmaEvaluator_KF(
-#         G_QQ_::FullCorrelator_KF{1},
-#         G_QF_::FullCorrelator_KF{1},
-#         G_FQ_::FullCorrelator_KF{1},
-#         G_::FullCorrelator_KF{1},
-#         Σ_H::Float64,
-#         ωconvMat::Matrix{Int};
-#         )
+    function ΓcoreEvaluator_MF(
+        GFs::Vector{FullCorrelator_MF{3}},
+        sev,
+        is_incoming::NTuple{4,Bool},
+        letter_combinations::Vector{String}
+        ;
+        cutoff::Float64=1.e-20)
+        
+        # create correlator evaluators
+        T = eltype(GFs[1].Gps[1].tucker.legs[1])
+        GFevs = [FullCorrEvaluator_MF(GFs[i], true; cutoff=cutoff) for i in eachindex(GFs)]
 
-#         G_QQ = FullCorrEvaluator_MF(G_QQ_, true; cutoff=1.e-12)
-#         G_QF = FullCorrEvaluator_MF(G_QF_, true; cutoff=1.e-12)
-#         G_FQ = FullCorrEvaluator_MF(G_FQ_, true; cutoff=1.e-12)
-#         G = FullCorrEvaluator_MF(G_, true; cutoff=1.e-12)
+        return new{T}(GFevs,length(GFs), is_incoming, letter_combinations, sev)
+    end
+end
 
-#         @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+function ΓcoreEvaluator_MF(
+    GFs::Vector{FullCorrelator_MF{3}},
+    sev,
+    ;
+    cutoff::Float64=1.e-20)
 
-#         D = size(ωconvMat, 2)
-#         Nfer = length(only(G_.ωs_ext))
-#         return new{D}(G_QQ, G_QF, G_FQ, G, Σ_H, ωconvMat, freq_shift_rot(ωconvMat, div(Nfer,2)))
-#     end
-# end
-# ========== KELDYSH END
+    is_incoming = (false, true, false, true)
+    letters = ["F", "Q"]
+    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
+
+    return ΓcoreEvaluator_MF(GFs, sev, is_incoming, letter_combinations; cutoff=cutoff)
+end
+
+function (gev::ΓcoreEvaluator_MF{T})(w::Vararg{Int,3}) where {T}
+    addvals = Vector{ComplexF64}(undef, gev.Ncorrs)
+    for i in 1:gev.Ncorrs
+        addvals[i] = gev.GFevs[i](w...)
+        for il in eachindex(gev.letter_combinations[i])
+            if gev.letter_combinations[i][il]==='F'
+                addvals[i] *= -gev.sev(il, w...)
+            end
+        end
+    end
+    return sum(addvals)
+end
+
+
+"""
+To evaluate Keldysh core vertex, to wrap the required setup and capture relevant data.
+* sev: function with signature sev(i::Int, w::Vararg{Int,D}) to evaluate self-energy
+on i'th component of transformed frequency w
+"""
+struct ΓcoreEvaluator_KF{T}
+    GFevs::Vector{FullCorrEvaluator_KF{3,T}}
+    Ncorrs::Int # number of full correlators
+    iK_tuple::NTuple{4,Int} # requested Keldysh idx
+    X::Matrix{ComplexF64}
+    is_incoming::NTuple{4,Bool}
+    letter_combinations::Vector{String}
+    sev::Function
+
+    function ΓcoreEvaluator_KF(
+        GFs::Vector{FullCorrelator_KF{3}},
+        iK::Int,
+        sev,
+        is_incoming::NTuple{4,Bool},
+        letter_combinations::Vector{String}
+        ;
+        cutoff::Float64=1.e-20)
+        
+        # create correlator evaluators
+        T = eltype(GFs[1].Gps[1].tucker.legs[1])
+        GFevs = [FullCorrEvaluator_KF(GFs[i]; cutoff=cutoff) for i in eachindex(GFs)]
+        X = [0.0 1.0; 1.0 0.0] .+ 0.0*im
+        iK_tuple = KF_idx(iK,3)
+
+        return new{T}(GFevs,length(GFs), iK_tuple, X, is_incoming, letter_combinations, sev)
+    end
+end
+
+function ΓcoreEvaluator_KF(
+    GFs::Vector{FullCorrelator_KF{3}},
+    iK::Int,
+    sev,
+    ;
+    cutoff::Float64=1.e-20)
+
+    is_incoming = (false, true, false, true)
+    letters = ["F", "Q"]
+    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
+
+    return ΓcoreEvaluator_KF(GFs, iK, sev, is_incoming, letter_combinations; cutoff=cutoff)
+end
+
+function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
+    addvals = Vector{T}(undef, gev.Ncorrs)
+    for i in 1:gev.Ncorrs
+        # first all Keldysh indices
+        res = reshape(gev.GFevs[i](w...), ntuple(_->2, 4))
+        val_legs = Vector{Vector{T}}(undef, length(gev.is_incoming))
+        for il in eachindex(gev.is_incoming)
+            mat = if gev.letter_combinations[i][il]==='F'
+                    -gev.sev(il, w...)
+                else
+                    gev.X
+                end
+            leg = if gev.is_incoming[il]
+                    vec(mat[:, gev.iK_tuple[il]])
+                else
+                    vec(mat[gev.iK_tuple[il], :])
+                end
+            val_legs[il] = leg
+        end
+        for d in 1:4
+            res = res[1,ntuple(_->Colon(),4-d)...].*val_legs[d][1] .+ res[2,ntuple(_->Colon(),4-d)...].*val_legs[d][2]
+        end
+        addvals[i] = res
+    end
+    return sum(addvals)
+end
+
+abstract type ΓcoreBatchEvaluator{T} <: TCI.BatchEvaluator{T} end
+
+struct ΓcoreBatchEvaluator_MF{T} <: ΓcoreBatchEvaluator{T}
+    grid::QuanticsGrids.InherentDiscreteGrid{3}
+    qf::TCI.CachedFunction{T}
+    localdims::Vector{Int}
+    gev::ΓcoreEvaluator_MF{T} # to access information
+
+    function ΓcoreBatchEvaluator_MF(GFs::Vector{FullCorrelator_MF{3}}, sev; cutoff=1.e-20)
+        # set up grid
+        D = 3
+        R = grid_R(GFs[1])
+        @assert all(R .== grid_R.(GFs[2:end])) "Full correlator objects have different grid sizes"
+        T = eltype(GF.Gps[1].tucker.center)
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        gev = ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
+
+        # cached function
+        qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+        qf = TCI.CachedFunction{T}(qf_, localdims)
+
+        return new{T}(grid, qf, localdims, gev)
+    end
+
+    function ΓcoreBatchEvaluator_MF(gev::ΓcoreEvaluator_MF{T}) where {T}
+        # set up grid
+        D = 3
+        R = grid_R(gev.GFevs[1].GF)
+        for i in eachindex(gev.GFevs)
+            @assert R == grid_R(gev.GFevs[i].GF) "Full correlator objects have different grid sizes"
+        end
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        # cached function
+        qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+        qf = TCI.CachedFunction{T}(qf_, localdims)
+
+        return new{T}(grid, qf, localdims, gev)
+    end
+end
+
+"""
+To evaluate Keldysh core vertex in parallelized fashion (more than 16 threads).
+"""
+struct ΓcoreBatchEvaluator_KF{T} <: ΓcoreBatchEvaluator{T}
+    # discrete grid because we only need to address frequency indices, not actual frequencies
+    grid::QuanticsGrids.InherentDiscreteGrid{3}
+    qf::TCI.CachedFunction{T}
+    localdims::Vector{Int}
+    gev::ΓcoreEvaluator_KF{T} # to access information
+
+    function ΓcoreBatchEvaluator_KF(GFs::Vector{FullCorrelator_KF{3}}, iK::Int, sev; cutoff=1.e-20)
+        # set up grid
+        D = 3
+        R = grid_R(GFs[1])
+        @assert all(R .== grid_R.(GFs[2:end])) "Full correlator objects have different grid sizes"
+        T = eltype(GF.Gps[1].tucker.center)
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
+
+        # cached function
+        qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+        qf = TCI.CachedFunction{T}(qf_, localdims)
+
+        return new{T}(grid, qf, localdims, gev)
+    end
+
+    function ΓcoreBatchEvaluator_KF(gev::ΓcoreEvaluator_KF{T}) where {T}
+        # set up grid
+        D = 3
+        R = grid_R(gev.GFevs[1].KFC)
+        for i in eachindex(gev.GFevs)
+            @assert R == grid_R(gev.GFevs[i].KFC) "Full correlator objects have different grid sizes"
+        end
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        # cached function
+        qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+        qf = TCI.CachedFunction{T}(qf_, localdims)
+
+        return new{T}(grid, qf, localdims, gev)
+    end
+end
+
+
+
+"""
+Evaluation on single Quantics index.
+"""
+function (gbev::ΓcoreBatchEvaluator{T})(v::Vector{Int}) where {T}
+    # return gbev.qf(v)
+    return gbev.qf.f(v)
+end
+
+"""
+If cached value exists, read it.
+If qf(x) is not cached, cache it into d_write.
+Intended to use CachedFunction with multiple threads.
+"""
+function (cf::TCI.CachedFunction{ValueType, K})(x::Vector{T}, d_write::Dict{K,ValueType}) where {ValueType, K, T<:Number}
+    # printstyled("  tid: $(Threads.threadid())\n"; color=:gray)
+    xkey = TCI._key(cf, x)
+    return get(cf.cache, xkey) do
+        # returns cf.f(x)
+        d_write[xkey] = cf.f(x)
+    end
+end
+
+
+"""
+Batch evaluation of core vertex
+"""
+function (gbev::ΓcoreBatchEvaluator{T})(
+    leftindexsset::Vector{Vector{Int}}, rightindexsset::Vector{Vector{Int}}, ::Val{M}
+    ) where {T,M}
+    nleft = length(first(leftindexsset))
+
+    cindexset = vec(collect(Iterators.product(ntuple(i -> 1:gbev.localdims[nleft+i], M)...)))
+    out = Array{T,M+2}(undef, (length(leftindexsset), ntuple(i->gbev.localdims[nleft+i],M)..., length(rightindexsset)))
+
+    # careful: manual treatment of caching required to avoid simultaneous writes to CachedFunction dict by different threads
+    # Threads.@threads for il in eachindex(leftindexsset)
+    #         left_act = leftindexsset[il]
+    #     for ic in eachindex(cindexset)
+    #         cen_act = cindexset[ic]
+    #         for ir in eachindex(rightindexsset)
+    #             idx = vcat(left_act, cen_act..., rightindexsset[ir])
+    #             out[il, cindexset[ic]..., ir] = gbev.qf(idx)
+    #         end
+    #     end
+    # end
+
+    chunklen = max(div(length(leftindexsset), Threads.nthreads()), 1)
+    chunks = Iterators.partition(eachindex(leftindexsset),  chunklen)
+    printstyled("== CHUNKS: $(length.(chunks)) ($(Threads.nthreads()) threads)\n"; color=:blue)
+    cache_dicts = Dict([tid => typeof(gbev.qf.cache)() for tid in Threads.threadpooltids(:default)])
+
+    # TODO: Is there a better solution than using the :static schedule to make sure cache_dicts are not written
+    # by two threads at the same time? -> Use Locks?
+    Threads.@threads :static for chunk in collect(chunks)
+            tid_act = Threads.threadid()
+            # println("-- Thread $tid_act is processing chunk of size $(length(chunk))")
+            for il in chunk
+                    left_act = leftindexsset[il]
+                for ic in eachindex(cindexset)
+                    cen_act = cindexset[ic]
+                    for ir in eachindex(rightindexsset)
+                        idx = vcat(left_act, cen_act..., rightindexsset[ir])
+                        out[il, cindexset[ic]..., ir] = gbev.qf(idx, cache_dicts[tid_act])
+                    end
+                end
+            end
+        end
+
+    # merge chached function values into cached function dict
+    for (_, d) in cache_dicts
+        merge!(gbev.qf.cache, d)
+    end
+
+    return out
+end

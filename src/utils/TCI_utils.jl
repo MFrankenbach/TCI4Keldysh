@@ -839,6 +839,19 @@ function grid_R(GF::FullCorrelator_MF{D}) :: Int where {D}
 end
 
 """
+Determine number of bits needed for quantics representation of GF.
+GF is required to have 2^R fermionic or 2^R+1 bosonic frequencies in each direction for each partial correlator.
+"""
+function grid_R(GF::FullCorrelator_KF{D}) :: Int where {D}
+    R = grid_R(GF.Gps[1])
+    for i in 2:length(GF.Gps)
+        R_ = grid_R(GF.Gps[i])
+        @assert R_==R "All partial correlators must have the same grid size"
+    end
+    return R
+end
+
+"""
 Compress frequency kernels (legs) of partial correlator to MPS of given length.
 CAREFUL: Compression is done via SVD!
 Excessive bits are zeropadded.

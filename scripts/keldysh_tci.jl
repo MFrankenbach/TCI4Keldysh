@@ -10,6 +10,8 @@ using LinearAlgebra
 import TensorCrossInterpolation as TCI
 import QuanticsGrids as QG
 
+using Test
+
 """
 β=2000.0 in Seung-Sup's data
 """
@@ -262,7 +264,7 @@ function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
 end
 
 
-function time_Γcore_KF(iK::Int, R=3, tolerance=1.e-3)
+function time_Γcore_KF(iK::Int, R=4, tolerance=1.e-6)
     channel = "a"
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
@@ -280,7 +282,6 @@ function time_Γcore_KF(iK::Int, R=3, tolerance=1.e-3)
         γ=γ,
         T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
         )
-
 end
 
 function profile_Γcore_KF(iK::Int, R=3, tolerance=1.e-3)
@@ -310,8 +311,8 @@ end
 
 function test_Γcore_KF(iK::Int, channel::String="a")
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-    R = 3
-    tolerance = 1.e-3
+    R = 6
+    tolerance = 1.e-4
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
     ωmax = 1.0
@@ -343,8 +344,10 @@ function test_Γcore_KF(iK::Int, channel::String="a")
         ; 
         sigmak=sigmak,
         γ=γ,
-        T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+        T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance
         )
+
+    @show TCI.linkdims(qtt.tci)
 
     # compare
     Γcore_tci = TCI4Keldysh.QTT_to_fatTensor(qtt, Base.OneTo.(fill(2^R, D)))
