@@ -7,6 +7,8 @@ using Printf
 using HDF5
 using JSON
 using LinearAlgebra
+using Serialization
+using Printf
 import TensorCrossInterpolation as TCI
 import QuanticsGrids as QG
 
@@ -259,8 +261,26 @@ function test_compress_FullCorrelator_KF(npt::Int, iK; R=4, tolerance=1.e-6, cha
 end
 
 
-function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
-    return "KF_timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
+function GFfilename(mode::String,
+    xmin::Int,
+    xmax::Int,
+    tolerance::Float64,
+    beta::Float64,
+    ωmin::Float64,
+    ωmax::Float64,
+    iK::Int,
+    γ::Float64,
+    sigmak::Float64)
+
+    ommin = @sprintf("%.2f", ωmin)
+    ommax = @sprintf("%.2f", ωmax)
+    sigmak_str = @sprintf("%.2f", sigmak)
+    γ_str = @sprintf("%.2f", γ)
+
+    str1 = "KF_timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta)"
+    str2 = "_omega" * ommin * "_to_" * ommax * "_iK=$iK" * "_broaden_γ=$(γ_str)_σ=$(sigmak_str)"
+
+    return str1 * str2
 end
 
 
@@ -375,6 +395,17 @@ function test_Γcore_KF(iK::Int, channel::String="a")
 
 end
 
+function serialize_tt(qtt, outname::String, folder::String)
+    R = qtt.grid.R
+    fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
+    serialize(fname_tt, qtt)
+end
+
+function deserialize_tt(R::Int, outname::String, folder::String)
+    fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
+    return deserialize(fname_tt)
+end
+
 """
 Store ranks and timings for computation of single keldysh components full 4-point correlators.
 Can vary:
@@ -383,41 +414,52 @@ Can vary:
 * R
 * tolerance
 """
-function time_FullCorrelator_sweep(iK::Int, γ::Float64, sigmak::Float64, mode::String="R"; tolerance=1.e-8, beta=1.0/default_T(), Rs=nothing)
+function time_FullCorrelator_sweep(
+        iK::Int, γ::Float64, sigmak::Float64, mode::String="R";
+        tolerance=1.e-8, Rs=nothing, serialize_tts=false)
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt/")
     folder = "pwtcidata"
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
     npt = 4
     times = []
     qttranks = []
+    bonddims = []
     svd_kernel = true
+    ωmax = 1.0
+    ωmin = -ωmax
+    flavor_idx = 1
     if mode=="R"
         Rs = isnothing(Rs) ? (5:8) : Rs
         # prepare output
         d = Dict()
         d["times"] = times
         d["ranks"] = qttranks
+        d["bonddims"] = bonddims
         d["Rs"] = Rs
         d["tolerance"] = tolerance
         d["svd_kernel"] = svd_kernel
         d["gamma"] = γ
         d["sigmak"] = sigmak 
         d["beta"] = beta
-        outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta)
+        d["ommin"] = ωmin
+        d["ommax"] = ωmax
+        d["iK"] = iK
+        d["PSFpath"] = PSFpath
+        d["flavor"] = flavor_idx 
+        outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta, ωmin, ωmax, iK, γ, sigmak)
         TCI4Keldysh.logJSON(d, outname, folder)
 
         for R in Rs
             
             # create correlator
-            PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt/")
             npt = 4
             D = npt-1
             Ops = ["F1", "F1dag", "F3", "F3dag"]
             T = 1.0/beta
 
-            ωmax = 1.0
-            ωmin = -ωmax
-            ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+            ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
             ωconvMat = TCI4Keldysh.channel_trafo("a")
-            KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=[sigmak], γ=γ, name="Kentucky fried chicken")
+            KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat, sigmak=[sigmak], γ=γ, name="Kentucky fried chicken")
             # create correlator END
 
             t = @elapsed begin
@@ -425,14 +467,110 @@ function time_FullCorrelator_sweep(iK::Int, γ::Float64, sigmak::Float64, mode::
             end
             push!(times, t)
             push!(qttranks, TCI4Keldysh.rank(qtt))
+            push!(bonddims, TCI.linkdims(qtt.tci))
             TCI4Keldysh.updateJSON(outname, "times", times, folder)
             TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+            TCI4Keldysh.updateJSON(outname, "bonddims", bonddims, folder)
+
+            if serialize_tts
+                serialize_tt(qtt, outname, folder)
+            end
+
             println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
         end
     else
         error("Invalid mode $mode")
     end
 end
+
+function Γcore_filename(mode::String,
+    xmin::Int,
+    xmax::Int,
+    tolerance::Float64,
+    beta::Float64,
+    ωmin::Float64,
+    ωmax::Float64,
+    iK::Int,
+    γ::Float64,
+    sigmak::Float64)
+
+    ommin = @sprintf("%.2f", ωmin)
+    ommax = @sprintf("%.2f", ωmax)
+    sigmak_str = @sprintf("%.2f", sigmak)
+    γ_str = @sprintf("%.2f", γ)
+
+    str1 = "KF_gammacore_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta)"
+    str2 = "_omega" * ommin * "_to_" * ommax * "_iK=$iK" * "_broaden_γ=$(γ_str)_σ=$(sigmak_str)"
+
+    return str1 * str2
+end
+
+
+function time_Γcore_KF_sweep(
+    param_range, iK::Int, γ::Float64, sigmak::Float64, mode="R"; tolerance=1.e-8, serialize_tts=false
+    )
+    folder = "pwtcidata"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    ωconvMat = TCI4Keldysh.channel_trafo("t")
+    T = 1.0/beta
+    times = []
+    qttranks = []
+    bonddims = []
+    svd_kernel = true
+    ωmax = 1.0
+    ωmin = -1.0
+    flavor_idx = 1
+    if mode=="R"
+        Rs = param_range
+        # prepare output
+        d = Dict()
+        d["times"] = times
+        d["ranks"] = qttranks
+        d["bonddims"] = bonddims
+        d["Rs"] = Rs
+        d["tolerance"] = tolerance
+        d["svd_kernel"] = svd_kernel
+        d["numthreads"] = Threads.threadpoolsize()
+        d["sigmak"] = sigmak 
+        d["gamma"] = γ 
+        d["beta"] = beta
+        d["ommin"] = ωmin
+        d["ommax"] = ωmax
+        d["iK"] = iK
+        d["PSFpath"] = PSFpath
+        d["flavor"] = flavor_idx
+        outname = Γcore_filename(mode, first(Rs), last(Rs), tolerance, beta, ωmin, ωmax, iK, γ, sigmak)
+        TCI4Keldysh.logJSON(d, outname, folder)
+
+        for R in Rs
+            t = @elapsed begin
+                qtt = TCI4Keldysh.Γ_core_TCI_KF(
+                    PSFpath, R, iK, ωmax
+                    ; 
+                    sigmak=[sigmak],
+                    γ=γ,
+                    T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+                    )
+            end 
+            push!(times, t)
+            push!(qttranks, TCI4Keldysh.rank(qtt))
+            push!(bonddims, TCI.linkdims(qtt.tci))
+            TCI4Keldysh.updateJSON(outname, "times", times, folder)
+            TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+            TCI4Keldysh.updateJSON(outname, "bonddims", bonddims, folder)
+
+            if serialize_tts            
+                serialize_tt(qtt, outname, folder)
+            end
+
+            println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+        end
+    else
+        error("Invalid mode $mode")
+    end
+end
+
 
 """
 Homebrewn broadening for beta=2000 🍺
@@ -630,6 +768,7 @@ end
 
 function plot_FullCorrelator_timing(param_range, mode="R"; beta=default_T(), tolerance=1.e-6, plot_mem=false)
     folder = "pwtcidata"    
+    error("Provide all parameters to specify file")
     filename = GFfilename(mode, minimum(param_range), maximum(param_range), tolerance, beta)
     data = TCI4Keldysh.readJSON(filename, folder)
 
@@ -699,14 +838,6 @@ end
 # for R in 5:9
 #     time_compress_FullCorrelator_KF(2; R=R, tolerance=1.e-3)
 # end
-
-function main()
-    time_compress_FullCorrelator_KF(2)
-    beta = 200.0
-    time_FullCorrelator_sweep(2, 30.0/beta, 0.1, "R"; tolerance=1.e-4, beta=beta, Rs=5:10)
-end
-
-
 
 function test_FullCorrEvaluator_KF(npt::Int, iK::Int)
     # create correlator
@@ -806,3 +937,6 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
 
     return nothing
 end
+
+# time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:4, tolerance=1.e-3, serialize_tts=true)
+# time_Γcore_KF_sweep(3:4, 2, 1000.0, 0.5; tolerance=1.e-3, serialize_tts=true)

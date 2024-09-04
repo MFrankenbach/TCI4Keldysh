@@ -1017,26 +1017,48 @@ end
 * channel: a, p or t
 """
 function channel_trafo(channel::String)
+    #= cf. Seung-Sup's README.txt:
+-            pht/ph bar (a) : (
+            nu_r,
+            -nu'_r          ,
+            nu'_r + omega_r,
+            -nu_r  - omega_r
+            ) 
+-            pp(p) : (
+            nu_r,
+            -nu'_r          ,
+            -nu_r - omega_r,
+            nu'_r  + omega_r
+            ) 
+-            ph(t) : (
+            nu_r,
+            -nu_r  - omega_r,
+            nu'_r + omega_r,
+            -nu'_r
+            ) 
+    =#
     ωconvMat = if channel == "a"
+          # -ω -ν -ν' (cf. eq. 138 Lihm et al 2021)
         [
-            0 -1  0;
-            0  0  1;
-            -1  0 -1;
-            1  1  0;
+            0 -1  0; # ν
+            0  0  1; # -ν'
+            -1  0 -1; # ω+ν'
+            1  1  0; # -ω-ν
         ]
+    # MBE solver convention
     elseif channel == "p"
         [
-            0 -1  0;
-            1  0 -1;
-            -1  1  0;
-            0  0  1;
+            0 -1  0; # ν
+            1  0 -1; # -ω+ν'
+            -1  1  0; # ω-ν
+            0  0  1; # -ν'
         ]
     elseif channel == "t"
         [
-            0 -1  0;
-            1  1  0;
-            -1  0 -1;
-            0  0  1;
+            0 -1  0; # ν
+            1  1  0; # -ω-ν
+            -1  0 -1; # ω+ν'
+            0  0  1; # -ν'
         ]
     else
         error("Invalid frequency convention")
