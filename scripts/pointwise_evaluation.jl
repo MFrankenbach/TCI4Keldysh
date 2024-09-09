@@ -261,6 +261,40 @@ function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
     return "timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
 end
 
+function to_intvec(x) :: Vector{Int}
+    return convert(Vector{Int}, x)
+end
+
+"""
+Find file for given beta and tolerance with maximum R-range
+"""
+function find_GF_file(tolerance::Float64, beta::Float64; folder="pwtcidata")
+    function _file_relevant(f)
+        desired = endswith(f, ".json") && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && startswith(f, "timing")
+        allowed = !occursin("gammacore", f) && !occursin("KF", f)
+        return desired && allowed
+    end
+    files = filter(
+            _file_relevant,
+            readdir(folder)
+            )
+        
+    @show files
+
+    if isempty(files)
+        return nothing
+    end
+
+    function _Rrange(file)
+        d = TCI4Keldysh.readJSON(file, folder)
+        Rs = to_intvec(d["Rs"])
+        Rran = maximum(Rs) - minimum(Rs)
+        return Rran
+    end
+
+    return argmax(_Rrange, files)
+end
+
 """
 Compute error introduced in regular partial correlators when the kernels are truncated with via SVD.
 """
@@ -414,6 +448,39 @@ function plot_FullCorrelator_timing(param_range, mode="R"; beta=10.0, tolerance=
     end
 end
 
+function plot_FullCorrelator_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster")
+    plot_FullCorrelator_ranks(10.0 .^ tol_range, PSFpath; folder=folder)
+end
+
+function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata")
+    p = TCI4Keldysh.default_plot()    
+
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+
+    for tol in tol_range
+        file_act = find_GF_file(tol, beta; folder=folder)
+        if isnothing(file_act)
+            @warn "No file for tol=$tol, beta=$beta found!"
+        else
+            @info "Processing file:\n    $file_act"
+        end
+
+        # plot
+        d = TCI4Keldysh.readJSON(file_act, folder)
+        Rs = to_intvec(d["Rs"])
+        ranks = to_intvec(d["ranks"])
+        @show Rs
+        @show ranks
+        plot!(p, Rs[1:length(ranks)], ranks; marker=:circle, label="tol=$(TCI4Keldysh.tolstr(tol))")
+    end
+
+    title!(p, "Matsubara Full Correlator, β=$beta")
+    xlabel!("R")
+    ylabel!("χ")
+    savefig("MFcorr_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.png")
+end
+
+
 function test_reduce_Gps!()
     R = 5
     GF = TCI4Keldysh.dummy_correlator(4, R; beta=100.0, is_compactAdisc=false)[1]
@@ -424,3 +491,8 @@ function test_reduce_Gps!()
 
     @assert maximum(abs.(data .- data_red)) < 1.e-11
 end
+
+
+# PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+plot_FullCorrelator_ranks([-2,-4,-6,-8], PSFpath; folder="pwtcidata_cluster")

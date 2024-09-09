@@ -81,6 +81,32 @@ function (sev::SigmaEvaluator_MF{D})(row::Int, w::Vararg{Int,D}) where {D}
     return sev.G_QQ(w_int) + sev.Σ_H - (sev.G_QF(w_int) / sev.G(w_int)) * sev.G_FQ(w_int)
 end
 
+function read_GFs_Γcore!(
+    GFs::Vector, PSFpath, letter_combinations;
+    T::Float64, ωs_ext::NTuple{3, Vector{Float64}}, flavor_idx::Int, ωconvMat::Matrix{Int}
+    )
+    
+    op_labels = ("1", "1dag", "3", "3dag")
+    op_labels_symm = ("3", "3dag", "1", "1dag")
+    # create correlator objects
+    PSFpath_4pt = joinpath(PSFpath, "4pt")
+    filelist = readdir(PSFpath_4pt)
+    # Threads.@threads for l in 1:Ncorrs # can two threads try to read the same file here?
+    for l in 1:length(GFs)
+        letts = letter_combinations[l]
+        println("letts: ", letts)
+        ops = [letts[i]*op_labels[i] for i in 1:4]
+        if !any(parse_Ops_to_filename(ops) .== filelist)
+            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
+        end
+        GFs[l] = TCI4Keldysh.FullCorrelator_MF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat);
+    end
+end
+
+function letter_combonations_Γcore()
+    letters = ["F", "Q"]
+    return kron(kron(letters, letters), kron(letters, letters))
+end
 
 """
 First row in Fig 13, Lihm et. al.
@@ -91,7 +117,7 @@ Use BatchEvaluator and CachedFunction. Intended to run on multiple threads.
 function Γ_core_TCI_MF_batched(
     PSFpath::String,
     R::Int;
-    # cache_center::Int=0,
+    cache_center::Int=0,
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
@@ -101,34 +127,19 @@ function Γ_core_TCI_MF_batched(
     # make frequency grid
     D = size(ωconvMat, 2)
     Nhalf = 2^(R-1)
-    ombos = MF_grid(T, Nhalf, false)
-    omfer = MF_grid(T, Nhalf, true)
-    ωs_ext = ntuple(i -> i>1 ? omfer : ombos, D)
+    ωs_ext = MF_npoint_grid(T, Nhalf, D)
 
     # all 16 4-point correlators
-    letters = ["F", "Q"]
-    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
-    op_labels = ("1", "1dag", "3", "3dag")
-    op_labels_symm = ("3", "3dag", "1", "1dag")
+    letter_combinations = letter_combonations_Γcore()
     is_incoming = (false, true, false, true)
 
     Ncorrs = length(letter_combinations)
-
     GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
 
-    # create correlator objects
-    PSFpath_4pt = joinpath(PSFpath, "4pt")
-    filelist = readdir(PSFpath_4pt)
-    # Threads.@threads for l in 1:Ncorrs # can two threads try to read the same file here?
-    for l in 1:Ncorrs
-        letts = letter_combinations[l]
-        println("letts: ", letts)
-        ops = [letts[i]*op_labels[i] for i in 1:4]
-        if !any(parse_Ops_to_filename(ops) .== filelist)
-            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
-        end
-        GFs[l] = TCI4Keldysh.FullCorrelator_MF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat);
-    end
+    read_GFs_Γcore!(
+        GFs, PSFpath, letter_combinations;
+        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
+        )
 
     # create self-energy evaluator
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
@@ -152,6 +163,7 @@ function Γ_core_TCI_MF_batched(
 
 end
 
+
 """
 First row in Fig 13, Lihm et. al.
 Return 3*R bit quantics tensor train.
@@ -171,34 +183,19 @@ function Γ_core_TCI_MF(
     # make frequency grid
     D = size(ωconvMat, 2)
     Nhalf = 2^(R-1)
-    ombos = MF_grid(T, Nhalf, false)
-    omfer = MF_grid(T, Nhalf, true)
-    ωs_ext = ntuple(i -> i>1 ? omfer : ombos, D)
+    ωs_ext = MF_npoint_grid(T, Nhalf, D)
 
     # all 16 4-point correlators
-    letters = ["F", "Q"]
-    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
-    op_labels = ("1", "1dag", "3", "3dag")
-    op_labels_symm = ("3", "3dag", "1", "1dag")
+    letter_combinations = letter_combonations_Γcore()
     is_incoming = (false, true, false, true)
 
     Ncorrs = length(letter_combinations)
-
     GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
 
-    # create correlator objects
-    PSFpath_4pt = joinpath(PSFpath, "4pt")
-    filelist = readdir(PSFpath_4pt)
-    # Threads.@threads for l in 1:Ncorrs # can two threads try to read the same file here?
-    for l in 1:Ncorrs
-        letts = letter_combinations[l]
-        println("letts: ", letts)
-        ops = [letts[i]*op_labels[i] for i in 1:4]
-        if !any(parse_Ops_to_filename(ops) .== filelist)
-            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
-        end
-        GFs[l] = TCI4Keldysh.FullCorrelator_MF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat);
-    end
+    read_GFs_Γcore!(
+        GFs, PSFpath, letter_combinations;
+        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
+        )
 
     # create full correlator evaluators
     kwargs_dict = Dict(qtcikwargs)

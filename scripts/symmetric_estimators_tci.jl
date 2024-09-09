@@ -1,6 +1,7 @@
 using Plots
 using Profile
 using StatProfilerHTML
+using Serialization
 
 TCI4Keldysh.TIME() = false
 
@@ -33,6 +34,77 @@ function time_cache_gain(;R=5, tolerance=1.e-6)
     x = sum(Γcore)
     println(" TIME WITH CACHE: $t2")
     println(" TIME WITHOUT CACHE: $t1")
+end
+
+"""
+To store qtts on disk (on cluster)
+"""
+function serialize_tt(qtt, outname::String, folder::String)
+    R = qtt.grid.R
+    fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
+    serialize(fname_tt, qtt)
+end
+
+"""
+Find info on qtt in json file
+"""
+function qttfile_to_json(qttfile::String)
+    pattern = r"R=(\d+)"
+    m = match(pattern, qttfile)
+    if !isnothing(m)
+        return qttfile[1:m.offset-1] * ".json"
+    else
+        error("Pattern not found")
+    end
+end
+
+"""
+Check interpolation error of TCI-ed Γcore
+"""
+function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata_cluster")
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    T = 1.0/beta
+    @assert occursin("R=$R", qttfile) && occursin("$beta", qttfile) "Does the file $qttfile match parameters R=$R, beta=$beta?"
+
+    qtt = deserialize(qttfile)        
+    qtt_data = readJSON(qttfile_to_json(qttfile), folder)
+
+    ωconvMat = TCI4Keldysh.channel_trafo(qtt_data["channel"])
+    R = qtt.grid.R
+    if haskey(qtt_data, "flavor_idx")
+        flavor_idx = qtt_data["flavor_idx"]
+    else
+        @warn "Assuming flavor_idx=1"
+        flavor_idx = 1
+    end
+
+    # ==== create ΓcoreEvaluator_MF
+
+    # make frequency grid
+    D = size(ωconvMat, 2)
+    Nhalf = 2^(R-1)
+    ωs_ext = TCI4Keldysh.MF_npoint_grid(T, Nhalf, D)
+
+    # all 16 4-point correlators
+    letter_combinations = TCI4Keldysh.letter_combonations_Γcore()
+    is_incoming = (false, true, false, true)
+
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
+
+    TCI4Keldysh.read_GFs_Γcore!(
+        GFs, PSFpath, letter_combinations;
+        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat
+        )
+
+    # create self-energy evaluator
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    sev = TCI4Keldysh.SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
+
+    cutoff = 1.e-20
+    gev = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
+
+    # ==== SETUP DONE
 end
 
 function time_Γcore()
@@ -91,6 +163,32 @@ end
 
 function Γcore_filename(mode::String, xmin, xmax, tolerance::Float64, beta::Float64)
     return "gammacore_timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
+end
+
+"""
+Find file for given beta and tolerance with maximum R-range
+"""
+function find_Γcore_file(tolerance::Float64, beta::Float64; folder="pwtcidata")
+    function _file_relevant(f)
+        return endswith(f, ".json") && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && occursin("gammacore", f)
+    end
+    files = filter(
+            _file_relevant,
+            readdir(folder)
+            )
+
+    if isempty(files)
+        return nothing
+    end
+
+    function _Rrange(file)
+        d = TCI4Keldysh.readJSON(file, folder)
+        Rs = to_intvec(d["Rs"])
+        Rran = maximum(Rs) - minimum(Rs)
+        return Rran
+    end
+
+    return argmax(_Rrange, files)
 end
 
 function time_Γcore_sweep(param_range, mode="R"; beta=DEFAULT_β, tolerance=1.e-8)
@@ -160,6 +258,42 @@ function plot_vertex_timing(param_range, mode="R"; beta=10.0, tolerance=1.e-6, p
 
         savefig(p, "vertextiming_beta=$(beta)_tol=$(round(Int,log10(tolerance))).png")
     end
+end
+
+function to_intvec(x) :: Vector{Int}
+    return convert(Vector{Int}, x)
+end
+
+function plot_vertex_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster")
+    plot_vertex_ranks(10.0 .^ tol_range, PSFpath; folder=folder)
+end
+
+function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster")
+    p = TCI4Keldysh.default_plot()    
+
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+
+    for tol in tol_range
+        file_act = find_Γcore_file(tol, beta; folder=folder)
+        if isnothing(file_act)
+            @warn "No file for tol=$tol, beta=$beta found!"
+        else
+            @info "Processing file:\n    $file_act"
+        end
+
+        # plot
+        d = TCI4Keldysh.readJSON(file_act, folder)
+        Rs = to_intvec(d["Rs"])
+        ranks = to_intvec(d["ranks"])
+        @show Rs
+        @show ranks
+        plot!(p, Rs[1:length(ranks)], ranks; marker=:circle, label="tol=$(TCI4Keldysh.tolstr(tol))")
+    end
+
+    title!(p, "Matsubara core vertex, β=$beta")
+    xlabel!("R")
+    ylabel!("χ")
+    savefig("MFvertex_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.png")
 end
 
 function profile_Γcore()
@@ -347,3 +481,7 @@ function test_K2_TCI(; channel="a", R=4, beta=50.0, tolerance=1.e-5, prime=false
     heatmap(log10.(abs.(K2ref)); clim=clim)
     savefig("K2_ref.png")
 end
+
+# PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+plot_vertex_ranks([-2, -3, -4, -6], PSFpath; folder="pwtcidata_cluster")

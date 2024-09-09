@@ -1134,7 +1134,11 @@ function logJSON(data::Any, filename::String, folder::String="tci_data"; verbose
 end
 
 function readJSON(filename::String, folder::String="tci_data")
-    path = joinpath(folder, filename*".json")
+    path = if endswith(filename, ".json")
+        joinpath(folder, filename)
+    else
+        joinpath(folder, filename*".json")
+    end
     data = open(path) do file
         JSON.parse(file)
     end 
