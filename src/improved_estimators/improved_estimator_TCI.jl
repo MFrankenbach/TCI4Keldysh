@@ -108,6 +108,49 @@ function letter_combonations_Γcore()
     return kron(kron(letters, letters), kron(letters, letters))
 end
 
+function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
+
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    channel = "t"
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    # numerically exact evaluator
+    gev_ref = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=1.e-20)
+
+    cutoff = 0.01 * tolerance
+    gev = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=cutoff)
+
+    D = 3
+    N = 2^R
+    Neval = 2^4
+    eval_step = max(div(N, Neval), 1)
+    gridslice = 1:eval_step:N
+    @assert length(gridslice)==Neval
+
+    # reference values
+    println("Computing reference...")
+    refval = zeros(ComplexF64, ntuple(_->Neval, D))
+    Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
+        w = ntuple(i -> gridslice[idx[i]], D)
+        refval[idx...] = gev_ref(w...)
+    end
+
+    # approximate values
+    println("Computing test values...")
+    testval = zeros(ComplexF64, ntuple(_->Neval, D))
+    Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
+        w = ntuple(i -> gridslice[idx[i]], D)
+        testval[idx...] = gev(w...)
+    end
+
+    maxref = maximum(abs.(refval))
+    diff = abs.(testval - refval) ./ maxref
+    printstyled("ΓcoreEvaluator_MF error for tol=$tolerance\n"; color=:blue)
+    @show maxref
+    @show maximum(diff)
+end
+
 """
 First row in Fig 13, Lihm et. al.
 Return 3*R bit quantics tensor train.
@@ -124,31 +167,17 @@ function Γ_core_TCI_MF_batched(
     tcikwargs...
 )
 
-    # make frequency grid
-    D = size(ωconvMat, 2)
-    Nhalf = 2^(R-1)
-    ωs_ext = MF_npoint_grid(T, Nhalf, D)
-
-    # all 16 4-point correlators
-    letter_combinations = letter_combonations_Γcore()
-    is_incoming = (false, true, false, true)
-
-    Ncorrs = length(letter_combinations)
-    GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
-
-    read_GFs_Γcore!(
-        GFs, PSFpath, letter_combinations;
-        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
-        )
-
-    # create self-energy evaluator
-    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
-    sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
-
-    # create core evaluator
     kwargs_dict = Dict(tcikwargs)
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
-    gev = ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
+    gev = ΓcoreEvaluator_MF(
+        PSFpath,
+        R;
+        cache_center=cache_center,
+        ωconvMat=ωconvMat,
+        flavor_idx=flavor_idx,
+        T=T,
+        cutoff=cutoff
+    )
 
     # create batch evaluator
     gbev = ΓcoreBatchEvaluator_MF(gev)
@@ -530,6 +559,40 @@ function ΓcoreEvaluator_MF(
     letter_combinations = kron(kron(letters, letters), kron(letters, letters))
 
     return ΓcoreEvaluator_MF(GFs, sev, is_incoming, letter_combinations; cutoff=cutoff)
+end
+
+function ΓcoreEvaluator_MF(
+    PSFpath::String,
+    R::Int;
+    cache_center::Int=0,
+    ωconvMat::Matrix{Int},
+    T::Float64,
+    flavor_idx::Int=1,
+    cutoff::Float64
+    )
+    # make frequency grid
+    D = size(ωconvMat, 2)
+    Nhalf = 2^(R-1)
+    ωs_ext = MF_npoint_grid(T, Nhalf, D)
+
+    # all 16 4-point correlators
+    letter_combinations = letter_combonations_Γcore()
+    is_incoming = (false, true, false, true)
+
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
+
+    read_GFs_Γcore!(
+        GFs, PSFpath, letter_combinations;
+        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
+        )
+
+    # create self-energy evaluator
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
+
+    # create core evaluator
+    return ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
 end
 
 function (gev::ΓcoreEvaluator_MF{T})(w::Vararg{Int,3}) where {T}

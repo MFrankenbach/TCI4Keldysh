@@ -244,6 +244,68 @@ function compress_FullCorrelator_batched(GF::FullCorrelator_MF{D}, svd_kernel::B
     return (tt, fevbatch)
 end
 
+function check_GF_evaluator(refval::Array{ComplexF64,D}, GFev, grid::NTuple{D, AbstractRange}; tolerance=1.e-12) where {D}
+    Neval = length(grid[1])
+    GFval = zeros(ComplexF64, size(refval))
+    Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...) )
+        w = ntuple(i -> grid[i][idx[i]], D)
+        GFval[idx...] = GFev(w...)
+    end
+
+    maxref = maximum(abs.(refval))
+    diff = (GFval .- refval) ./ maxref
+    printstyled("Error of GF evaluator: \n"; color=:blue)
+    maxerr = maximum(abs.(diff))
+    @show maxref
+    @show maxerr
+    @show maxerr * maxref
+    @assert maxerr <= tolerance
+
+    if D==3
+        heatmap(log10.(abs.(GFval))[:,:,div(Neval,2)])
+        savefig("GF.png")
+        heatmap(log10.(abs.(refval))[:,:,div(Neval,2)])
+        savefig("ref.png")
+        heatmap(log10.(abs.(diff))[:,:,div(Neval,2)])
+        savefig("diff.png")
+    end
+end
+
+"""
+Check accuracy of FullCorrEvaluator with given SVD cutoff and Tucker cutoff.
+"""
+function test_FullCorrEvaluator_MF(npt::Int=4; R::Int=5, tolerance=1.e-20)
+    D = npt-1
+    GF = dummy_correlator(npt, R; beta=2000.0)[1]
+
+    # reference
+    N = 2^R
+    Neval = 2^5
+    eval_step = max(div(N, Neval), 1)
+    gridslice = 1:eval_step:N
+    @assert length(gridslice)==Neval
+
+    @assert intact(GF)
+    refval = zeros(ComplexF64, ntuple(_->Neval, D))
+    Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
+        w = ntuple(i -> gridslice[idx[i]], D)
+        refval[idx...] = evaluate(GF, w...)
+    end
+
+    # numerically exact evaluators
+    cutoff = 0.01 * tolerance
+    tucker_cut = 0.1 * tolerance
+    GFev = FullCorrEvaluator_MF(deepcopy(GF), true; cutoff=cutoff, tucker_cutoff=tucker_cut)
+    check_GF_evaluator(refval, GFev, ntuple(_->gridslice, D); tolerance=tolerance)
+    GFev = nothing
+
+    GFbev = FullCorrBatchEvaluator_MF(deepcopy(GF), true; cutoff=cutoff, tucker_cutoff=tucker_cut)
+    function _GFbev(w::Vararg{Int, D}) where {D}
+        return evaluate(GFbev, w...)
+    end
+    check_GF_evaluator(refval, _GFbev, ntuple(_->gridslice, D); tolerance=tolerance)
+end
+
 
 """
 Obtain qtt for full correlator by pointwise evaluation.

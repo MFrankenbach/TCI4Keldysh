@@ -105,15 +105,33 @@ function _get_Gp_to_G(D::Int, isBos::BitVector) ::Vector{Float64}
     return Gp_to_G
 end
 
-function evaluate(G::FullCorrelator_MF{D}, idx::Vararg{Int,D}) where{D}
-    eval_gps(gp) = gp(idx...)
+"""
+evaluate regular part of GF
+"""
+function evaluate_reg(G::FullCorrelator_MF{D}, idx::Vararg{Int,D}) where{D}
+    eval_gps_reg(gp) = gp(idx...)
     #Gp_values = eval_gps.(G.Gps)
     #return G.Gp_to_G' * Gp_values
-    return sum(eval_gps, G.Gps)
+    return sum(eval_gps_reg, G.Gps)
 end
 
+function evaluate(G::FullCorrelator_MF{D}, idx::Vararg{Int,D}) where{D}
+    res = 0.0
+    for Gp in G.Gps
+        res += Gp(idx...)
+        if ano_term_required(Gp)
+            res +=  evaluate_ano_with_ωconversion(Gp, idx...)
+        end
+    end
+    return res
+end
+
+
+"""
+Evaluate REGULAR part of FullCorrelator
+"""
 function (G::FullCorrelator_MF{D})(idx::Vararg{Int,D}) where{D}
-    return evaluate(G, idx...)#[1]
+    return evaluate_reg(G, idx...)#[1]
 end
 
 """
@@ -143,6 +161,8 @@ struct FullCorrEvaluator_MF{T,D,N}
         cutoff::Float64=1.e-12, tucker_cutoff::Union{Float64, Nothing}=nothing
     ) where {D}
 
+        @assert intact(GF) "Has GF been modified?"
+
         if length(GF.Gps)==factorial(D+1)
           reduce_Gps!(GF)
         end
@@ -166,7 +186,7 @@ struct FullCorrEvaluator_MF{T,D,N}
         if svd_kernel
             println("  SVD-decompose kernels with cut=$cutoff...")
             for Gp in GF.Gps
-                if any(size(Gp.tucker.center) .> 1000) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
+                # if any(size(Gp.tucker.legs[1]) .> 1000) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
                 size_old = size(Gp.tucker.center)
                 svd_kernels!(Gp.tucker; cutoff=cutoff)
                 size_new = size(Gp.tucker.center)
@@ -254,13 +274,16 @@ struct FullCorrBatchEvaluator_MF{T,D,N} <: TCI.BatchEvaluator{T}
     localdims::Vector{Int}
     max_blocklegs::Int # up to which size in each direction whole blocks of the correlator are precomputed
 
-    function FullCorrBatchEvaluator_MF(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cutoff::Float64=1.e-12, max_Rblock=5) where {D}
+    function FullCorrBatchEvaluator_MF(
+        GF::FullCorrelator_MF{D}, svd_kernel::Bool=false;
+        cutoff::Float64=1.e-12, tucker_cutoff::Union{Nothing,Float64}=nothing, max_Rblock=5
+        ) where {D}
         # quantics grid
         R = grid_R(GF)
         grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
         localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
 
-        GFev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff)        
+        GFev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff, tucker_cutoff=tucker_cutoff)        
 
         # cached function
         qf_ = (D == 1
@@ -381,6 +404,10 @@ Single point evaluation. Careful: index is now a quantics index [1,2,1,1,...]
 """
 function (fbev::FullCorrBatchEvaluator_MF{T,D,N})(index::Vector{Int}) where {T,D,N}
     return fbev.qf(index)
+end
+
+function evaluate(fbev::FullCorrBatchEvaluator_MF{T,D,N}, w::Vararg{Int,D}) where {T,D,N}
+    return fbev.qf.f(QuanticsGrids.origcoord_to_quantics(fbev.grid, tuple(w...)))
 end
 
 

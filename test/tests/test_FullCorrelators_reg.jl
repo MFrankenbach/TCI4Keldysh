@@ -167,3 +167,30 @@ end
 
 end
 
+@testset "Correlator Evaluation" begin
+    
+    """
+    Test pointwise evaluation of FullCorrelator
+    """
+    function test_FullCorrelator_evaluate(npt::Int=4)
+        
+        R = 4
+        D = npt-1
+        GF = TCI4Keldysh.dummy_correlator(npt, R; beta=2000.0, is_compactAdisc=true)[1]
+        N = 2^R
+
+        val = zeros(ComplexF64, ntuple(_->N, D))
+        Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:N,D)...))
+            val[idx...] = TCI4Keldysh.evaluate(GF, idx...)
+        end
+
+        refval = TCI4Keldysh.precompute_all_values(GF)
+
+        @test maximum(abs.(refval[1:2^R, ntuple(_->Colon(), D-1)...] .- val)) <= 1.e-10
+    end
+
+    test_FullCorrelator_evaluate(2)
+    test_FullCorrelator_evaluate(3)
+    test_FullCorrelator_evaluate(4)
+end
+
