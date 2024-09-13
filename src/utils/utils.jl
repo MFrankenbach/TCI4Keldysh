@@ -963,6 +963,7 @@ Where to find PSF data
 """
 function datadir()
     return joinpath(dirname(Base.current_project()), "data")
+    # return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
 end
 
 """
@@ -1013,6 +1014,19 @@ function report_mem(do_gc=false)
 end
 
 
+function channel_translate(channel::String)
+    if channel=="t"
+        return "pht"
+    elseif channel=="a"
+        return "ph"
+    elseif channel=="p" || channel=="pNRG"
+        return "pp"
+    else
+        error("Invalid channel $channel")
+    end
+end
+
+
 """
 * channel: a, p or t
 """
@@ -1052,6 +1066,14 @@ function channel_trafo(channel::String)
             1  0 -1; # -ω+ν'
             -1  1  0; # ω-ν
             0  0  1; # -ν'
+        ]
+    # NRG convention
+    elseif channel == "pNRG"
+        [
+        0 -1  0;
+        -1  0 -1;
+        1  1  0;
+        0  0  1;
         ]
     elseif channel == "t"
         [
@@ -1208,3 +1230,31 @@ function patchedTCI(A::Array{T,D}; kwargs...) where {T,D}
     return TCIA.adaptiveinterpolate(creator, pordering; verbosity=0)
 end
 =#
+
+"""
+Obtain broadening parameters from the corresponding mpNRG files
+"""
+function read_broadening_params(path::String; channel="t")
+
+    if !isdir(path)
+        path = joinpath(datadir(), path)
+    end
+
+    files = filter(f -> occursin("mpNRG", f), readdir(path; join=true))
+    if length(files)==1
+        file = only(files)
+    else
+        file_id = findfirst(f -> occursin(channel_translate(channel), f), files)
+        file = files[file_id]
+        if isnothing(file)
+            error("No file for channel $channel among files: $files")
+        end
+    end
+
+    (γ, sigmak) = (0.0, [0.0])
+    matopen(file, "r") do f
+        γ = read(f, "Lwidth")
+        sigmak = read(f, "Hwidth")
+    end
+    return (γ, [sigmak])
+end

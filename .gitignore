@@ -4,3 +4,5 @@ scripts/plots/*
 *.ipynb
 vienna_talk/**
 *png
+slurm*log
+*.sh

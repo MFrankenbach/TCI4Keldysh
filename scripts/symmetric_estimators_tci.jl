@@ -3,6 +3,9 @@ using Profile
 using StatProfilerHTML
 using Serialization
 
+using LinearAlgebra
+import QuanticsGrids as QG
+
 TCI4Keldysh.TIME() = false
 
 const DEFAULT_β::Float64 = 2000.0
@@ -36,12 +39,16 @@ function time_cache_gain(;R=5, tolerance=1.e-6)
     println(" TIME WITHOUT CACHE: $t1")
 end
 
+function qtt_filename(outname::String, R::Int, folder::String="pwtcidata")
+    return joinpath(folder, outname*"_R=$(R)_qtt.serialized")
+end
+
 """
 To store qtts on disk (on cluster)
 """
 function serialize_tt(qtt, outname::String, folder::String)
     R = qtt.grid.R
-    fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
+    fname_tt = qtt_filename(outname, R, folder)
     serialize(fname_tt, qtt)
 end
 
@@ -52,7 +59,7 @@ function qttfile_to_json(qttfile::String)
     pattern = r"R=(\d+)"
     m = match(pattern, qttfile)
     if !isnothing(m)
-        return qttfile[1:m.offset-1] * ".json"
+        return qttfile[1:m.offset-2] * ".json"
     else
         error("Pattern not found")
     end
@@ -66,11 +73,14 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     T = 1.0/beta
     @assert occursin("R=$R", qttfile) && occursin("$beta", qttfile) "Does the file $qttfile match parameters R=$R, beta=$beta?"
 
-    qtt = deserialize(qttfile)        
-    qtt_data = readJSON(qttfile_to_json(qttfile), folder)
+    (tci, grid) = deserialize(joinpath(folder, qttfile))        
+    qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
+    tol = qtt_data["tolerance"]
+    cutoff = 0.01 * tol
+    tucker_cut = 0.1 * tol
 
     ωconvMat = TCI4Keldysh.channel_trafo(qtt_data["channel"])
-    R = qtt.grid.R
+    R = grid.R
     if haskey(qtt_data, "flavor_idx")
         flavor_idx = qtt_data["flavor_idx"]
     else
@@ -90,21 +100,61 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     is_incoming = (false, true, false, true)
 
     Ncorrs = length(letter_combinations)
-    GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
+    GFs = Vector{TCI4Keldysh.FullCorrelator_MF{3}}(undef, Ncorrs)
 
     TCI4Keldysh.read_GFs_Γcore!(
         GFs, PSFpath, letter_combinations;
-        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat
+        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
         )
 
     # create self-energy evaluator
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
     sev = TCI4Keldysh.SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
 
-    cutoff = 1.e-20
-    gev = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
+    # Numerically exact evaluator
+    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=1.e-20)
+    # gev = TCI4Keldysh.ΓcoreEvaluator_MF(deepcopy(GFs), sev; cutoff=cutoff)
 
     # ==== SETUP DONE
+
+    # where to evaluate the stuff
+    N_eval = 2^4
+    eval_step = max(div(2^R, N_eval), 1)
+    gridslice = 1:eval_step:2^R
+    # gridslice = 2^(R-1)-div(N_eval,2) : 2^(R-1)+div(N_eval,2)-1
+    eval_size = ntuple(_->length(gridslice), 3)
+    refval = zeros(ComplexF64, eval_size)
+    tcival = zeros(ComplexF64, eval_size)
+    ids = collect(Iterators.product(Base.OneTo.(eval_size)...))
+
+    Threads.@threads for id in ids
+        w = ntuple(i -> gridslice[id[i]], 3)
+        refval[id...] = gev_ref(w...)
+        tcival[id...] = tci(QG.origcoord_to_quantics(grid, tuple(w...)))
+    end
+
+    diff = refval .- tcival
+    maxref = abs(tci.maxsamplevalue)
+    println("Accuracy for tolerance=$tol:")
+    @show maxref
+    @show norm(diff)
+    amaxerr = argmax(abs.(diff))
+    @show amaxerr
+    @show maximum(abs.(diff)) ./ maxref
+
+    # plot
+    slice = (amaxerr[1], Colon(), Colon())
+    scfun = x -> log10(abs(x))
+    cdepth = 1
+    heatmap(scfun.(tcival[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
+    title!("Γ (TCI) / max|Γ|")
+    savefig("gam_tci_check_interpolation.png")
+    heatmap(scfun.(refval[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
+    title!("Γ (reference) / max|Γ|")
+    savefig("gam_ref_check_interpolation.png")
+    heatmap(scfun.(diff[slice...]) ./ maxref; clim=(log10(tol) - 2, 0))
+    title!("Error (TCI-ref)/absmax(ref)")
+    savefig("gam_diff_check_interpolation.png")
 end
 
 function time_Γcore()
@@ -482,6 +532,27 @@ function test_K2_TCI(; channel="a", R=4, beta=50.0, tolerance=1.e-5, prime=false
     savefig("K2_ref.png")
 end
 
+function check_serialized_files()
+    failcount = 0
+    successcount = 0
+    files = filter(f -> occursin("gammacore", f) && occursin("serialized", f), readdir("pwtcidata"))
+    for file in files
+        try
+            qtt = deserialize(joinpath("pwtcidata", file))
+            successcount += 1
+        catch
+            failcount += 1
+        end
+    end
+    @show length(files)
+    @show failcount
+    @show successcount
+end
+
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-plot_vertex_ranks([-2, -3, -4, -6], PSFpath; folder="pwtcidata_cluster")
+# plot_vertex_ranks([-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")
+
+R = 11
+qttfile = "gammacore_timing_R_min=5_max=12_tol=-5_beta=2000.0_R=$(R)_qtt.serialized"
+check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")

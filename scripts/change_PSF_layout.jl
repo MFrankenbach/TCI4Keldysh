@@ -15,6 +15,8 @@ data_dir = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg"
 using MAT
 
 function change_PSF_layout()
+    @assert isdir(backup_dir)
+    @assert isdir(data_dir)
     for file in readdir(data_dir)
         if !isfile(joinpath(data_dir, file)) || !endswith(file, ".mat")
             continue

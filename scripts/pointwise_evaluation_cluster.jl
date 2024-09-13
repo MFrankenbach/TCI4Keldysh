@@ -1,5 +1,5 @@
+using TCI4Keldysh
 using BenchmarkTools
-using Plots
 using ITensors
 using Profile
 using QuanticsTCI
@@ -159,12 +159,8 @@ function max_correlator_tail(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=
     return nothing
 end
 
-function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-6)
-    PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
-    # PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
-    T = TCI4Keldysh.dir_to_T(PSFpath)
-    beta = 1.0/T
-    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=false, PSFpath=PSFpath)
+function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, is_compactAdisc=false)
     t = @elapsed begin
         qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF[1], true; tolerance=tolerance, unfoldingscheme=:interleaved, cut_tucker=true) 
     end
@@ -206,7 +202,7 @@ end
 
 
 function compare_PartialFullCorrelator(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=100.0, nomdisc=10)
-    tfull = time_FullCorrelator(;R=R, tolerance=tolerance, beta=beta)
+    tfull = time_FullCorrelator(;R=R, tolerance=tolerance, beta=beta, nomdisc=nomdisc)
     ts_partial = []
     for i in 1:24
         tp = time_PartialCorrelator(i ;R=R, tolerance=tolerance, beta=beta, nomdisc=nomdisc)
@@ -258,42 +254,15 @@ function profile_FullCorrelator(npt=3)
     statprofilehtml()
 end
 
+
 function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
-    return "timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
+    return "/scratch/m/M.Frankenbach/tci4keldysh/pwtcidata/timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
 end
 
-function to_intvec(x) :: Vector{Int}
-    return convert(Vector{Int}, x)
-end
-
-"""
-Find file for given beta and tolerance with maximum R-range
-"""
-function find_GF_file(tolerance::Float64, beta::Float64; folder="pwtcidata")
-    function _file_relevant(f)
-        desired = endswith(f, ".json") && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && startswith(f, "timing")
-        allowed = !occursin("gammacore", f) && !occursin("KF", f)
-        return desired && allowed
-    end
-    files = filter(
-            _file_relevant,
-            readdir(folder)
-            )
-        
-    @show files
-
-    if isempty(files)
-        return nothing
-    end
-
-    function _Rrange(file)
-        d = TCI4Keldysh.readJSON(file, folder)
-        Rs = to_intvec(d["Rs"])
-        Rran = maximum(Rs) - minimum(Rs)
-        return Rran
-    end
-
-    return argmax(_Rrange, files)
+function serialize_tt(qtt, outname::String, folder::String)
+    R = qtt.grid.R
+    fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
+    serialize(fname_tt, qtt)
 end
 
 """
@@ -352,13 +321,18 @@ Can vary:
 * R
 * tolerance
 """
-function time_FullCorrelator_sweep(mode::String="R"; beta=10.0, Rs=nothing)
-    folder = "pwtcidata"
-    tolerance = 1.e-8
+function time_FullCorrelator_sweep(
+        mode::String="R";
+        PSFpath="SIAM_u=0.50/PSF_nz=2_conn_zavg/", Rs=nothing, tolerance=1.e-8, folder="pwtcidata", serialize_tts=true
+    )
     npt = 4
     times = []
     qttranks = []
+    qttbonddims = []
     svd_kernel = true
+    @show svd_kernel
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    beta = 1.0/T
     if mode=="R"
         nωdisc = 35
         Rs = isnothing(Rs) ? (5:10) : Rs
@@ -366,16 +340,20 @@ function time_FullCorrelator_sweep(mode::String="R"; beta=10.0, Rs=nothing)
         d = Dict()
         d["times"] = times
         d["ranks"] = qttranks
+        d["bonddims"] = qttbonddims
         d["Rs"] = Rs
+        d["beta"] = beta
+        d["PSFpath"] = PSFpath
         d["nomdisc"] = nωdisc
         d["tolerance"] = tolerance
         d["svd_kernel"] = svd_kernel
+        d["job_id"] = ENV["SLURM_JOB_ID"]
         outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta)
         TCI4Keldysh.logJSON(d, outname, folder)
 
         for R in Rs
             # GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=beta, nωdisc=nωdisc)
-            GF = TCI4Keldysh.dummy_correlator(npt, R; beta=beta)[1]
+            GF = TCI4Keldysh.dummy_correlator(npt, R; PSFpath=PSFpath, beta=beta)[1]
             nωdisc = div(maximum(size(GF.Gps[1].tucker.center)), 2)
             TCI4Keldysh.updateJSON(outname, "nomdisc", nωdisc, folder)
             t = @elapsed begin
@@ -383,19 +361,28 @@ function time_FullCorrelator_sweep(mode::String="R"; beta=10.0, Rs=nothing)
             end
             push!(times, t)
             push!(qttranks, TCI4Keldysh.rank(qtt))
+            push!(qttbonddims, TCI.linkdims(qtt.tci))
             TCI4Keldysh.updateJSON(outname, "times", times, folder)
             TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+            TCI4Keldysh.updateJSON(outname, "bonddims", qttbonddims, folder)
+
+            if serialize_tts
+                serialize_tt(qtt, outname, folder)
+            end
+
             println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+            flush(stdout)
         end
     elseif mode=="nomdisc"
         R = 5
-        nωdiscs = 10:50
+        nωdiscs = 10:10:50
         d = Dict()
         d["times"] = times
         d["ranks"] = qttranks
         d["nomdiscs"] = nωdiscs
         d["R"] = R
         d["tolerance"] = tolerance
+        d["svd_kernel"] = svd_kernel
         outname = GFfilename(mode, first(nωdiscs), last(nωdiscs), tolerance, beta)
         TCI4Keldysh.logJSON(d, outname, folder)
 
@@ -415,190 +402,73 @@ function time_FullCorrelator_sweep(mode::String="R"; beta=10.0, Rs=nothing)
     end
 end
 
-"""
-Find info on qtt in json file
-"""
-function qttfile_to_json(qttfile::String)
-    pattern = r"R=(\d+)"
-    m = match(pattern, qttfile)
-    if !isnothing(m)
-        return qttfile[1:m.offset-2] * ".json"
+
+
+function main(args)
+
+    if length(args)<1
+        println(ARGS)
+        println(args)
+        println("Need command line argument")
+        exit(1)
+    end
+
+    job_id = ENV["SLURM_JOB_ID"]
+    println("SLURM_JOB_ID: $job_id")
+
+    # compile
+    println(" ==== COMPILE")
+    R = 4
+    GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=1.0, nωdisc=10)
+    _ = TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=1.e-3, unfoldingscheme=:interleaved)
+    flush(stdout)
+    
+    println(" ==== RUN")
+    run_nr = parse(Int, args[1])
+    if run_nr==0
+        println("test")
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:5, tolerance=1.e-2)
+    elseif run_nr==1
+        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-2)
+    elseif run_nr==2
+        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-4)
+    elseif run_nr==3
+        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-6)
+    elseif run_nr==4
+        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-8)
+    elseif run_nr==5
+        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-3)
+    elseif run_nr==6
+        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-5)
+    # beta=200.0 
+    elseif run_nr==11
+        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-2)
+    elseif run_nr==12
+        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-4)
+    elseif run_nr==13
+        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-6)
+    elseif run_nr==14
+        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-8)
+    elseif run_nr==15
+        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-3)
+    elseif run_nr==16
+        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-5)
     else
-        error("Pattern not found")
+        error("invalid run number $run_nr")
     end
+    println(" ==== DONE")
 end
 
-"""
-Check interpolation error of TCI-ed Full Correlator
-"""
-function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata_cluster")
-    beta = TCI4Keldysh.dir_to_beta(PSFpath)
-    T = 1.0/beta
-    @assert occursin("R=$R", qttfile) && occursin("$beta", qttfile) "Does the file $qttfile match parameters R=$R, beta=$beta?"
-
-    qtt = deserialize(joinpath(folder, qttfile))        
-    qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
-
-    R = qtt.grid.R
-    if haskey(qtt_data, "flavor_idx")
-        flavor_idx = qtt_data["flavor_idx"]
-    else
-        @warn "Assuming flavor_idx=1"
-        flavor_idx = 1
-    end
-
-    # ==== create FullCorrEvaluator_MF
-
-    # make frequency grid
-    channel = if haskey(qtt_data, "channel")
-            qtt_data["channel"]
-        else
-            @warn "Assuming t-channel"
-            "t"
-        end
-    ωconvMat = TCI4Keldysh.channel_trafo(channel)
-    D = size(ωconvMat, 2)
-    Nhalf = 2^(R-1)
-    ωs_ext = TCI4Keldysh.MF_npoint_grid(T, Nhalf, D)
-    Ops = ["F1", "F1dag", "F3", "F3dag"]
-    tol = qtt_data["tolerance"]
-    cutoff = 0.01 * tol
-    GF = TCI4Keldysh.FullCorrelator_MF(joinpath(PSFpath, "4pt"), Ops; T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat)
-
-    # Numerically exact evaluator
-    # GFev = TCI4Keldysh.FullCorrEvaluator_MF(GF, false; cutoff=1.e-20)
-    # The function that is actually interpolated
-    GFev = TCI4Keldysh.FullCorrEvaluator_MF(GF, true; cutoff=cutoff, tucker_cutoff=10.0*cutoff)
-    println("Setup done")
-    # ==== SETUP DONE
-
-    # where to evaluate the stuff
-    N_eval = 2^4
-    eval_step = max(div(2^R, N_eval), 1)
-    gridslice = 1:eval_step:2^R
-    # gridslice = 2^(R-1)-div(N_eval,2) : 2^(R-1)+div(N_eval,2)-1
-    eval_size = ntuple(_->length(gridslice), 3)
-    refval = zeros(ComplexF64, eval_size)
-    tcival = zeros(ComplexF64, eval_size)
-    ids = collect(Iterators.product(Base.OneTo.(eval_size)...))
-
-    Threads.@threads for id in ids
-        # w = ntuple(i -> 1 + (eval_step-1)*id[i], 3)
-        w = ntuple(i -> gridslice[id[i]], 3)
-        # refval[id...] = GFev(Val{:nocut}(), w...)
-        refval[id...] = GFev(w...)
-        tcival[id...] = qtt(w...)
-    end
-
-    diff = refval .- tcival
-    # maxref = maximum(abs.(refval))
-    maxref = abs(qtt.tci.maxsamplevalue)
-    println("Accuracy for tolerance=$tol:")
-    @show maxref
-    @show norm(diff)
-    @show maximum(abs.(diff)) ./ maxref
-
-    # plot
-    slice = (div(N_eval, 2)+1, Colon(), Colon())
-    scfun = x -> log10(abs(x))
-    cdepth = 0
-    heatmap(scfun.(tcival[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
-    title!("G (TCI) / max|G|")
-    savefig("tci_check_interpolation.png")
-    heatmap(scfun.(refval[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
-    title!("G (reference) / max|G|")
-    savefig("ref_check_interpolation.png")
-    heatmap(scfun.(diff[slice...]) ./ maxref; clim=(log10(tol) - 2, 0))
-    title!("Error (TCI-ref)/absmax(ref)")
-    savefig("diff_check_interpolation.png")
-end
-
-
-
-"""
-How much RAM would a densely stored correlator need in GB
-"""
-function RAM_usage_3D(R::Int)
-    return 16 * 2^(3*R) / 1.e9
-end
-
-function plot_FullCorrelator_timing(param_range, mode="R"; beta=10.0, tolerance=1.e-8, plot_mem=false)
-    folder = "pwtcidata"    
-    filename = GFfilename(mode, minimum(param_range), maximum(param_range), tolerance, beta)
-    data = TCI4Keldysh.readJSON(filename, folder)
-
-    if mode=="R"
-        Rs = convert.(Int, data["Rs"])
-        RAM_usage = RAM_usage_3D.(Rs)
-        times = convert.(Float64, data["times"])
-        p = TCI4Keldysh.default_plot()
-
-        plot!(p, Rs, times; marker=:diamond, color=:blue, label="F1F1dagF3F3dag")
-        xlabel!(p, "R")
-        ylabel!(p, "Wall time [s]")
-        title!(p, "Timings full correlator, β=$beta, tol=$tolerance")
-
-        if plot_mem
-            ptwin = twinx(p)
-            plot!(ptwin, Rs, RAM_usage; marker=:circle, color=:black, linestyle=:dash, yscale=:log10, label=nothing)
-            yticks!(ptwin, 10.0 .^ (round(Int, log10(minimum(RAM_usage))) : round(Int, log10(maximum(RAM_usage)))))
-            ylabel!(ptwin, "Memory for dense corr. [GB]")
-        end
-
-        savefig(p, "corrtiming_beta=$(beta)_tol=$(round(Int,log10(tolerance))).png")
-    end
-end
-
-function plot_FullCorrelator_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster")
-    plot_FullCorrelator_ranks(10.0 .^ tol_range, PSFpath; folder=folder)
-end
-
-function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata")
-    p = TCI4Keldysh.default_plot()    
-
-    beta = TCI4Keldysh.dir_to_beta(PSFpath)
-
-    for tol in tol_range
-        file_act = find_GF_file(tol, beta; folder=folder)
-        if isnothing(file_act)
-            @warn "No file for tol=$tol, beta=$beta found!"
-        else
-            @info "Processing file:\n    $file_act"
-        end
-
-        # plot
-        d = TCI4Keldysh.readJSON(file_act, folder)
-        Rs = to_intvec(d["Rs"])
-        ranks = to_intvec(d["ranks"])
-        @show Rs
-        @show ranks
-        plot!(p, Rs[1:length(ranks)], ranks; marker=:circle, label="tol=$(TCI4Keldysh.tolstr(tol))")
-    end
-
-    title!(p, "Matsubara Full Correlator, β=$beta")
-    xlabel!("R")
-    ylabel!("χ")
-    savefig("MFcorr_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.png")
-end
-
-
-function test_reduce_Gps!()
-    R = 5
-    GF = TCI4Keldysh.dummy_correlator(4, R; beta=100.0, is_compactAdisc=false)[1]
-    data = TCI4Keldysh.precompute_all_values(GF)
-
-    TCI4Keldysh.reduce_Gps!(GF)
-    data_red = TCI4Keldysh.precompute_all_values(GF)
-
-    @assert maximum(abs.(data .- data_red)) < 1.e-11
-end
-
-
-PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-# plot_FullCorrelator_ranks([-2,-4,-6,-8], PSFpath; folder="pwtcidata")
-
-R = 12
-qttfile = "timing_R_min=5_max=12_tol=-5_beta=200.0_R=$(R)_qtt.serialized"
-
-check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
+main(ARGS)
