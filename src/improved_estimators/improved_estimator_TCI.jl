@@ -81,6 +81,22 @@ function (sev::SigmaEvaluator_MF{D})(row::Int, w::Vararg{Int,D}) where {D}
     return sev.G_QQ(w_int) + sev.Σ_H - (sev.G_QF(w_int) / sev.G(w_int)) * sev.G_FQ(w_int)
 end
 
+"""
+Evaluate left-sided asymmetric improved estimator of self-energy
+"""
+function eval_LaIE(sev::SigmaEvaluator_MF{D}, row::Int, w::Vararg{Int,D}) where {D}
+    w_int = dot(sev.ωconvMat[row,:], SA[w...]) + sev.ωconvOff[row]
+    return sev.G_QF(w_int) / sev.G(w_int)
+end
+
+"""
+Evaluate right-sided asymmetric improved estimator of self-energy
+"""
+function eval_RaIE(sev::SigmaEvaluator_MF{D}, row::Int, w::Vararg{Int,D}) where {D}
+    w_int = dot(sev.ωconvMat[row,:], SA[w...]) + sev.ωconvOff[row]
+    return sev.G_FQ(w_int) / sev.G(w_int)
+end
+
 function read_GFs_Γcore!(
     GFs::Vector, PSFpath, letter_combinations;
     T::Float64, ωs_ext::NTuple{3, Vector{Float64}}, flavor_idx::Int, ωconvMat::Matrix{Int}
@@ -164,6 +180,7 @@ function Γ_core_TCI_MF_batched(
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
+    use_ΣaIE::Bool=false,
     tcikwargs...
 )
 
@@ -180,7 +197,7 @@ function Γ_core_TCI_MF_batched(
     )
 
     # create batch evaluator
-    gbev = ΓcoreBatchEvaluator_MF(gev)
+    gbev = ΓcoreBatchEvaluator_MF(gev; use_ΣaIE=use_ΣaIE)
 
     @info "BATCHED"
     t = @elapsed begin
@@ -595,6 +612,9 @@ function ΓcoreEvaluator_MF(
     return ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
 end
 
+"""
+Evaluate Γcore using sIE for self-energy on all legs
+"""
 function (gev::ΓcoreEvaluator_MF{T})(w::Vararg{Int,3}) where {T}
     addvals = Vector{ComplexF64}(undef, gev.Ncorrs)
     for i in 1:gev.Ncorrs
@@ -608,9 +628,29 @@ function (gev::ΓcoreEvaluator_MF{T})(w::Vararg{Int,3}) where {T}
     return sum(addvals)
 end
 
+"""
+Evaluate Γcore using aIE for self-energy, right on incoming, left on outgoing
+"""
+function eval_LR(gev::ΓcoreEvaluator_MF{T}, w::Vararg{Int,3}) where {T}
+    addvals = Vector{ComplexF64}(undef, gev.Ncorrs)
+    for i in 1:gev.Ncorrs
+        addvals[i] = gev.GFevs[i](w...)
+        for il in eachindex(gev.letter_combinations[i])
+            if gev.letter_combinations[i][il]==='F'
+                if gev.is_incoming[il]
+                    addvals[i] *= -eval_RaIE(gev.sev, il, w...)
+                else
+                    addvals[i] *= -eval_LaIE(gev.sev, il, w...)
+                end
+            end
+        end
+    end
+    return sum(addvals)
+end
+
 
 """
-To evaluate Keldysh core vertex, to wrap the required setup and capture relevant data.
+Structure to evaluate Keldysh core vertex, i.e., wrap the required setup and capture relevant data.
 * sev: function with signature sev(i::Int, w::Vararg{Int,D}) to evaluate self-energy
 on i'th component of transformed frequency w
 """
@@ -656,6 +696,9 @@ function ΓcoreEvaluator_KF(
     return ΓcoreEvaluator_KF(GFs, iK, sev, is_incoming, letter_combinations; cutoff=cutoff)
 end
 
+"""
+Evaluate Γcore using sIE for self-energy on all legs
+"""
 function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
     addvals = Vector{T}(undef, gev.Ncorrs)
     for i in 1:gev.Ncorrs
@@ -691,7 +734,7 @@ struct ΓcoreBatchEvaluator_MF{T} <: ΓcoreBatchEvaluator{T}
     localdims::Vector{Int}
     gev::ΓcoreEvaluator_MF{T} # to access information
 
-    function ΓcoreBatchEvaluator_MF(GFs::Vector{FullCorrelator_MF{3}}, sev; cutoff=1.e-20)
+    function ΓcoreBatchEvaluator_MF(GFs::Vector{FullCorrelator_MF{3}}, sev; cutoff=1.e-20, use_ΣaIE::Bool=false)
         # set up grid
         D = 3
         R = grid_R(GFs[1])
@@ -703,13 +746,17 @@ struct ΓcoreBatchEvaluator_MF{T} <: ΓcoreBatchEvaluator{T}
         gev = ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
 
         # cached function
-        qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+        qf_ = if use_ΣaIE
+                v -> eval_LR(gev, QuanticsGrids.quantics_to_origcoord(grid, v)...)
+            else # use sIE for Σ
+                v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+            end
         qf = TCI.CachedFunction{T}(qf_, localdims)
 
         return new{T}(grid, qf, localdims, gev)
     end
 
-    function ΓcoreBatchEvaluator_MF(gev::ΓcoreEvaluator_MF{T}) where {T}
+    function ΓcoreBatchEvaluator_MF(gev::ΓcoreEvaluator_MF{T}; use_ΣaIE::Bool=false) where {T}
         # set up grid
         D = 3
         R = grid_R(gev.GFevs[1].GF)
@@ -720,7 +767,11 @@ struct ΓcoreBatchEvaluator_MF{T} <: ΓcoreBatchEvaluator{T}
         localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
 
         # cached function
-        qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+        qf_ = if use_ΣaIE
+                v -> eval_LR(gev, QuanticsGrids.quantics_to_origcoord(grid, v)...)
+            else # use sIE for Σ
+                v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+            end
         qf = TCI.CachedFunction{T}(qf_, localdims)
 
         return new{T}(grid, qf, localdims, gev)
@@ -821,11 +872,13 @@ function (gbev::ΓcoreBatchEvaluator{T})(
     #     end
     # end
 
-    chunklen = max(div(length(leftindexsset), Threads.nthreads()), 1)
+    # chunklen = max(div(length(leftindexsset), Threads.nthreads()), 1)
+    chunklen = ceil(Int, length(leftindexsset) / Threads.nthreads())
     chunks = Iterators.partition(eachindex(leftindexsset),  chunklen)
     printstyled("== CHUNKS: $(length.(chunks)) ($(Threads.nthreads()) threads)\n"; color=:blue)
     cache_dicts = Dict([tid => typeof(gbev.qf.cache)() for tid in Threads.threadpooltids(:default)])
 
+    @assert length(chunks) <= Threads.nthreads()
     # TODO: Is there a better solution than using the :static schedule to make sure cache_dicts are not written
     # by two threads at the same time? -> Use Locks?
     Threads.@threads :static for chunk in collect(chunks)

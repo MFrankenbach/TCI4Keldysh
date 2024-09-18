@@ -3,8 +3,9 @@ function compute_K2r_symmetric_estimator(
     formalism ::String,
     PSFpath::String,
     op_labels::NTuple{3,String},
-    Σ_calc_aIE  ::Array{ComplexF64,N}
+    Σ_calcR  ::Array{ComplexF64,N}
     ;
+    Σ_calcL  ::Union{Nothing, Array{ComplexF64,N}}=nothing,
     T :: Float64,
     flavor_idx::Int,
     ωs_ext  ::NTuple{2,Vector{Float64}},
@@ -28,10 +29,17 @@ function compute_K2r_symmetric_estimator(
     # precompute Σs:
     is_incoming = 1 .< length.(op_labels[2:3])
     #println("is_incoming: ", is_incoming)
-    Σs = precompute_Σs(Σ_calc_aIE, length.(ωs_ext), ωconvMat[2:3,:], is_incoming)
+    Σs_R = precompute_Σs(Σ_calcR, length.(ωs_ext), ωconvMat[2:3,:], is_incoming)
 
-    #size(Σs[1])
-    #size(Σs[2])
+    Σs_L = if !isnothing(Σ_calcL)
+        precompute_Σs(Σ_calcL, length.(ωs_ext), ωconvMat[2:3,:], is_incoming)
+    else
+        Σs_R
+    end
+
+    if formalism=="KF" && !isnothing(Σ_calcL)
+        error("Still need to make KF part use two different self-energies")
+    end
 
     for letts in letter_combinations#[2:end]
 
@@ -41,7 +49,11 @@ function compute_K2r_symmetric_estimator(
 
         for il in eachindex(letts)
             if letts[il] == 'F'
-                K2a_data_tmp = -K2a_data_tmp .* Σs[il]
+                if is_incoming[il]
+                    K2a_data_tmp = -K2a_data_tmp .* Σs_R[il]
+                else
+                    K2a_data_tmp = -K2a_data_tmp .* Σs_L[il]
+                end
             end
         end
         else
@@ -52,7 +64,7 @@ function compute_K2r_symmetric_estimator(
             for il in eachindex(letts)
                 if letts[il] == 'F'
                     #K2a_data_tmp[:,:,] = -K2a_data_tmp .* Σs[il]
-                    K2a_data_tmp = _mult_Σ_KF(-K2a_data_tmp, Σs[il]; idim=3+il, is_incoming=is_incoming[il])
+                    K2a_data_tmp = _mult_Σ_KF(-K2a_data_tmp, Σs_R[il]; idim=3+il, is_incoming=is_incoming[il])
                 else
                     reverse!(K2a_data_tmp, dims=3+il)
                 end
@@ -73,12 +85,16 @@ end
 # 3d
 """
 cf. eq. (132) Lihm et. al.
+
+* Σ_calcL: If provided, Σ_calcR will be used for incoming legs and Σ_calcL for outgoing legs.
+They should then be the right (incoming) resp. left-sided(outgoing) asymmetric estimators for the self-energies.
 """
 function compute_Γcore_symmetric_estimator(
     formalism ::String,
     PSFpath::String,
-    Σ_calc_aIE  ::Array{ComplexF64,N}
+    Σ_calcR  ::Array{ComplexF64,N}
     ;
+    Σ_calcL :: Union{Nothing, Array{ComplexF64,N}}=nothing,
     T::Float64,
     flavor_idx::Int,
     ωs_ext  ::NTuple{3,Vector{Float64}},
@@ -102,10 +118,17 @@ function compute_Γcore_symmetric_estimator(
     # precompute Σs:
     is_incoming = 1 .< length.(op_labels)
     #println("is_incoming: ", is_incoming)
-    Σs = precompute_Σs(Σ_calc_aIE, length.(ωs_ext), ωconvMat, is_incoming)
+    Σs_R = precompute_Σs(Σ_calcR, length.(ωs_ext), ωconvMat, is_incoming)
 
-    #size(Σs[1])
-    #size(Σs[2])
+    Σs_L = if !isnothing(Σ_calcL)
+        precompute_Σs(Σ_calcL, length.(ωs_ext), ωconvMat, is_incoming)
+    else
+        Σs_R
+    end
+
+    if formalism=="KF" && !isnothing(Σ_calcL)
+        error("Still need to make KF part use two different self-energies")
+    end
 
     filelist = readdir(PSFpath)
 
@@ -118,25 +141,28 @@ function compute_Γcore_symmetric_estimator(
         end
 
         if formalism == "MF"
-        Γcore_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx, ωs_ext, ωconvMat);
-        Γcore_data_tmp = TCI4Keldysh.precompute_all_values(Γcore_tmp)
-        println("max dat 1 ", letts," : ", maxabs(Γcore_data_tmp))
-        # multiply Σ if necessary:
-        for il in eachindex(letts)
-            if letts[il] == 'F'
-                Γcore_data_tmp = -Γcore_data_tmp .* Σs[il]
+            Γcore_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx, ωs_ext, ωconvMat);
+            Γcore_data_tmp = TCI4Keldysh.precompute_all_values(Γcore_tmp)
+            println("max dat 1 ", letts," : ", maxabs(Γcore_data_tmp))
+            # multiply Σ if necessary:
+            for il in eachindex(letts)
+                if letts[il] == 'F'
+                    if is_incoming[il]
+                        Γcore_data_tmp = -Γcore_data_tmp .* Σs_R[il]
+                    else
+                        Γcore_data_tmp = -Γcore_data_tmp .* Σs_L[il]
+                    end
+                end
             end
-        end
 
         else
-
             Γcore_tmp      = TCI4Keldysh.FullCorrelator_KF(PSFpath, ops; T, flavor_idx, ωs_ext, ωconvMat, broadening_kwargs...);
             Γcore_data_tmp = TCI4Keldysh.precompute_all_values(Γcore_tmp)
 
             for il in eachindex(letts)
                 if letts[il] == 'F'
                     #K2a_data_tmp[:,:,] = -K2a_data_tmp .* Σs[il]
-                    Γcore_data_tmp = _mult_Σ_KF(-Γcore_data_tmp, Σs[il]; idim=3+il, is_incoming=is_incoming[il])
+                    Γcore_data_tmp = _mult_Σ_KF(-Γcore_data_tmp, Σs_R[il]; idim=3+il, is_incoming=is_incoming[il])
                 else
                     reverse!(Γcore_data_tmp, dims=3+il)
                 end

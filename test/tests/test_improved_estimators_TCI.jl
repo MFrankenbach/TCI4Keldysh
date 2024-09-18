@@ -58,16 +58,20 @@ end
 
 @testset "SIE: Vertex@Matsubara" begin
     
-    function test_Gamma_core_TCI_MF(PSFpath; freq_conv="a", R=4, beta=15.0, tolerance=1.e-5, batched=false)
+    function test_Gamma_core_TCI_MF(PSFpath; freq_conv="a", R=4, beta=15.0, tolerance=1.e-5, batched=false, use_ΣaIE=false)
         T = 1.0 / beta
         spin = 1
+
+        if (!batched) && use_ΣaIE
+            error("asymmetric estimators for self-energy without batching not (yet) supported")
+        end
 
         ωconvMat = TCI4Keldysh.channel_trafo(freq_conv)
 
         # tci
         Γcore = if batched
                 TCI4Keldysh.Γ_core_TCI_MF_batched(
-                PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=spin, tolerance=tolerance, verbosity=2
+                PSFpath, R; use_ΣaIE=use_ΣaIE, T=T, ωconvMat=ωconvMat, flavor_idx=spin, tolerance=tolerance, verbosity=2
                 )
             else
                 TCI4Keldysh.Γ_core_TCI_MF(
@@ -84,17 +88,31 @@ end
             # sIE self-energy
         U = 0.05
         G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-        G_aux    = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+        G_auxL    = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+        G_auxR   = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
         G_QQ_aux = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
         G_data      = TCI4Keldysh.precompute_all_values(G)
-        G_aux_data  = TCI4Keldysh.precompute_all_values(G_aux)
+        G_auxL_data  = TCI4Keldysh.precompute_all_values(G_auxL)
+        G_auxR_data  = TCI4Keldysh.precompute_all_values(G_auxR)
         G_QQ_aux_data=TCI4Keldysh.precompute_all_values(G_QQ_aux)
-        Σ_calc_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_aux_data, G_aux_data, G_aux_data, G_data, U/2)
+        
+        refval = nothing
+
+        if use_ΣaIE
+            Σ_calcL = TCI4Keldysh.calc_Σ_MF_aIE(G_auxL_data, G_data)
+            Σ_calcR = TCI4Keldysh.calc_Σ_MF_aIE(G_auxL_data, G_data)
+            # Γ core
+            refval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+                "MF", PSFpath*"4pt/", Σ_calcR; Σ_calcL=Σ_calcL, ωs_ext=ωs_ext, T=T, ωconvMat=ωconvMat, flavor_idx=spin
+                )
+        else
+            Σ_calc_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_aux_data, G_auxL_data, G_auxR_data, G_data, U/2)
 
             # Γ core
-        refval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
-            "MF", PSFpath*"4pt/", Σ_calc_sIE; ωs_ext=ωs_ext, T=T, ωconvMat=ωconvMat, flavor_idx=spin
-            )
+            refval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+                "MF", PSFpath*"4pt/", Σ_calc_sIE; ωs_ext=ωs_ext, T=T, ωconvMat=ωconvMat, flavor_idx=spin
+                )
+        end
         maxref = maximum(abs.(refval))
 
         # test
@@ -164,6 +182,7 @@ end
     # test BatchEvaluator
     for PSFpath in PSFpath_list
         test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.dir_to_beta(PSFpath), tolerance=1.e-6, batched=true)
+        test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.dir_to_beta(PSFpath), tolerance=1.e-6, batched=true, use_ΣaIE=true)
     end
 end
 
