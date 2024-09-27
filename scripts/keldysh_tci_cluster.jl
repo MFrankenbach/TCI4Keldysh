@@ -420,6 +420,7 @@ Can vary:
 function time_FullCorrelator_sweep(
         iK::Int, γ::Float64, sigmak::Float64, mode::String="R";
         PSFpath=joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt/"),
+        channel = "t",
         tolerance=1.e-8, Rs=nothing, serialize_tts=false)
     folder = "pwtcidata"
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
@@ -449,6 +450,7 @@ function time_FullCorrelator_sweep(
         d["iK"] = iK
         d["PSFpath"] = PSFpath
         d["flavor"] = flavor_idx 
+        d["channel"] = channel
         d["job_id"] = ENV["SLURM_JOB_ID"]
         outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta, ωmin, ωmax, iK, γ, sigmak)
         TCI4Keldysh.logJSON(d, outname, folder)
@@ -462,7 +464,7 @@ function time_FullCorrelator_sweep(
             T = 1.0/beta
 
             ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
-            ωconvMat = TCI4Keldysh.channel_trafo("a")
+            ωconvMat = TCI4Keldysh.channel_trafo(channel)
             KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat, sigmak=[sigmak], γ=γ, name="Kentucky fried chicken")
             # create correlator END
 
@@ -970,6 +972,28 @@ function FullCorrelator_jobs(args)
 
     if run_nr==0
         time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:3, tolerance=1.e-3, serialize_tts=true)
+    elseif run_nr >= 10^5
+    # format: {PSFpath_id}{iK}{logtol}{R}
+        dd = digits(run_nr)
+        psf_path_id = dd[end]
+        @assert length(dd)==6 "Invalid run_nr"
+        iK = div(run_nr - psf_path_id * 10^(length(digits)-1), 10^4)
+        tolerance = 10.0 ^ -dd[end-3]
+        R = rem(run_nr, 100)
+        base_path = nothing
+        PSFpath = if psf_path_id==1
+            joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+            base_path = "SIAM_u=0.50"
+        elseif psf_path_id==2
+            joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
+            base_path = "siam05_U0.05_T0.005_Delta0.0318"
+        else
+            error("Invalid psf_path_id $(psf_path_id)")
+        end
+
+        channel = "t"
+        (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
+        time_FullCorrelator_sweep(iK, γ, only(sigmak); PSFpath=PSFpath, Rs=R:R, channel=channel, tolerance=tolerance, serialize_tts=true)
     else
         error("Invalid run_nr $(run_nr)")
     end

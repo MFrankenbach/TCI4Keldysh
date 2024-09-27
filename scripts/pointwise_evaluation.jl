@@ -577,7 +577,7 @@ function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata
 
     title!(p, "Matsubara Full Correlator, β=$beta")
     xlabel!("R")
-    ylabel!("χ")
+    ylabel!("rank")
     savefig("MFcorr_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.png")
 end
 
@@ -594,11 +594,11 @@ function test_reduce_Gps!()
 end
 
 
-PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-# plot_FullCorrelator_ranks([-2,-4,-6,-8], PSFpath; folder="pwtcidata")
+# PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
 
-R = 12
-qttfile = "timing_R_min=5_max=12_tol=-5_beta=200.0_R=$(R)_qtt.serialized"
+# R = 12
+# qttfile = "timing_R_min=5_max=12_tol=-5_beta=200.0_R=$(R)_qtt.serialized"
+# check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
 
-check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
+plot_FullCorrelator_ranks([-2,-4,-6,-8], PSFpath; folder="pwtcidata")

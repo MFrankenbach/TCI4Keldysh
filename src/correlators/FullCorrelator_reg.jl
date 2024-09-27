@@ -140,7 +140,12 @@ Lower bound on maxabs of G
 function lowerbound(G::FullCorrelator_MF{D}) where {D}
     mid_idx = [div(length(omext), 2) for omext in G.ωs_ext]
     midrange = [max(1, mid_idx[i] - 5):min(length(G.ωs_ext[i]), mid_idx[i]+5) for i in 1:D]
-    vals = [G(idx...) for idx in Iterators.product(midrange...)]
+    midrange_low = minimum.(midrange)
+    vals = zeros(ComplexF64, ntuple(i -> length(midrange[i]), D))
+    Threads.@threads for idx in collect(Iterators.product(midrange...) )
+        vals[ntuple(i -> idx[i]-midrange_low[i]+1, D)...] = G(idx...)        
+    end
+    # vals = [G(idx...) for idx in Iterators.product(midrange...)]
     return maximum(abs.(vals))
 end
 

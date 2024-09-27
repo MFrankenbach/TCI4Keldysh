@@ -2,7 +2,7 @@ using Plots
 using Profile
 using StatProfilerHTML
 using Serialization
-
+using HDF5
 using LinearAlgebra
 import QuanticsGrids as QG
 
@@ -66,6 +66,137 @@ function qttfile_to_json(qttfile::String)
 end
 
 """
+Generate data for tryptich Reference - QTCI - Error
+"""
+function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=false)
+    (tci, grid) = deserialize(joinpath(folder, qttfile)) 
+    qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
+    tolerance = qtt_data["tolerance"]
+    R = grid.R
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    T = 1. / beta
+    @assert occursin("R=$R", qttfile) && occursin("$beta", qttfile) "Does the file $qttfile match parameters R=$R, beta=$beta?"
+
+    if haskey(qtt_data, "flavor_idx")
+        flavor_idx = qtt_data["flavor_idx"]
+    else
+        @warn "Assuming flavor_idx=1"
+        flavor_idx = 1
+    end
+
+    Nhalf = 2^(R-1)
+    Nhplot = 2^(Rplot-1)
+    oneslice = Nhalf-Nhplot+1 : Nhalf+Nhplot
+    plot_slice = (Nhalf+1:Nhalf+1, oneslice, oneslice)
+    slice_id = findfirst(i -> length(plot_slice[i])==1, 1:3)
+    ids = Base.OneTo.(length.(plot_slice))
+
+    # ==== create ΓcoreEvaluator_MF
+
+    ωconvMat = TCI4Keldysh.channel_trafo(qtt_data["channel"])
+    # make frequency grid
+    Nhalf = 2^(R-1)
+    D = size(ωconvMat, 2)
+    ωs_ext = TCI4Keldysh.MF_npoint_grid(T, Nhalf, D)
+
+    # all 16 4-point correlators
+    letter_combinations = TCI4Keldysh.letter_combonations_Γcore()
+    is_incoming = (false, true, false, true)
+
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{TCI4Keldysh.FullCorrelator_MF{3}}(undef, Ncorrs)
+
+    TCI4Keldysh.read_GFs_Γcore!(
+        GFs, PSFpath, letter_combinations;
+        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
+        )
+
+    # create self-energy evaluator
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    sev = TCI4Keldysh.SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
+
+    # Numerically exact evaluator
+    tol = qtt_data["tolerance"]
+    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=tol*1.e-3)
+    printstyled("== Memory used by ΓcoreEvaluator_MF: $(Base.summarysize(gev_ref))\n"; color=:blue)
+    # ==== SETUP DONE
+
+    # tci values
+    tcival = zeros(ComplexF64, length.(plot_slice))
+    @show Base.summarysize(tcival)
+    @show Base.summarysize(tci)
+    Threads.@threads for id in collect(Iterators.product(ids...))
+        w = ntuple(i -> plot_slice[i][id[i]], 3)
+        tcival[id...] = tci(QG.origcoord_to_quantics(grid, w))
+    end
+
+    # ref values
+    refval = zeros(ComplexF64, length.(plot_slice))
+    @show Base.summarysize(refval)
+    Threads.@threads for id in collect(Iterators.product(ids...))
+        w = ntuple(i -> plot_slice[i][id[i]], 3)
+        refval[id...] = gev_ref(w...)
+    end
+    
+    println("  Finished computation of vertex on slice")
+
+    # refval = dropdims(refval; dims=slice_id)
+    # tcival = dropdims(tcival; dims=slice_id)
+    diff = refval .- tcival
+    # diff = dropdims(diff; dims=slice_id)
+    if store
+        h5file = "vertex_MF_slice_beta=$(beta)_slicesz=$(length.(plot_slice))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
+        h5write(joinpath(folder, h5file), "reference", refval)
+        h5write(joinpath(folder, h5file), "qttdata", tcival)
+        h5write(joinpath(folder, h5file), "diff", diff)
+        h5write(joinpath(folder, h5file), "maxref", abs(tci.maxsamplevalue))
+    end
+    return (refval, tcival, diff, abs(tci.maxsamplevalue))
+end
+
+function triptych_vertex_plot(h5file::String, qttfile::String)
+    refval = h5read(h5file, "reference")
+    tcival = h5read(h5file, "qttdata")
+    diff = h5read(h5file, "diff")
+    maxref = h5read(h5file, "maxref")
+    triptych_vertex_plot(refval, tcival, diff, maxref, qttfile)
+end
+
+function triptych_vertex_plot(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata")
+    (refval, tcival, diff, maxref) = triptych_vertex_data(qttfile, Rplot, PSFpath; folder=folder)
+
+    triptych_vertex_plot(refval, tcival, diff, maxref, qttfile)
+end
+
+function triptych_vertex_plot(refval, tcival, diff, maxref, qttfile::String)
+    if ndims(refval)==3
+        sdims = findall(i -> size(refval, i)==1, 1:3)
+        refval = dropdims(refval; dims=tuple(sdims...))
+    end
+    if ndims(tcival)==3
+        sdims = findall(i -> size(tcival, i)==1, 1:3)
+        tcival = dropdims(tcival; dims=tuple(sdims...))
+    end
+    if ndims(diff)==3
+        sdims = findall(i -> size(diff, i)==1, 1:3)
+        diff = dropdims(diff; dims=tuple(sdims...))
+    end
+
+    qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), "pwtcidata")
+    tolerance = qtt_data["tolerance"]
+    p = TCI4Keldysh.default_plot()
+    heatmap!(p, abs.(refval))
+    savefig("V_MFref_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+
+    heatmap!(p, abs.(tcival))
+    savefig("V_MFtci_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+
+    scfun(x) = log10(abs(x)) 
+    heatmap!(p, scfun.(diff ./ maxref))
+    savefig("V_MFdiff_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+end
+
+"""
 Check interpolation error of TCI-ed Γcore
 """
 function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata_cluster")
@@ -76,8 +207,9 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     (tci, grid) = deserialize(joinpath(folder, qttfile))        
     qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
     tol = qtt_data["tolerance"]
-    cutoff = 0.01 * tol
-    tucker_cut = 0.1 * tol
+    # conservative cutoff
+    cutoff = 0.001*tol
+    tucker_cut = 10.0*cutoff
 
     ωconvMat = TCI4Keldysh.channel_trafo(qtt_data["channel"])
     R = grid.R
@@ -112,8 +244,8 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     sev = TCI4Keldysh.SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
 
     # Numerically exact evaluator
-    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=1.e-20)
-    # gev = TCI4Keldysh.ΓcoreEvaluator_MF(deepcopy(GFs), sev; cutoff=cutoff)
+    # gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=1.e-20)
+    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(deepcopy(GFs), sev; cutoff=cutoff)
 
     # ==== SETUP DONE
 
@@ -133,6 +265,7 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
         tcival[id...] = tci(QG.origcoord_to_quantics(grid, tuple(w...)))
     end
 
+    println("==== ERROR REPORT")
     diff = refval .- tcival
     maxref = abs(tci.maxsamplevalue)
     println("Accuracy for tolerance=$tol:")
@@ -141,6 +274,16 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     amaxerr = argmax(abs.(diff))
     @show amaxerr
     @show maximum(abs.(diff)) ./ maxref
+
+    h5file = "check_interpolation.h5"
+    if isfile(h5file)
+        rm(h5file)
+    end
+    println("==== Storing data to " * h5file)
+    h5write(h5file, "diff", diff)
+    h5write(h5file, "tcival", tcival)
+    h5write(h5file, "refval", refval)
+    h5write(h5file, "maxref", maxref)
 
     # plot
     slice = (amaxerr[1], Colon(), Colon())
@@ -152,7 +295,7 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     heatmap(scfun.(refval[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
     title!("Γ (reference) / max|Γ|")
     savefig("gam_ref_check_interpolation.png")
-    heatmap(scfun.(diff[slice...]) ./ maxref; clim=(log10(tol) - 2, 0))
+    heatmap(scfun.(diff[slice...]) ./ maxref)
     title!("Error (TCI-ref)/absmax(ref)")
     savefig("gam_diff_check_interpolation.png")
 end
@@ -318,6 +461,41 @@ function plot_vertex_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtc
     plot_vertex_ranks(10.0 .^ tol_range, PSFpath; folder=folder)
 end
 
+function tol_vs_rank_vertex(R::Int, tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata")
+    tol_vs_rank_vertex(R::Int, 10.0 .^ tol_range, PSFpath::String; folder="pwtcidata")
+end
+
+function tol_vs_rank_vertex(R::Int, tol_range, PSFpath::String; folder="pwtcidata")
+    p = TCI4Keldysh.default_plot()    
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    ranks = Int[]
+    for tol in tol_range
+        file_act = find_Γcore_file(tol, beta; folder=folder)
+        if isnothing(file_act)
+            @warn "No file for tol=$tol, beta=$beta found!"
+        else
+            @info "Processing file:\n    $file_act"
+        end
+
+        d = TCI4Keldysh.readJSON(file_act, folder)
+        Rs = to_intvec(d["Rs"])
+        R_idx = findfirst(r -> r==R, Rs)
+        if isnothing(R_idx)
+            @warn "No data found for tolerance $tol (R=$R)"
+            continue
+        end
+        rank = to_intvec(d["ranks"])[R_idx]
+        push!(ranks, rank)
+    end
+
+    # plot
+    plot!(p, tol_range, ranks; xflip=true, xscale=:log10, marker=:circle, label="")
+    title!(p, "Matsubara core vertex, β=$beta")
+    xlabel!("tolerance")
+    ylabel!("rank")
+    savefig("MFvertex_tol_vs_rank$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$(beta)_R=$(R).png")
+end
+
 function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster")
     p = TCI4Keldysh.default_plot()    
 
@@ -342,7 +520,7 @@ function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster
 
     title!(p, "Matsubara core vertex, β=$beta")
     xlabel!("R")
-    ylabel!("χ")
+    ylabel!("rank")
     savefig("MFvertex_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.png")
 end
 
@@ -541,6 +719,7 @@ function check_serialized_files()
             qtt = deserialize(joinpath("pwtcidata", file))
             successcount += 1
         catch
+            printstyled("Failed with file $file\n"; color=:red)
             failcount += 1
         end
     end
@@ -549,10 +728,14 @@ function check_serialized_files()
     @show successcount
 end
 
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-# plot_vertex_ranks([-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
 
-R = 11
-qttfile = "gammacore_timing_R_min=5_max=12_tol=-5_beta=2000.0_R=$(R)_qtt.serialized"
-check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
+R = 12
+# qttfile = "gammacore_timing_R_min=12_max=12_tol=-4_beta=200.0_R=$(R)_qtt.serialized"
+qttfile = "gammacore_timing_R_min=12_max=12_tol=-3_beta=200.0_R=$(R)_qtt.serialized"
+# check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
+
+
+# plot_vertex_ranks([-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")
+# tol_vs_rank_vertex(10, [-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")

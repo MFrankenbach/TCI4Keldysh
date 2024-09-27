@@ -33,13 +33,7 @@ end
         # reference
         ω_fer_int = TCI4Keldysh.MF_grid(T, 2^R, true)
         U = 0.05
-        G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-        G_aux    = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-        G_QQ_aux = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-        G_data      = TCI4Keldysh.precompute_all_values(G)
-        G_aux_data  = TCI4Keldysh.precompute_all_values(G_aux)
-        G_QQ_aux_data=TCI4Keldysh.precompute_all_values(G_QQ_aux)
-        Σ_calc_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_aux_data, G_aux_data, G_aux_data, G_data, U/2)
+        Σ_calc_sIE = TCI4Keldysh.calc_Σ_MF_sIE(PSFpath, ω_fer_int; flavor_idx=spin, T=T)
 
         for _ in 1:10
             w = rand(1:2^R, 3)
