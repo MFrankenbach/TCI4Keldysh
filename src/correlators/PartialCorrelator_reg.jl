@@ -74,7 +74,10 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
         
         return new{D}(T, formalism, tucker, Adisc_anoβ, ωs_ext, ωconvMat, ωconvOff, isFermi)
     end
-    function PartialCorrelator_reg(T::Float64, formalism::String, Acont::AbstractTuckerDecomp{D}, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}) where {D}
+    function PartialCorrelator_reg(
+        T::Float64, formalism::String, Acont::AbstractTuckerDecomp{D}, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}
+        ; hilbert_method::String="linear_interpolation"
+        ) where {D}
         if !(formalism == "MF" || formalism == "KF")
             throw(ArgumentError("formalism must be MF or KF."))
         end
@@ -91,12 +94,26 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             # 2.: contraction with regular kernel
             @TIME tucker.legs = [get_regular_1D_MF_Kernel(ωs_int[i], Acont.ωs_legs) * (get_ω_binwidths(Acont.ωs_legs[i]) .* Acont.legs[i]) for i in 1:D] "Constructing 1D Kernels (for MF)."
         else
-            # check that grid is equidistant:
-            if maximum(abs.(diff(δωcont) )) > 1e-10
-                throw(ArgumentError("ωcont must be an equidistant grid."))
-            end
             # compute retarded 1D kernels
-            @TIME tucker.legs = [-im * π * hilbert_fft(Acont.legs[i]; dims=1) for i in 1:D] "Hilbert trafo (for KF)."
+            tucker.legs = if hilbert_method=="linear_interpolation"
+                # check that frequency grid is smaller than Acont grid to interpolate real part
+                for i in 1:D
+                    @assert (maximum(ωs_int[i]) <= maximum(Acont.ωs_legs[i])) "Cannot interpolate real part of kernel"
+                    @assert (minimum(ωs_int[i]) >= minimum(Acont.ωs_legs[i])) "Cannot interpolate real part of kernel"
+                end
+                # @show size.(Acont.ωs_legs)
+                # @show size.(ωs_int)
+                # @show size.(Acont.legs)
+                [-im * my_hilbert_trafo(ωs_int[i], Acont.ωs_legs[i], Acont.legs[i]) for i in 1:D]
+            elseif hilbert_method=="fft"
+                # check that grid is equidistant:
+                if maximum(abs.(diff(δωcont) )) > 1e-10
+                    throw(ArgumentError("ωcont must be an equidistant grid."))
+                end
+                [-im * π * hilbert_fft(Acont.legs[i]; dims=1) for i in 1:D]
+            else
+                error("Invalid hilbert transform method $(hilbert_method)")
+            end
         end
         Adisc_anoβ = Array{ComplexF64,D}(undef, zeros(Int, D)...)
 

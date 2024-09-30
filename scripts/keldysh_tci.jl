@@ -258,6 +258,11 @@ function test_compress_FullCorrelator_KF(npt::Int, iK; R=4, tolerance=1.e-6, cha
     error = maximum(abs.(qttval .- data_ref[slice...]) ./ maxref)
     @assert error <= 3.0*tolerance
     printstyled("  Max error (tol=$tolerance): $error\n"; color=:blue)
+
+    # plot
+    plot_slice = (2^(R-1), 1:2^R, 1:2^R)
+    heatmap(abs.(data_ref[plot_slice...]))
+    savefig("foo.png")
 end
 
 

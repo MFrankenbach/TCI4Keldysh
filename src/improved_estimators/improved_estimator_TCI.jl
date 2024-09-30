@@ -124,24 +124,79 @@ function letter_combonations_Γcore()
     return kron(kron(letters, letters), kron(letters, letters))
 end
 
-function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
+"""
+Test accuracy of ΓcoreEvaluator_KF
+"""
+function test_ΓcoreEvaluator_KF(;R::Int, tolerance=1.e-8)
 
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     channel = "t"
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
+    iK=2
+    ωmax=0.5
+    # (γ, sigmak) = read_broadening_params(PSFpath; channel=channel)
+    (γ, sigmak) = [0.0005, [0.6]]
+    ωconvMat = channel_trafo(channel)
+    flavor_idx=1
 
-    # numerically exact evaluator
-    gev_ref = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=1.e-20)
-
-    cutoff = 0.01 * tolerance
-    gev = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=cutoff)
-
+    # make frequency grid
     D = 3
+    ωs_ext = KF_grid(ωmax, R, D)
+
+    # all 16 4-point correlators
+    letters = ["F", "Q"]
+    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
+    op_labels = ("1", "1dag", "3", "3dag")
+    op_labels_symm = ("3", "3dag", "1", "1dag")
+    is_incoming = (false, true, false, true)
+
+    # create correlator objects
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{FullCorrelator_KF{D}}(undef, Ncorrs)
+    PSFpath_4pt = joinpath(PSFpath, "4pt")
+    filelist = readdir(PSFpath_4pt)
+    for l in 1:Ncorrs
+        letts = letter_combinations[l]
+        println("letts: ", letts)
+        ops = [letts[i]*op_labels[i] for i in 1:4]
+        if !any(parse_Ops_to_filename(ops) .== filelist)
+            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
+        end
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ);
+    end
+
+    # evaluate self-energy
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+    ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
+    Σω_grid = KF_grid_fer(2*ωmax, R+1)
+    Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
+
+    # frequency grid offset for self-energy
+    ΣωconvMat = incoming_trafo * ωconvMat
+    corner_low = [first(ωs_ext[i]) for i in 1:D]
+    corner_idx = ones(Int, D)
+    corner_image = ΣωconvMat * corner_low
+    idx_image = ΣωconvMat * corner_idx
+    desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
+    ωconvOff = desired_idx .- idx_image
+
+    function sev(row::Int, w::Vararg{Int,3})
+        w_int = dot(ΣωconvMat[row,:], SA[w...]) + ωconvOff[row]
+        return Σ[w_int,:,:]
+    end
+
+    cutoff = tolerance*1.e-2
+    gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
+    gev_ref = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=1.e-20)
+
     N = 2^R
     Neval = 2^4
     eval_step = max(div(N, Neval), 1)
-    gridslice = 1:eval_step:N
+    Ncenter_h = 2
+    gridslice = vcat(collect(1:eval_step:N), collect(div(N,2)-Ncenter_h+1 : div(N,2)+Ncenter_h))
+    Neval += 2*Ncenter_h
     @assert length(gridslice)==Neval
 
     # reference values
@@ -165,6 +220,57 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     printstyled("ΓcoreEvaluator_MF error for tol=$tolerance\n"; color=:blue)
     @show maxref
     @show maximum(diff)
+    open("KFgamcoreEvaluator.txt", "a") do f
+        write(f, "R=$R, iK=$iK, maxref=$maxref, maxerr=$(maximum(diff)), tol=$tolerance\n")
+    end
+end
+
+function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
+
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    channel = "t"
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    # numerically exact evaluator
+    gev_ref = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=1.e-20)
+
+    cutoff = 0.01 * tolerance
+    gev = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=cutoff)
+
+    D = 3
+    N = 2^R
+    Neval = 2^4
+    eval_step = max(div(N, Neval), 1)
+    Ncenter_h = 2
+    gridslice = vcat(collect(1:eval_step:N), collect(div(N,2)-Ncenter_h+1 : div(N,2)+Ncenter_h))
+    Neval += 2*Ncenter_h
+    @assert length(gridslice)==Neval
+
+    # reference values
+    println("Computing reference...")
+    refval = zeros(ComplexF64, ntuple(_->Neval, D))
+    Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
+        w = ntuple(i -> gridslice[idx[i]], D)
+        refval[idx...] = gev_ref(w...)
+    end
+
+    # approximate values
+    println("Computing test values...")
+    testval = zeros(ComplexF64, ntuple(_->Neval, D))
+    Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
+        w = ntuple(i -> gridslice[idx[i]], D)
+        testval[idx...] = gev(w...)
+    end
+
+    maxref = maximum(abs.(refval))
+    diff = abs.(testval - refval) ./ maxref
+    printstyled("ΓcoreEvaluator_MF error for tol=$tolerance\n"; color=:blue)
+    @show maxref
+    @show maximum(diff)
+    open("MFgamcoreEvaluator.txt", "a") do f
+        write(f, "R=$R, maxref=$maxref, maxerr=$(maximum(diff)), tol=$tolerance\n")
+    end
 end
 
 """

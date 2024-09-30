@@ -48,6 +48,18 @@ function getAcont_mp(
     return ωcont, Acont
 end
 
+"""
+Determine grid required to resolve Acont for given ωdisc and broadening params σk and γ
+"""
+# function Acont_grid(ωdisc::VectorArray{Float64}, sigmak::Vector{Float64}, γ::Float64)
+function get_Acont_grid(;estep=200, emin=1.e-12, emax=1.e4)
+    lemin = floor(log10(emin))
+    lemax = ceil(log10(emax))
+    xs = LinRange(lemin, lemax, estep)
+    ocont_p = 10.0 .^ xs
+    return vcat(-reverse(ocont_p), [0.0], ocont_p)
+end
+
 
 function _prepare_broadening_mp(
     ωdisc   ::Vector{Float64},  # Logarithimic frequency bins. 

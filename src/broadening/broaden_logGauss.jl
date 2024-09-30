@@ -92,7 +92,9 @@ function getAcont_logBroaden(
     end
     okA, log10ωcont, widthx = get_log10ωs_cont()
 
-    
+    # printstyled("  (emax=$(emax))\n"; color=:blue)
+    # printstyled("  (log10ωcont[end]=$(log10ωcont[end]))\n"; color=:blue)
+
     if length(log10ωcont) > 1
         logωcont = log10ωcont * log(10)  # exponents of frequencies (base e)
         ωcont = 10 .^ log10ωcont  # center of the frequency bin
@@ -130,7 +132,7 @@ function getAcont_logBroaden(
                 if isCLG
                     Acont_tmp .-= (smat[ito] .^ 2 / 4)
                 end
-                Acont_tmp = exp.(Acont_tmp) * (Adisc[ito] / sqrt(pi) / smat[ito] / odisc_val)
+                Acont_tmp = exp.(Acont_tmp) * (Adisc[ito] / (sqrt(pi) * smat[ito] * odisc_val))
 
                 Acont[okt, ids[ito]] .+= Acont_tmp #.* Δωcont[okt]  # height -> weight
             end

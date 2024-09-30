@@ -254,17 +254,60 @@ function getAcont(
         display_info()
     end
 
+    DEBUG_BROADEN=false
     if isCLG || isSLG
         oks1 = ωdisc .>= ωcont_pos[1] # filter for positive frequencies
         if any(oks1)
             odtmp = ωdisc[oks1]
             Adtmp = Adisc[oks1, :]
             ots, dots, yts = getAcont_logBroaden(odtmp, Adtmp, sigmab; tol, Hfun, emin, emax, estep, is2sum)
+
+            # eps_id = 2956
+            # plot(ots, abs.(yts[:,eps_id]); xscale=:log10)
+            # savefig("foo.png")
             yts_disc = yts .* dots # rediscretization
-            # uncomment to check spectral weigth of positive frequencies
-            #println("∑Ainter = ", sum(yts .* dots))
+
+            if DEBUG_BROADEN
+                broadened_weights = vec(sum(yts .* dots; dims=1))[oks1]
+                weights_err = sum(abs.(broadened_weights .- 1.0)) / length(broadened_weights) 
+                weights_maxerr = maximum(abs.(broadened_weights .- 1.0))
+
+                # evaluate explicitly
+                eps_id = size(yts, 2)
+                eps = ωdisc[eps_id]
+                σ=sigmab[1]
+                Acont1peak = [1/(sqrt(pi)*σ*eps) * exp(-(log(abs(eps/om))/σ - σ/4)^2) for om in ots]
+                @show maximum(abs.(Acont1peak .- yts[:,eps_id]))
+                @show eps
+                @show sum(Acont1peak .* dots .* ots)
+                open("ots$(sigmab[1]).txt", "w") do f
+                    write(f, "  w                     dw\n")
+                    for i in eachindex(ots)
+                        write(f, "$(ots[i])   $(dots[i])\n")
+                    end
+                end
+
+                broadened_means = vec(sum(yts .* dots .* ots; dims=1))[oks1]
+                plot(odtmp, broadened_means; xscale=:log10, yscale=:log10, label="broadened_means")
+                savefig("foo.pdf")
+                means_err = sum(abs.(broadened_means .- odtmp)) / length(broadened_means) 
+                means_maxerr = maximum(abs.(broadened_means .- odtmp))
+                display((broadened_means .- odtmp) ./ odtmp)
+
+                printstyled("\n∑Ainter(+) = $(sum(yts .* dots)), $(size(Adtmp))\n"; color=:cyan)
+                printstyled("  peakwise err(+) = $(weights_err), $(weights_maxerr)\n"; color=:cyan)
+                printstyled("∑Ainter * ω(+) = $(sum(yts .* dots .* ots)), $(sum(odtmp))\n"; color=:cyan)
+                printstyled("  peakwise err(+) = $(means_err), $(means_maxerr)\n\n"; color=:cyan)
+                @show size(Acont)
+                @show size(yts_disc)
+            end
+
             getAcont_linBroaden(ots, dots, yts_disc, γ; ωcont, Δωcont, Acont, tol, Lfun)
-            
+
+            if DEBUG_BROADEN
+                printstyled("\n∑Aend(+) = $(sum(Acont .* Δωcont)), $(size(Adtmp))\n"; color=:cyan)
+                printstyled("∑Aend * ω(+) = $(sum(Acont .* Δωcont .* ωcont)), $(sum(odtmp))\n"; color=:cyan)
+            end
         end
 
         oks2 = ωdisc .<= -ωcont_pos[1] # filter for negative frequencies
@@ -272,8 +315,31 @@ function getAcont(
             odtmp = -ωdisc[oks2] # negative -> positive
             Adtmp = Adisc[oks2, :]
             ots, dots, yts = getAcont_logBroaden(odtmp, Adtmp, sigmab; tol, Hfun, emin, emax, estep, is2sum)
+
+            if DEBUG_BROADEN
+                broadened_weights = vec(sum(yts .* dots; dims=1))[oks2]
+                weights_err = sum(abs.(broadened_weights .- 1.0)) / length(broadened_weights) 
+                weights_maxerr = maximum(abs.(broadened_weights .- 1.0))
+
+                broadened_means = vec(sum(yts .* dots .* ots; dims=1))[oks2]
+                means_err = sum(abs.(broadened_means .- odtmp)) / length(broadened_means) 
+                means_maxerr = maximum(abs.(broadened_means .- odtmp))
+                display((broadened_means .- odtmp) ./ odtmp)
+
+                printstyled("\n∑Ainter(-) = $(sum(yts .* dots)), $(size(Adtmp))\n"; color=:cyan)
+                printstyled("  peakwise err(-) = $(weights_err), $(weights_maxerr)\n"; color=:cyan)
+                printstyled("∑Ainter * ω(-) = $(sum(yts .* dots .* ots)), $(sum(odtmp))\n"; color=:cyan)
+                printstyled("  peakwise err(-) = $(means_err), $(means_maxerr)\n\n"; color=:cyan)
+            end
+
             yts_disc = yts .* dots # rediscretization
             getAcont_linBroaden(-ots, dots, yts_disc, γ; ωcont, Δωcont, Acont, tol, Lfun) # -ots: return to negative frequency
+
+            if DEBUG_BROADEN
+                @show size(Acont), size(ωcont)
+                printstyled("∑Aend(-) = $(sum(Acont .* Δωcont)), $(size(Adtmp))\n"; color=:cyan)
+                printstyled("∑Aend * ω(-) = $(sum(Acont .* Δωcont .* ωcont)), $(sum(odtmp))\n\n"; color=:cyan)
+            end
         end
 
         oks3 = (oks1.+oks2).==0
@@ -291,12 +357,15 @@ function getAcont(
     #    oks3 = !oks;
     end
 
-    if any(oks3) # for frequencies below emin: only broaden linearly
+    if any(oks3) # for frequencies below emin: only broaden linearly, contains at least 0
         Adtmp = Adisc[oks3,:];
         if is2sum
             Adtmp = sum(Adtmp,dims=2);
         end
         getAcont_linBroaden([ωdisc[oks3];0],Δωcont[div(end+1,2)].+zeros(sum(oks3)+1),[Adtmp;A0'],γ;ωcont,Δωcont,Acont,tol,Lfun);
+    end
+    if DEBUG_BROADEN
+        printstyled("---- getAcont done\n")
     end
 
     # Interpolate data on ocin

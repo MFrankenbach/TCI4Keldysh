@@ -3,6 +3,7 @@ using HDF5
 using Plots
 using LinearAlgebra
 using Printf
+using TCI4Keldysh
 
 """
 β=2000.0 in Seung-Sup's data
@@ -19,14 +20,18 @@ function load_AcontAdisc(γ::Float64, sigmak::Float64; T=5*1.e-4)
     D = npt-1
     Ops = ["F1", "F1dag"]
 
-    R = 9
-    ωmax = 2.5
+    R = 5
+    ωmax = 1.5
     ωmin = -ωmax
     ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
     ωconvMat = TCI4Keldysh.ωconvMat_K1()
     flavor_idx = 1
     Acont_folder = "Acontdata"
-    KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; write_Aconts=Acont_folder, T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat, sigmak=[sigmak], γ=γ, name="Kentucky fried chicken")
+    KFC = TCI4Keldysh.FullCorrelator_KF(
+        PSFpath, Ops;
+        write_Aconts=Acont_folder, T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat, sigmak=[sigmak], γ=γ, name="Kentucky fried chicken",
+        emin=1.e-12, emax=1.e4, estep=300
+        )
 
     # read Adisc
     perm_idx = 1
@@ -55,22 +60,35 @@ function broaden_2pt(γ::Float64, sigmak::Float64; T=5*1.e-4, outsuffix::String=
     printstyled("Adisc norm: $(sum(Adisc))\n"; color=:blue)
     dωcont = diff(ωcont)
     push!(dωcont, dωcont[end])
-    printstyled("Acont norm: $(dot(dωcont, Acont))\n"; color=:blue)
+    printstyled("Acont norm: $(TCI4Keldysh.quadtrapz(ωcont, Acont))\n"; color=:blue)
+    printstyled("Adisc mean: $(dot(Adisc, ωdisc))\n"; color=:blue)
+    printstyled("Acont mean: $(TCI4Keldysh.quadtrapz(ωcont, Acont .* ωcont))\n"; color=:blue)
+
+    @show maximum(Acont)
+    @show ωcont[argmax(Acont)]
+    @show maximum(Adisc)
+    @show ωdisc[argmax(Adisc)]
+    @show size(Acont)
+    @show size(Adisc)
 
     # plot Adisc, Acont
     scfun = real
     p = TCI4Keldysh.default_plot()
     title!(p, "Broadening, γ=$(@sprintf("%.2e",γ)), σk=$sigmak, T=$(@sprintf("%.2e", T))")
-    xlabel!(p, "ω")
+    xlabel!(p, "log(ω)")
     ptwin = twinx(p)
-    plot!(ptwin, ωdisc, scfun.(Adisc[:]); label="Adisc", linewidth=1, color=:red)
-    plot!(p, ωcont, scfun.(Acont[:]); label="Acont", linewidth=2, color=:blue)
+    xscfun(x) = abs(x>1.e-14) ? log10(abs(x)) : 0.0
+    poscont = findall(x -> x>0.0, ωcont)
+    posdisc = findall(x -> x>0.0, ωdisc)
+    plot!(ptwin, xscfun.(ωdisc[posdisc]), scfun.(Adisc[posdisc]); label="Adisc", linewidth=1, color=:red)
+    plot!(p, xscfun.(ωcont[poscont]), scfun.(Acont[poscont]); label="Acont", linewidth=2, color=:blue)
     ylabel!(p, "Acont")
     ylabel!(ptwin, "Adisc")
-    xlims!(p, minimum(ωcont)*0.5, maximum(ωcont)*1.05)
+    # xlims!(p, minimum(ωcont)*0.5, maximum(ωcont)*1.05)
     if save
         savefig(p, "AcontvsAdisc"*outsuffix*".png")
     end
+
     return p
 end
 
@@ -98,4 +116,19 @@ function param_sweep_broaden2pt()
     end
     plot(plots...; layout=(length(gammas), length(sigmas)))
     savefig("foo.png")
+end
+
+function foo()
+    lines = readlines("foo.txt")
+    sigs = []
+    devs = []
+    for line in lines
+        (sstr, dstr) = split(strip(line))
+        @show sstr, dstr
+        push!(sigs, parse(Float64, sstr))
+        push!(devs, parse(Float64, dstr))
+    end
+
+    plot(sigs, devs)
+    savefig("foo.pdf")
 end

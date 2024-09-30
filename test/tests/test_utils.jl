@@ -1,5 +1,23 @@
+using SpecialFunctions
+
 @testset "Hilbert transform" begin
     
+    function maxdev_in_hilbertTrafo_Gauss(N_in, x_in_max)
+        xs = collect(LinRange(-x_in_max, x_in_max, N_in))
+        xs_out = collect(LinRange(-x_in_max, x_in_max, 1000))
+        xs_out[end] = x_in_max
+        xm_half = x_in_max/10.0
+        # Gaussian
+        _to_transform = x -> exp(-(x/xm_half)^2)
+        ys = _to_transform.(xs)
+        res = TCI4Keldysh.my_hilbert_trafo(xs_out, xs, ys)
+        ht = imag.(res)
+        # cf. Wikipedia
+        expected = (x -> 2/sqrt(pi) * dawson(x/xm_half)).(xs_out)
+
+        return maximum(abs.(ht .- expected))
+    end
+
         
     function maxdev_in_hilbertTrafo_sinc(N_in, x_in_max)
         xs = collect(LinRange(-x_in_max, x_in_max, N_in))
@@ -56,6 +74,7 @@
     @test maxdev_in_hilbertTrafo_sinc(20000,  1000.) < 1e-3
     @test maxdev_in_hilbertTrafo_rat_fft(20000, 1000.) < 2e-3
     @test maxdev_in_hilbertTrafo_sinc_fft(20000,  1000.) < 1e-3
+    @test maxdev_in_hilbertTrafo_Gauss(10000, 5.0) < 1.e-6
 
 
 end

@@ -576,10 +576,17 @@ struct FullCorrelator_KF{D}
         end
         print("Creating Broadened PSFs: ")
         function get_Acont_p(i, p)
-            ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
-            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
+            # ωconts, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+            ωcont = get_Acont_grid(;broadening_kwargs...)
+            ωconts = ntuple(_->ωcont, D)
+            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωconts...,), broadening_kwargs...)
         end
         @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
+        # for Acont in Aconts
+        #     @show size.(Acont.legs)
+        #     @show size.(Acont.ωs_legs)
+        #     println("")
+        # end
 
         # write to HDF5 format
         if !isnothing(write_Aconts)
@@ -592,6 +599,34 @@ struct FullCorrelator_KF{D}
                 end
                 # write new one
                 h5write(fname, "Acont$i", Adata)
+            end
+
+            # plot single peak
+            DEBUG_BROADEN = false
+            if D==1 && DEBUG_BROADEN
+                A = Aconts[1]
+                p = default_plot()
+                omdisc = only(A.ωs_center)
+                omcont = only(A.ωs_legs)
+
+                omdisc_id = filter(i -> omdisc[i]>0.0, eachindex(omdisc))
+                omdisc_p = omdisc[omdisc_id]
+
+                omcont_id = filter(i -> omcont[i]>0.0, eachindex(omcont))
+                omcont_p = omcont[omcont_id]
+
+                discmax = argmax(abs.(A.center[omdisc_id]))
+                discmax = vcat([discmax], collect(1:300:length(omdisc_p)-1))
+                Acont_plot = only(A.legs)[omcont_id,omdisc_id[discmax]]
+                for e in axes(Acont_plot,2)
+                    plot!(p, log10.(omcont_p), Acont_plot[:,e]; color=:blue, linewidth=2, label="")
+                end
+                Adisc_resc = [A.center[omdisc_id[d]]/(abs(omdisc_p[d+1]-omdisc_p[d])) for d in discmax]
+                perm = sortperm(discmax)
+                plot!(p, log10.(omdisc_p[discmax[perm]]), Adisc_resc[perm]; color=:red, marker=:circle, linewidth=0, label="Adisc/binwidth")
+                xlabel!("log(ω)")
+                ylabel!("Acont")
+                savefig("onepeak.png")
             end
         end
 

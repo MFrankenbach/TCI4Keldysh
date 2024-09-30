@@ -142,8 +142,10 @@ function multipeak_correlator_KF(
     end
     print("Creating Broadened PSFs: ")
     function get_Acont_p(i, p)
-        ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
-        return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
+        # ωconts, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+        ωcont = get_Acont_grid(;broadening_kwargs...)
+        ωconts = ntuple(_->ωcont, D)
+        return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωconts...,), broadening_kwargs...)
     end
     @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
 
