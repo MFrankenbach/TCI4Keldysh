@@ -684,17 +684,17 @@ function svd_kernels!(td::AbstractTuckerDecomp{D}; cutoff::Float64=1.e-15) where
 end
 
 """
-Automatic svd cutoff to guarantee a pointwise error below the tolerance:
+Automatic svd cutoff to guarantee a pointwise error below the tolerance (regular part of correlator):
 |G(ω) - G'(ω)| ≤ (∑_ϵ (K(ω-ϵ)-K'(ω-ϵ))^2) ^ (1/2) * || A ||_2 (A≡PSF)
 ≤ ( ||S1 - S'1||_∞ * ||S2||_∞ * ||S3||_∞ + 
     ||S1||_∞ * ||S2 - S'2||_∞ * ||S3||_∞ + 
     ||S1||_∞ * ||S2||_∞ * ||S3 - S'3||_∞ ) * ||A||_2 !≤ tolerance
 
-where Si is the singular value vector of the i-th tucker leg.
+where S is the singular value vector of the i-th tucker leg.
 Analogously:
 |G(ω)| ≤ ||S1||_∞ * ||S2||_∞ * ||S3||_∞ * ||A||_2
 
-For estimator=1, we estimate ∑_ϵ |K(ω-ϵ)|^2 ≤ ||S||_∞
+For estimator=1, we estimate ∑_ϵ |K(ω-ϵ)|^2 ≤ ||S||_∞^2
 For estimator=2, we estimate ∑_ϵ |K(ω-ϵ)|^2 ≤ max_ω ∑_ϵ |K(ω-ϵ)|^2 (only slightly better estimate...)
 
 If requested, the tolerance can be divided by an estimate of max_ω G(ω) to get a relative error bound.

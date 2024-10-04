@@ -27,10 +27,10 @@ struct SigmaEvaluator_MF{D}
         ωconvMat::Matrix{Int};
         )
 
-        G_QQ = FullCorrEvaluator_MF(G_QQ_, true; cutoff=1.e-12)
-        G_QF = FullCorrEvaluator_MF(G_QF_, true; cutoff=1.e-12)
-        G_FQ = FullCorrEvaluator_MF(G_FQ_, true; cutoff=1.e-12)
-        G = FullCorrEvaluator_MF(G_, true; cutoff=1.e-12)
+        G_QQ = FullCorrEvaluator_MF(G_QQ_, true; cutoff=1.e-20)
+        G_QF = FullCorrEvaluator_MF(G_QF_, true; cutoff=1.e-20)
+        G_FQ = FullCorrEvaluator_MF(G_FQ_, true; cutoff=1.e-20)
+        G = FullCorrEvaluator_MF(G_, true; cutoff=1.e-20)
 
         @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
 
@@ -127,16 +127,15 @@ end
 """
 Test accuracy of ΓcoreEvaluator_KF
 """
-function test_ΓcoreEvaluator_KF(;R::Int, tolerance=1.e-8)
+function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
 
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
     channel = "t"
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
-    iK=2
     ωmax=0.5
     # (γ, sigmak) = read_broadening_params(PSFpath; channel=channel)
-    (γ, sigmak) = [0.0005, [0.6]]
+    (γ, sigmak) = [0.0005, [0.4]]
     ωconvMat = channel_trafo(channel)
     flavor_idx=1
 
@@ -216,12 +215,14 @@ function test_ΓcoreEvaluator_KF(;R::Int, tolerance=1.e-8)
     end
 
     maxref = maximum(abs.(refval))
-    diff = abs.(testval - refval) ./ maxref
+    diffabs = abs.(testval - refval)
+    diff = diffabs ./ maxref
     printstyled("ΓcoreEvaluator_MF error for tol=$tolerance\n"; color=:blue)
     @show maxref
     @show maximum(diff)
+    @show maximum(diffabs)
     open("KFgamcoreEvaluator.txt", "a") do f
-        write(f, "R=$R, iK=$iK, maxref=$maxref, maxerr=$(maximum(diff)), tol=$tolerance\n")
+        write(f, "R=$R, iK=$iK, tol=$tolerance, maxref=$maxref, MAXERR=$(maximum(diff)) ($(length(testval)) evals)\n")
     end
 end
 
@@ -269,7 +270,7 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     @show maxref
     @show maximum(diff)
     open("MFgamcoreEvaluator.txt", "a") do f
-        write(f, "R=$R, maxref=$maxref, maxerr=$(maximum(diff)), tol=$tolerance\n")
+        write(f, "R=$R, tol=$tolerance, maxref=$maxref, MAXERR=$(maximum(diff)) ($(length(testval)) evals)\n")
     end
 end
 
