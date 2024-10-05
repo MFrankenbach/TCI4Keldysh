@@ -128,6 +128,15 @@ function BroadenedPSF(
     kwargs...
 ) where{D}
     @TIME _, ωdiscs, Adisc, Kernels, _ = _prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; ωconts, kwargs...) "Prepare broadening."
+    omdisc = ωdiscs[1]
+    println("KKKKKKKKKKKKKKKKKKKKKK")
+    zomid = findfirst(om -> abs(om)<1.e-12, omdisc)
+    # zomcontid = findfirst(om -> abs(om)<1.e-12, ωconts[1])
+    # @show size.(Kernels)
+    # display(Kernels[1][zomcontid-5:zomcontid+5,zomid])
+    plot(ωconts[1], Kernels[1][:,zomid])
+    savefig("kernel.pdf")
+    println("KKKKKKKKKKKKKKKKKKKKKK")
     return TuckerDecomposition(Adisc, Kernels; ωs_center=ωdiscs, ωs_legs=[ωconts...])
 end
 

@@ -30,7 +30,7 @@ function load_AcontAdisc(γ::Float64, sigmak::Float64; T=5*1.e-4)
     KFC = TCI4Keldysh.FullCorrelator_KF(
         PSFpath, Ops;
         write_Aconts=Acont_folder, T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat, sigmak=[sigmak], γ=γ, name="Kentucky fried chicken",
-        emin=1.e-12, emax=1.e4, estep=300
+        emin=2.5e-5, emax=50.0, estep=500
         )
 
     # read Adisc
@@ -61,8 +61,8 @@ function broaden_2pt(γ::Float64, sigmak::Float64; T=5*1.e-4, outsuffix::String=
     dωcont = diff(ωcont)
     push!(dωcont, dωcont[end])
     printstyled("Acont norm: $(TCI4Keldysh.quadtrapz(ωcont, Acont))\n"; color=:blue)
-    printstyled("Adisc mean: $(dot(Adisc, ωdisc))\n"; color=:blue)
-    printstyled("Acont mean: $(TCI4Keldysh.quadtrapz(ωcont, Acont .* ωcont))\n"; color=:blue)
+    # printstyled("Adisc mean: $(dot(Adisc, ωdisc))\n"; color=:blue)
+    # printstyled("Acont mean: $(TCI4Keldysh.quadtrapz(ωcont, Acont .* ωcont))\n"; color=:blue)
 
     @show maximum(Acont)
     @show ωcont[argmax(Acont)]

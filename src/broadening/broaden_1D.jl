@@ -254,7 +254,7 @@ function getAcont(
         display_info()
     end
 
-    DEBUG_BROADEN=false
+    DEBUG_BROADEN = true
     if isCLG || isSLG
         oks1 = ωdisc .>= ωcont_pos[1] # filter for positive frequencies
         if any(oks1)
@@ -287,12 +287,11 @@ function getAcont(
                     end
                 end
 
-                broadened_means = vec(sum(yts .* dots .* ots; dims=1))[oks1]
-                plot(odtmp, broadened_means; xscale=:log10, yscale=:log10, label="broadened_means")
-                savefig("foo.pdf")
-                means_err = sum(abs.(broadened_means .- odtmp)) / length(broadened_means) 
-                means_maxerr = maximum(abs.(broadened_means .- odtmp))
-                display((broadened_means .- odtmp) ./ odtmp)
+                broadened_means = vec(sum(yts .* dots ./ ots; dims=1))[oks1]
+                # plot(odtmp, broadened_means; xscale=:log10, yscale=:log10, label="broadened_means")
+                # savefig("foo.pdf")
+                means_err = sum(abs.(broadened_means .- (1.0 ./ odtmp))) / length(broadened_means) 
+                means_maxerr = maximum(abs.(broadened_means .- (1.0 ./ odtmp)))
 
                 printstyled("\n∑Ainter(+) = $(sum(yts .* dots)), $(size(Adtmp))\n"; color=:cyan)
                 printstyled("  peakwise err(+) = $(weights_err), $(weights_maxerr)\n"; color=:cyan)
@@ -324,7 +323,7 @@ function getAcont(
                 broadened_means = vec(sum(yts .* dots .* ots; dims=1))[oks2]
                 means_err = sum(abs.(broadened_means .- odtmp)) / length(broadened_means) 
                 means_maxerr = maximum(abs.(broadened_means .- odtmp))
-                display((broadened_means .- odtmp) ./ odtmp)
+                # display((broadened_means .- odtmp) ./ odtmp)
 
                 printstyled("\n∑Ainter(-) = $(sum(yts .* dots)), $(size(Adtmp))\n"; color=:cyan)
                 printstyled("  peakwise err(-) = $(weights_err), $(weights_maxerr)\n"; color=:cyan)
@@ -378,7 +377,8 @@ function getAcont(
     #    Acont((end+1)/2,:) = [];
     #end    
     
-    if verbose
+    if verbose || DEBUG_BROADEN
+        printstyled("∑Aend(tot)=$(sum(Acont .* Δωcont))\n"; color=:cyan)
         Acontsum = sum(Acont, dims=2)[:];
         # trapezoidal quadrature rule:
         #Acontsum = sum((Acontsum[2:end]+Acontsum[1:end-1]).*(ωcont[2:end]-ωcont[1:end-1]))/2;
