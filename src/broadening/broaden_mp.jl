@@ -49,13 +49,14 @@ function getAcont_mp(
 end
 
 """
-Determine grid required to resolve Acont for given ωdisc and broadening params σk and γ
+Logarithmic grid with estep points
 """
 # function Acont_grid(ωdisc::VectorArray{Float64}, sigmak::Vector{Float64}, γ::Float64)
 function get_Acont_grid(;estep=200, emin=1.e-12, emax=1.e4)
-    lemin = floor(log10(emin))
-    lemax = ceil(log10(emax))
-    xs = LinRange(lemin, lemax, estep)
+    # lemin = floor(log10(emin))
+    # lemax = ceil(log10(emax))
+    # xs = LinRange(lemin, lemax, estep)
+    xs = (Int(floor(log10(emin)*estep)):Int(ceil(log10(emax)*estep))) ./ estep
     ocont_p = 10.0 .^ xs
     return vcat(-reverse(ocont_p), [0.0], ocont_p)
 end
@@ -128,15 +129,15 @@ function BroadenedPSF(
     kwargs...
 ) where{D}
     @TIME _, ωdiscs, Adisc, Kernels, _ = _prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; ωconts, kwargs...) "Prepare broadening."
-    omdisc = ωdiscs[1]
-    println("KKKKKKKKKKKKKKKKKKKKKK")
-    zomid = findfirst(om -> abs(om)<1.e-12, omdisc)
+    # omdisc = ωdiscs[1]
+    # println("KKKKKKKKKKKKKKKKKKKKKK")
+    # zomid = findfirst(om -> abs(om)<1.e-12, omdisc)
     # zomcontid = findfirst(om -> abs(om)<1.e-12, ωconts[1])
     # @show size.(Kernels)
     # display(Kernels[1][zomcontid-5:zomcontid+5,zomid])
-    plot(ωconts[1], Kernels[1][:,zomid])
-    savefig("kernel.pdf")
-    println("KKKKKKKKKKKKKKKKKKKKKK")
+    # plot(ωconts[1], Kernels[1][:,zomid])
+    # savefig("kernel.pdf")
+    # println("KKKKKKKKKKKKKKKKKKKKKK")
     return TuckerDecomposition(Adisc, Kernels; ωs_center=ωdiscs, ωs_legs=[ωconts...])
 end
 

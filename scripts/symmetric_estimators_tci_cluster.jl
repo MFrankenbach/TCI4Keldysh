@@ -10,8 +10,8 @@ TCI4Keldysh.TIME() = false
 function report_mem(do_gc=false)
     println("---------- MEMORY REPORT ----------")
     if do_gc
-        Base.GC.gc()
         println("  Available system memory (before gc()): $(Sys.free_memory() / 1024^2) MB")
+        Base.GC.gc()
         println("  Garbage collected")
     end
     println("  Total system memory: $(Sys.total_memory() / 1024^2) MB")
@@ -93,7 +93,8 @@ function time_Γcore_sweep(
     tolerance=1.e-8,
     cache_center=0,
     serialize_tts=true,
-    batched_eval=false,
+    # batched_eval=false,
+    batched_eval=true,
     tcikwargs...
     )
     folder = "pwtcidata"
@@ -197,7 +198,8 @@ function parse_run_nr(run_nr::Int)
     run_nr = mod(run_nr, 10^4)
     psf_path_id = div(run_nr, 1000)
     PSFpath = if psf_path_id==1
-        joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+        nz = 4
+        joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/")
     elseif psf_path_id==2
         joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
     else
@@ -227,7 +229,8 @@ function main(args)
 
 
     println(" ==== COMPILE")
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    nz = 4
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/")
     R = 4
     ωconvMat = TCI4Keldysh.channel_trafo("t")
     Γcore = TCI4Keldysh.Γ_core_TCI_MF(
@@ -273,15 +276,15 @@ function main(args)
     elseif run_nr==16
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
         time_Γcore_sweep(5:12, PSFpath, "R"; tolerance=1.e-5)
-    # single R/tol jobs: first digit: PSFpath, second digit: -log10(tolerance), last 2 digits: R
-    elseif run_nr>=1000
-        (PSFpath, R, tolerance) = parse_run_nr(run_nr)
-        time_Γcore_sweep(R:R, PSFpath, "R"; tolerance=tolerance, serialize_tts=true, batched_eval=true)
     elseif run_nr>=10^4
         # for more global pivots
         nsearchglobalpivot = div(run_nr, 10^4)  
         (PSFpath, R, tolerance) = parse_run_nr(run_nr)
         time_Γcore_sweep(R:R, PSFpath, "R"; tolerance=tolerance, serialize_tts=true, batched_eval=true, nsearchglobalpivot=nsearchglobalpivot, maxnglobalpivot=nsearchglobalpivot)
+    # single R/tol jobs: first digit: PSFpath, second digit: -log10(tolerance), last 2 digits: R
+    elseif run_nr>=1000
+        (PSFpath, R, tolerance) = parse_run_nr(run_nr)
+        time_Γcore_sweep(R:R, PSFpath, "R"; tolerance=tolerance, serialize_tts=true, batched_eval=true)
     else
         error("invalid run number $run_nr")
     end

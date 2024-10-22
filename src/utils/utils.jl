@@ -331,6 +331,7 @@ NOTE ON CONVERGENCE:
 
 """
 function hilbert_fft(x::AbstractArray{Float64,d}; dims::Int=1) where {d}
+    @warn "This function is wrong! Uncle Hilbert is not amused."
     if d > 2
         throw(ArgumentError("Currently only Vector and Matrix are supported for signal array ys."))
     end
@@ -367,6 +368,68 @@ function hilbert_fft(x::AbstractArray{Float64,d}; dims::Int=1) where {d}
     return x_
 
 end
+
+#=
+# try fixing hilbert_fft by zeropadding; not tested
+function hilbert_fft_fixed(x::AbstractArray{Float64,d}; dims::Int=1, zeropad=false) where {d}
+    @warn "This function may well be wrong!"
+    if d > 2
+        throw(ArgumentError("Currently only Vector and Matrix are supported for signal array ys."))
+    end
+
+    x_ = copy(x)
+
+    # zeropad x_ along dims
+    slice = nothing
+    if zeropad
+        n_orig = size(x_, dims)
+        x__ = zeros(Float64, ntuple(i -> i==dims ? 3*n_orig : size(x_, i), d))
+        slice = if dims==1
+            (n_orig+1 : 2*n_orig, Colon())
+        elseif dims==2
+            (Colon(), n_orig+1 : 2*n_orig)
+        else
+            error("dims=$dims not supported")
+        end
+        x__[slice...] .= x_
+        x_ = x__
+    end
+
+    heatmap(abs.(x_))
+    display(x_)
+    savefig("x_")
+
+    n = size(x_,dims)
+
+    xf = fft(x_,dims)
+    h = reshape(zeros(Int64,n), (ones(Int, dims-1)..., n))      # represents the step function in time --> product in time corresponds to convolution with retarded kernel in frequency space
+    if n>0 && n % 2 == 0
+        #even, nonempty
+        h[1:div(n,2)+1] .= 1
+        h[2:div(n,2)] .= 2
+    elseif n>0
+        #odd, nonempty
+        h[1] = 1
+        h[2:div(n + 1,2)] .= 2
+    end
+    x_ = ifft(xf .* h, dims)
+
+    heatmap(abs.(xf))
+    savefig("xf")
+
+    heatmap(abs.(x_))
+    savefig("xif")
+
+    error("done")
+
+    if zeropad
+        return x_[slice...]
+    else
+        return x_
+    end
+end
+=#
+
 
 
 
@@ -456,9 +519,13 @@ function my_hilbert_trafo(
     result ./= π
     #result = - (ys[1,:] - ys[end,:]) .- ΔL * ys[1:end-1,:] - (ΔL .* (xs_out .- xs_in[1:end-1]')) * a
 
+    # mid_id = div(length(xs_in),2) + 1
+    # printstyled("\nCentral grid points: $(xs_in[mid_id-2:mid_id+2])\n"; color=:red)
     if d==1
         interp_linear = linear_interpolation(xs_in, ys)
         ys_interp = interp_linear.(xs_out)
+        # result will be type matrix
+        return ys_interp .+ im .* vec(result)
     elseif d==2
         # interpolate for each ϵ individually
         ys_interp = zeros(size(result))
@@ -466,9 +533,25 @@ function my_hilbert_trafo(
             interp_linear = linear_interpolation(xs_in, ys[:,i])
             ys_interp[:,i] .= interp_linear.(xs_out)
         end
-    end
 
-    return ys_interp .+ im .* result
+        # check out ys_interp vs ys
+            # zero_id_in = findfirst(x -> abs(x)<=1.e-14, xs_in)
+            # zero_id_out = findfirst(x -> abs(x)<=1.e-14, xs_out)
+            # @show norm(ys[zero_id_in,:] .- ys_interp[zero_id_out,:])
+        #--> at the problematic point they are the same
+        # p = default_plot()
+        # xop = xs_out .> 0.0
+        # xip = xs_in .> 0.0
+        # for i in 1:10:size(ys,2)
+        #     plot!(p, xs_in[xip], ys[xip,i]; color=:blue, xscale=:log10)
+        #     plot!(p, xs_out[xop], ys_interp[xop,i]; color=:red, linestyle=:dot, xscale=:log10)
+        # end
+        # savefig("ys_interp.pdf")
+        # nonsense return FOR TESTING
+        # return ys_interp .+ im * ones(size(result)) * 1.e-2
+
+        return ys_interp .+ im .* result
+    end
 end
 
 """
@@ -587,6 +670,10 @@ function KF_idx(K::NTuple{N, Int}, D::Int) :: Int where {N}
     return LinearIndices(K_it)[c_idx]
 end
 
+function get_PauliX()
+    return [0.0 1.0; 1.0 0.0] .+ 0.0*im
+end
+
 """
 Return D symmetric Matsubara grids, starting with one bosonic grid.
 """
@@ -676,10 +763,18 @@ function svd_kernels!(td::AbstractTuckerDecomp{D}; cutoff::Float64=1.e-15) where
         notcut = S .> cutoff
         tmp_legs[d] = Diagonal(S[notcut]) * V'[notcut, :]
         td.legs[d] = U[:,notcut]
+        if TCI4Keldysh.DEBUG_RAM()
+            U=nothing
+            S=nothing
+            V=nothing
+        end
     end
     center_new = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(tmp_legs, td.center)
     td.center = center_new
     td.modified = true
+    if TCI4Keldysh.DEBUG_RAM()
+        tmp_legs=nothing
+    end
     return nothing
 end
 
@@ -971,8 +1066,8 @@ end
 Where to find PSF data
 """
 function datadir()
-    return joinpath(dirname(Base.current_project()), "data")
-    # return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
+    # return joinpath(dirname(Base.current_project()), "data")
+    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
 end
 
 """
@@ -1025,9 +1120,9 @@ end
 
 function channel_translate(channel::String)
     if channel=="t"
-        return "pht"
-    elseif channel=="a"
         return "ph"
+    elseif channel=="a"
+        return "pht"
     elseif channel=="p" || channel=="pNRG"
         return "pp"
     else
@@ -1241,6 +1336,19 @@ end
 =#
 
 """
+Read broadening settings from file in the corresponding directory
+TODO: What about estep
+"""
+function read_broadening_settings(path=joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50"); channel="t")
+    d = Dict{Symbol, Any}()
+    matopen(joinpath(path, "mpNRG_$(channel_translate(channel)).mat")) do f
+        d[:emin] = read(f, "emin")
+        d[:emax] = read(f, "emax")
+    end
+    return d
+end
+
+"""
 Obtain broadening parameters from the corresponding mpNRG files
 """
 function read_broadening_params(path::String; channel="t")
@@ -1254,10 +1362,10 @@ function read_broadening_params(path::String; channel="t")
         file = only(files)
     else
         file_id = findfirst(f -> occursin(channel_translate(channel), f), files)
-        file = files[file_id]
-        if isnothing(file)
+        if isnothing(file_id)
             error("No file for channel $channel among files: $files")
         end
+        file = files[file_id]
     end
 
     (γ, sigmak) = (0.0, [0.0])

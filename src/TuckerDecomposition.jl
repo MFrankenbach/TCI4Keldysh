@@ -469,6 +469,12 @@ function compute_tucker_cut(center::Array{T,D}, legs::Vector{Matrix{T}}, GFmin::
         prune_idx = 1
     end
 
+    if DEBUG_RAM()
+        cen_q = nothing
+        sums_acc = nothing
+        cuts = nothing
+        idx_sums = nothing
+    end
     return prune_idx
 end
 

@@ -104,7 +104,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
                 # @show size.(Acont.ωs_legs)
                 # @show size.(ωs_int)
                 # @show size.(Acont.legs)
-                [-im * my_hilbert_trafo(ωs_int[i], Acont.ωs_legs[i], Acont.legs[i]) for i in 1:D]
+                [-im * π * my_hilbert_trafo(ωs_int[i], Acont.ωs_legs[i], Acont.legs[i]) for i in 1:D]
             elseif hilbert_method=="fft"
                 # check that grid is equidistant:
                 if maximum(abs.(diff(δωcont) )) > 1e-10

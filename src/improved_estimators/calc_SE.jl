@@ -79,18 +79,65 @@ end
 
 """
 convenience overload
+Compute Σ with pointwise matrix inversion.
 """
-function calc_Σ_KF_sIE_viaR(PSFpath, ω_fer::Vector{Float64}; flavor_idx::Int, T::Float64, sigmak::Vector{Float64}, γ::Float64)
-    G_FF_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, estep=2000)
-    G_FQ_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, estep=2000)
-    G_QF_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, estep=2000)
-    G_QQ_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, estep=2000)
+function calc_Σ_KF_aIE(PSFpath::String, ω_fer::Vector{Float64}; flavor_idx::Int, sigmak::Vector{Float64}, γ::Float64, broadening_kwargs...)
+    T = dir_to_T(PSFpath)
+    ωconvMat = ωconvMat_K1()
+    # precompute correlators
+    G = FullCorrelator_KF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
+    G_data = precompute_all_values(G)
+    G_aux_L = FullCorrelator_KF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
+    G_aux_L_data = precompute_all_values(G_aux_L)
+    G_aux_R = FullCorrelator_KF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
+    G_aux_R_data = precompute_all_values(G_aux_R)
+
+    # deduce self-energies
+    X = get_PauliX()
+    I = diagm([1.0,1.0])
+    Σ_L = zeros(ComplexF64, size(G_data))
+    for i in axes(Σ_L,1)
+        Σ_L[i,:,:] .= X*G_aux_L_data[i,:,:]/G_data[i,:,:]
+    end
+    Σ_R = zeros(ComplexF64, size(G_data))
+    for i in axes(Σ_R,1)
+        Σ_R[i,:,:] .= (I/G_data[i,:,:]) * G_aux_R_data[i,:,:] * X
+    end
+    return (Σ_L, Σ_R)
+end
+
+"""
+convenience overload
+Compute Σ by SYMMETRIC estimator of retarded self-energy and fluctuation-dissipation relation
+"""
+function calc_Σ_KF_sIE_viaR(PSFpath, ω_fer::Vector{Float64}; flavor_idx::Int, T::Float64, sigmak::Vector{Float64}, γ::Float64, broadening_kwargs...)
+    G_FF_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
+    G_FQ_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
+    G_QF_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
+    G_QQ_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
     Adisc_Σ_H = load_Adisc_0pt(PSFpath, "Q12", flavor_idx)
     Σ_H = only(Adisc_Σ_H)
     ΣR_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_R, G_QF_R, G_FQ_R, G_FF_R, Σ_H)
-    # why can we do this?
+    # use FDT
     Σ = reshape(hcat(2*im*tanh.(ω_fer/2/T).*imag.(ΣR_sIE),conj.(ΣR_sIE),ΣR_sIE,0 .*ΣR_sIE), length(ω_fer),2,2)
     return Σ
+end
+
+"""
+convenience overload
+Compute Σ by ASYMMETRIC estimator of retarded self-energy and fluctuation-dissipation relation
+"""
+function calc_Σ_KF_aIE_viaR(PSFpath, ω_fer::Vector{Float64}; flavor_idx::Int, T::Float64, sigmak::Vector{Float64}, γ::Float64, broadening_kwargs...)
+    G_FF_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
+    G_FQ_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
+    G_QF_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
+
+    ΣR_aIE_L = TCI4Keldysh.calc_Σ_MF_aIE(G_QF_R, G_FF_R)
+    ΣR_aIE_R = TCI4Keldysh.calc_Σ_MF_aIE(G_FQ_R, G_FF_R)
+    # use FDT
+    Σ_R = reshape(hcat(2*im*tanh.(ω_fer/2/T).*imag.(ΣR_aIE_R),conj.(ΣR_aIE_R),ΣR_aIE_R,0 .*ΣR_aIE_R), length(ω_fer),2,2)
+    Σ_L = reshape(hcat(2*im*tanh.(ω_fer/2/T).*imag.(ΣR_aIE_L),conj.(ΣR_aIE_L),ΣR_aIE_L,0 .*ΣR_aIE_L), length(ω_fer),2,2)
+    return (Σ_L, Σ_R)
 end
 
 

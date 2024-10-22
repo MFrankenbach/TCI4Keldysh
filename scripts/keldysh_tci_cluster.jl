@@ -410,6 +410,21 @@ function deserialize_tt(R::Int, outname::String, folder::String)
 end
 
 """
+Filter broadening_kwargs for those that are actually used by ΓcoreEvaluator_KF
+"""
+function filter_broadening_kwargs(;broadening_kwargs...)
+    ret = Dict(broadening_kwargs)
+    KEYLIST = [:estep, :emin, :emax]
+    for key in keys(ret)
+        if !(key in KEYLIST)
+            delete!(key, ret)
+        end
+    end
+    return ret
+end
+
+
+"""
 Store ranks and timings for computation of single keldysh components full 4-point correlators.
 Can vary:
 * iK : Keldysh component
@@ -419,9 +434,9 @@ Can vary:
 """
 function time_FullCorrelator_sweep(
         iK::Int, γ::Float64, sigmak::Float64, mode::String="R";
-        PSFpath=joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt/"),
+        PSFpath=joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt/"),
         channel = "t",
-        tolerance=1.e-8, Rs=nothing, serialize_tts=false)
+        tolerance=1.e-8, Rs=nothing, serialize_tts=false, broadening_kwargs...)
     folder = "pwtcidata"
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
     npt = 4
@@ -452,6 +467,7 @@ function time_FullCorrelator_sweep(
         d["flavor"] = flavor_idx 
         d["channel"] = channel
         d["job_id"] = ENV["SLURM_JOB_ID"]
+        d["broadening_kwargs"] = broadening_kwargs
         outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta, ωmin, ωmax, iK, γ, sigmak)
         TCI4Keldysh.logJSON(d, outname, folder)
 
@@ -465,7 +481,7 @@ function time_FullCorrelator_sweep(
 
             ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
             ωconvMat = TCI4Keldysh.channel_trafo(channel)
-            KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat, sigmak=[sigmak], γ=γ, name="Kentucky fried chicken")
+            KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat, sigmak=[sigmak], γ=γ, name="Kentucky fried chicken", broadening_kwargs...)
             # create correlator END
 
             t = @elapsed begin
@@ -514,9 +530,9 @@ function Γcore_filename(mode::String,
     return abs_prefix * str1 * str2
 end
 
-
 function time_Γcore_KF_sweep(
-    param_range, PSFpath, iK::Int, γ::Float64, sigmak::Float64, mode="R"; tolerance=1.e-8, serialize_tts=false
+    param_range, PSFpath, iK::Int, γ::Float64, sigmak::Float64, mode="R"; tolerance=1.e-8, serialize_tts=false,
+    broadening_kwargs...
     )
     folder = "pwtcidata"
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
@@ -550,6 +566,8 @@ function time_Γcore_KF_sweep(
         d["job_id"] = ENV["SLURM_JOB_ID"]
         d["PSFpath"] = PSFpath
         d["flavor"] = flavor_idx
+        broadening_kwargs = filter_broadening_kwargs(broadening_kwargs...)
+        d["broadening_kwargs"] = broadening_kwargs
         outname = Γcore_filename(mode, first(Rs), last(Rs), tolerance, beta, ωmin, ωmax, iK, γ, sigmak)
         TCI4Keldysh.logJSON(d, outname, folder)
 
@@ -560,7 +578,8 @@ function time_Γcore_KF_sweep(
                     ; 
                     sigmak=[sigmak],
                     γ=γ,
-                    T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+                    T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved,
+                    broadening_kwargs...
                     )
             end 
             push!(times, t)
@@ -588,6 +607,7 @@ end
 Homebrewn broadening for beta=2000 🍺
 """
 function beta2000_broadening(T)
+    error("Read out actual broadening parameters. This function is nonsense.")
     return (30*T, [0.1])
 end
 
@@ -950,15 +970,46 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
     return nothing
 end
 
+"""
+format: run_nr{PSFpath_id}{iK}{logtol}{R}
+"""
+function parse_run_nr(run_nr::Int; nz::Int=4)
+    dd = digits(run_nr)
+    @show dd
+    psf_path_id = dd[end]
+    @assert length(dd)==6 "Invalid run_nr"
+    iK = div(run_nr - psf_path_id * 10^(length(dd)-1), 10^3)
+    tolerance = 10.0 ^ -dd[end-3]
+    R = rem(run_nr, 100)
+    base_path = nothing
+    PSFpath = if psf_path_id==1
+        base_path = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+        joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/")
+    elseif psf_path_id==2
+        base_path = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318")
+        joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
+    else
+        error("Invalid psf_path_id $(psf_path_id)")
+    end
+    return (PSFpath, base_path, iK, tolerance, R)
+end
+
 function Γcore_jobs(args)
     println(" ==== COMPILE")
     time_Γcore_KF(2, 3, 1.e-3)
     println(" ==== RUN")
     run_nr = parse(Int, args[2])
 
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    nz = 4
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/")
     if run_nr==0
         time_Γcore_KF_sweep(3:3, PSFpath, 2, 1000.0, 0.5; tolerance=1.e-3, serialize_tts=true)
+    elseif run_nr>=10^5
+        (PSFpath, base_path, iK, tolerance, R) = parse_run_nr(run_nr)
+        channel = "t"
+        (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
+        broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
+        time_Γcore_KF_sweep(R:R, PSFpath, iK, γ, only(sigmak); tolerance=tolerance, serialize_tts=true, broadening_kwargs...)
     else
         error("Invalid run_nr $(run_nr)")
     end
@@ -973,27 +1024,11 @@ function FullCorrelator_jobs(args)
     if run_nr==0
         time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:3, tolerance=1.e-3, serialize_tts=true)
     elseif run_nr >= 10^5
-    # format: {PSFpath_id}{iK}{logtol}{R}
-        dd = digits(run_nr)
-        psf_path_id = dd[end]
-        @assert length(dd)==6 "Invalid run_nr"
-        iK = div(run_nr - psf_path_id * 10^(length(digits)-1), 10^4)
-        tolerance = 10.0 ^ -dd[end-3]
-        R = rem(run_nr, 100)
-        base_path = nothing
-        PSFpath = if psf_path_id==1
-            joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-            base_path = "SIAM_u=0.50"
-        elseif psf_path_id==2
-            joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
-            base_path = "siam05_U0.05_T0.005_Delta0.0318"
-        else
-            error("Invalid psf_path_id $(psf_path_id)")
-        end
-
+        (PSFpath, base_path, iK, tolerance, R) = parse_run_nr(run_nr)
         channel = "t"
         (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
-        time_FullCorrelator_sweep(iK, γ, only(sigmak); PSFpath=PSFpath, Rs=R:R, channel=channel, tolerance=tolerance, serialize_tts=true)
+        broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
+        time_FullCorrelator_sweep(iK, γ, only(sigmak); PSFpath=PSFpath, Rs=R:R, channel=channel, tolerance=tolerance, serialize_tts=true, broadening_kwargs...)
     else
         error("Invalid run_nr $(run_nr)")
     end

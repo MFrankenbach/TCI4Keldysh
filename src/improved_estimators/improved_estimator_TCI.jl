@@ -97,6 +97,7 @@ function eval_RaIE(sev::SigmaEvaluator_MF{D}, row::Int, w::Vararg{Int,D}) where 
     return sev.G_FQ(w_int) / sev.G(w_int)
 end
 
+"Construct FullCorrelator_MF objects required for 4-point vertex from PSF data."
 function read_GFs_Γcore!(
     GFs::Vector, PSFpath, letter_combinations;
     T::Float64, ωs_ext::NTuple{3, Vector{Float64}}, flavor_idx::Int, ωconvMat::Matrix{Int}
@@ -116,6 +117,7 @@ function read_GFs_Γcore!(
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
         GFs[l] = TCI4Keldysh.FullCorrelator_MF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat);
+        printstyled("== Memory usage [GB] of $(l)-th full correlator: $(Base.summarysize(GFs[l]) / 1024^3)\n"; color=:blue)
     end
 end
 
@@ -129,13 +131,21 @@ Test accuracy of ΓcoreEvaluator_KF
 """
 function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
 
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    basepath = "SIAM_u=0.50"
+    nz = 4
+    PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=$(nz)_conn_zavg/")
     channel = "t"
+    # read box size
+    gamfile = joinpath(TCI4Keldysh.datadir(), basepath, "V_KF_$(channel_translate(channel))", "V_KF_U4.mat") 
+    ωs_ext = nothing
+    matopen(gamfile) do f
+        CFdat = read(f, "CFdat")
+        ωs_ext = ntuple(i -> real.(vec(vec(CFdat["ogrid"])[i])), 3)
+    end
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
-    ωmax=0.5
-    # (γ, sigmak) = read_broadening_params(PSFpath; channel=channel)
-    (γ, sigmak) = [0.0005, [0.4]]
+    ωmax = maximum(ωs_ext[1])
+    (γ, sigmak) = read_broadening_params(basepath; channel=channel)
     ωconvMat = channel_trafo(channel)
     flavor_idx=1
 
@@ -170,7 +180,8 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
     ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
     Σω_grid = KF_grid_fer(2*ωmax, R+1)
-    Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
+    # Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
+    (Σ_L,Σ_R) = calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
 
     # frequency grid offset for self-energy
     ΣωconvMat = incoming_trafo * ωconvMat
@@ -181,9 +192,13 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
     ωconvOff = desired_idx .- idx_image
 
-    function sev(row::Int, w::Vararg{Int,3})
+    function sev(row::Int, is_inc::Bool, w::Vararg{Int,3})
         w_int = dot(ΣωconvMat[row,:], SA[w...]) + ωconvOff[row]
-        return Σ[w_int,:,:]
+        if is_inc
+            return Σ_R[w_int,:,:]
+        else
+            return Σ_L[w_int,:,:]
+        end
     end
 
     cutoff = tolerance*1.e-2
@@ -198,8 +213,11 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     Neval += 2*Ncenter_h
     @assert length(gridslice)==Neval
 
+    println("Box extent: ωmax=$ωmax, Neval=$Neval, Ncenter_half=$Ncenter_h")
+
     # reference values
     println("Computing reference...")
+    flush(stdout)
     refval = zeros(ComplexF64, ntuple(_->Neval, D))
     Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
         w = ntuple(i -> gridslice[idx[i]], D)
@@ -208,6 +226,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
 
     # approximate values
     println("Computing test values...")
+    flush(stdout)
     testval = zeros(ComplexF64, ntuple(_->Neval, D))
     Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
         w = ntuple(i -> gridslice[idx[i]], D)
@@ -228,7 +247,7 @@ end
 
 function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
 
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
     channel = "t"
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
@@ -248,16 +267,24 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     Neval += 2*Ncenter_h
     @assert length(gridslice)==Neval
 
+    printstyled("Memory usage [GB] of ΓcoreEvaluator_MF (ref): $(Base.summarysize(gev_ref) / (1024^3))\n"; color=:blue)
+    printstyled("Memory usage [GB] of ΓcoreEvaluator_MF (approx): $(Base.summarysize(gev) / (1024^3))\n"; color=:blue)
+
     # reference values
     println("Computing reference...")
+    flush(stdout)
     refval = zeros(ComplexF64, ntuple(_->Neval, D))
     Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
         w = ntuple(i -> gridslice[idx[i]], D)
+        if rand(Float64)<=1.e-2
+            @time gev_ref(w...)
+        end
         refval[idx...] = gev_ref(w...)
     end
 
     # approximate values
     println("Computing test values...")
+    flush(stdout)
     testval = zeros(ComplexF64, ntuple(_->Neval, D))
     Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
         w = ntuple(i -> gridslice[idx[i]], D)
@@ -272,6 +299,60 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     open("MFgamcoreEvaluator.txt", "a") do f
         write(f, "R=$R, tol=$tolerance, maxref=$maxref, MAXERR=$(maximum(diff)) ($(length(testval)) evals)\n")
     end
+end
+
+function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullCorrelator_KF{D}}}) where {D}
+
+    pivots = Vector{Int}[]
+
+    # # central 3^D block
+    # ωs_ext = first(GFs).ωs_ext
+    # centre_ids = ntuple(i -> ifelse(isodd(length(ωs_ext[i])), div(length(ωs_ext[i]),2)+1, div(length(ωs_ext[i]),2)), D)
+    # centre_block = ntuple(i -> centre_ids[i]-1:centre_ids[i]+1, D)
+    # for c in Iterators.product(centre_block...)
+    #     push!(pivots,  collect(c))
+    # end
+
+    # find all lines that are rotated onto some coordinate axis in and internal frequency grid of a partial correlator
+    lines = [Vector{Float64}[] for _ in 1:D]
+    for GF in GFs
+        for Gp in GF.Gps
+
+            w_cen = collect(ntuple(i -> div(length(Gp.tucker.ωs_legs[i]), 2), D))
+            bos_idx = get_bosonic_idx(Gp)
+            if !isnothing(bos_idx)
+                zero_idx = findfirst(x -> abs(x)<=1.e-2*Gp.T, Gp.tucker.ωs_legs[bos_idx])
+                w_cen[bos_idx] = zero_idx
+            end
+
+            w_ext = Gp.ωconvMat \ (w_cen .- Gp.ωconvOff)
+            for l in 1:D
+                w_int_act = copy(w_cen)
+                # stay somewhat close to the centre
+                w_int_act[l] += min(div(w_cen[l], 2), 10)
+                w_ext_act = Gp.ωconvMat \ (w_int_act .- Gp.ωconvOff)
+                line = w_ext_act .- w_ext
+                pushline = true
+                # check whether we found a new direction
+                for line2 in lines[l]
+                    if abs(dot(line2, line)) / (norm(line)*norm(line2)) >= 0.9
+                        pushline = false
+                        break
+                    end
+                end
+                if pushline
+                    push!(lines[l], line)
+                    push!(pivots, round.(Int, w_ext_act))
+                end
+            end
+        end
+    end
+
+    printstyled("==== Using $(length(pivots)) initial pivots:\n"; color=:blue)
+    # display([p .- [div(length(GFs[1].ωs_ext[i]), 2) for i in 1:D] for p in pivots])
+    display(pivots)
+    printstyled("====\n"; color=:blue)
+    return pivots
 end
 
 """
@@ -306,9 +387,16 @@ function Γ_core_TCI_MF_batched(
     # create batch evaluator
     gbev = ΓcoreBatchEvaluator_MF(gev; use_ΣaIE=use_ΣaIE)
 
+    GC.gc(true)
+
+    initpivots_ω = initpivots_Γcore([gev.GFevs[i].GF for i in eachindex(gev.GFevs)])
+    initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
+
+    printstyled("Memory usage [GB] of ΓcoreBatchEvaluator_MF: $(Base.summarysize(gbev) / (1024^3))\n"; color=:blue)
+
     @info "BATCHED"
     t = @elapsed begin
-        tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims; tcikwargs...)
+        tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
     end
     qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
     @info "quanticscrossinterpolate time batched (nocache): $t"
@@ -333,6 +421,9 @@ function Γ_core_TCI_MF(
     qtcikwargs...
 )
 
+    println(">>Starting Γcore calculation")
+    flush(stdout)
+
     # make frequency grid
     D = size(ωconvMat, 2)
     Nhalf = 2^(R-1)
@@ -350,25 +441,37 @@ function Γ_core_TCI_MF(
         T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
         )
 
+    println(">>Loaded correlators")
+    flush(stdout)
+
     # create full correlator evaluators
     kwargs_dict = Dict(qtcikwargs)
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
     GFevs = Vector{FullCorrEvaluator_MF{ComplexF64, 3, 2}}(undef, Ncorrs)
-    Threads.@threads for l in 1:Ncorrs
+    for l in 1:Ncorrs
         GFevs[l] = FullCorrEvaluator_MF(GFs[l], true; cutoff=cutoff, tucker_cutoff=10.0*cutoff)
     end
+
+    println(">>Created FullCorrEvaluators")
+    flush(stdout)
 
     # create self-energy evaluator
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
     sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
 
+    println(">>Created SelfEnergy evaluators")
+    flush(stdout)
 
+    # search initial pivots
+    initpivots_ω = initpivots_Γcore([GFevs[i].GF for i in eachindex(GFevs)])
+
+    GC.gc(true)
     if cache_center > 0
         printstyled("-- Preparing cache for core vertex of size ($(2*cache_center))^$D...\n"; color=:cyan)
     # obtain cache values
         cache_center = min(cache_center, 2^(R-1))
         ω_cache_Σ = MF_grid(T, 2*cache_center, true)
-        Σ_calc_sIE = calc_Σ_MF_sIE(PSFpath, sev.Σ_H, ω_cache_Σ; flavor_idx=flavor_idx, T=T)
+        Σ_calc_sIE = calc_Σ_MF_sIE(PSFpath, ω_cache_Σ; flavor_idx=flavor_idx, T=T)
         ωs_ext_cache = MF_npoint_grid(T, cache_center, D)
         cacheval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
             "MF", PSFpath*"4pt/", Σ_calc_sIE; ωs_ext=ωs_ext_cache, T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx
@@ -383,6 +486,9 @@ function Γ_core_TCI_MF(
         function is_cached(w::NTuple{3,Int})
             return all((w .>= cache_start) .&& (w .<= cache_end))
         end
+
+        println(">>Starting quanticscrossinterpolate (cache)")
+        flush(stdout)
 
         # evaluation with caching
         function eval_Γ_core_cache(w::Vararg{Int,3})
@@ -406,11 +512,14 @@ function Γ_core_TCI_MF(
         report_mem()
 
         t = @elapsed begin
-            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core_cache, ntuple(i -> 2^R, D); qtcikwargs...)
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core_cache, ntuple(i -> 2^R, D), initpivots_ω; qtcikwargs...)
         end
         @info "quanticscrossinterpolate time (cache): $t"
         return qtt
     else
+
+        println(">>Starting quanticscrossinterpolate (nocache)")
+        flush(stdout)
 
         # evaluation without caching
         function eval_Γ_core(w::Vararg{Int,3})
@@ -429,8 +538,9 @@ function Γ_core_TCI_MF(
         report_mem()
 
         t = @elapsed begin
-            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D); qtcikwargs...)
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D), initpivots_ω; qtcikwargs...)
         end
+        report_mem()
         @info "quanticscrossinterpolate time (nocache): $t"
         return qtt
     end
@@ -475,7 +585,7 @@ function K2_TCI(
     kwargs_dict = Dict(qtcikwargs)
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
     GFevs = Vector{FullCorrEvaluator_MF{ComplexF64, 2, 1}}(undef, Ncorrs)
-    Threads.@threads for l in 1:Ncorrs
+    for l in 1:Ncorrs
         GFevs[l] = FullCorrEvaluator_MF(GFs[l], true; cutoff=cutoff)
     end
 
@@ -523,6 +633,9 @@ function Γ_core_TCI_KF(
     ωmax::Float64;
     sigmak::Vector{Float64}, # broadening
     γ::Float64,
+    emin::Float64=1.e-12,
+    emax::Float64=1.e4,
+    estep::Int=200,
     cache_center::Int=0, # later: cache central values
     ωconvMat::Matrix{Int},
     T::Float64,
@@ -531,6 +644,8 @@ function Γ_core_TCI_KF(
     unfoldingscheme=:interleaved,
     tcikwargs...
     )
+
+    broadening_kwargs = Dict([(:emin, emin), (:emax, emax), (:estep, estep)])
 
     # make frequency grid
     D = size(ωconvMat, 2)
@@ -556,7 +671,7 @@ function Γ_core_TCI_KF(
         if !any(parse_Ops_to_filename(ops) .== filelist)
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
-        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ);
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...)
     end
 
     # evaluate self-energy
@@ -564,7 +679,8 @@ function Γ_core_TCI_KF(
     @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
     ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
     Σω_grid = KF_grid_fer(2*ωmax, R+1)
-    Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
+    # Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
+    (Σ_L,Σ_R) = calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
 
     # frequency grid offset for self-energy
     ΣωconvMat = incoming_trafo * ωconvMat
@@ -575,9 +691,13 @@ function Γ_core_TCI_KF(
     desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
     ωconvOff = desired_idx .- idx_image
 
-    function sev(row::Int, w::Vararg{Int,3})
+    function sev(row::Int, is_inc::Bool, w::Vararg{Int,3})
         w_int = dot(ΣωconvMat[row,:], SA[w...]) + ωconvOff[row]
-        return Σ[w_int,:,:]
+        if is_inc
+            return Σ_R[w_int,:,:]
+        else
+            return Σ_L[w_int,:,:]
+        end
     end
 
     # function eval_Γ_core(w::Vararg{Int,3})
@@ -612,31 +732,21 @@ function Γ_core_TCI_KF(
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
     gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
 
-    # time eval
-    # tavg = 0.0
-    tavg_gev = 0.0
-    N = 100
-    for _ in 1:N
-        v = rand(1:2^R, 3)
-        # t = @elapsed eval_Γ_core(v...)
-        t_gev = @elapsed gev(v...)
-        # tavg += t/N
-        tavg_gev += t_gev/N
-    end
-    # printstyled("  Time for one eval (eval_Γcore): $tavg\n"; color=:blue)
-    printstyled("  Time for one eval (ΓcoreEvaluator_KF): $tavg_gev\n"; color=:blue)
+    initpivots_ω = initpivots_Γcore([gev.GFevs[i].KFC for i in eachindex(gev.GFevs)])
+    GC.gc(true)
 
     if batched
         gbev = ΓcoreBatchEvaluator_KF(gev)
+        initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
         t = @elapsed begin
-            tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims; tcikwargs...)
+            tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
         end
         qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
         @info "quanticscrossinterpolate time (nocache, batched): $t"
         return qtt
     else
         t = @elapsed begin
-            qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(i -> 2^R, D); unfoldingscheme=unfoldingscheme, tcikwargs...)
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(i -> 2^R, D), initpivots_ω; unfoldingscheme=unfoldingscheme, tcikwargs...)
         end
         @info "quanticscrossinterpolate time (nocache, not batched): $t"
     return qtt
@@ -758,7 +868,7 @@ end
 
 """
 Structure to evaluate Keldysh core vertex, i.e., wrap the required setup and capture relevant data.
-* sev: function with signature sev(i::Int, w::Vararg{Int,D}) to evaluate self-energy
+* sev: function with signature sev(i::Int, is_incoming::Bool, w::Vararg{Int,D}) to evaluate self-energy
 on i'th component of transformed frequency w
 """
 struct ΓcoreEvaluator_KF{T}
@@ -782,7 +892,7 @@ struct ΓcoreEvaluator_KF{T}
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
         GFevs = [FullCorrEvaluator_KF(GFs[i]; cutoff=cutoff) for i in eachindex(GFs)]
-        X = [0.0 1.0; 1.0 0.0] .+ 0.0*im
+        X = get_PauliX()
         iK_tuple = KF_idx(iK,3)
 
         return new{T}(GFevs,length(GFs), iK_tuple, X, is_incoming, letter_combinations, sev)
@@ -814,7 +924,7 @@ function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
         val_legs = Vector{Vector{T}}(undef, length(gev.is_incoming))
         for il in eachindex(gev.is_incoming)
             mat = if gev.letter_combinations[i][il]==='F'
-                    -gev.sev(il, w...)
+                    -gev.sev(il, gev.is_incoming[il], w...)
                 else
                     gev.X
                 end
@@ -983,6 +1093,7 @@ function (gbev::ΓcoreBatchEvaluator{T})(
     chunklen = ceil(Int, length(leftindexsset) / Threads.nthreads())
     chunks = Iterators.partition(eachindex(leftindexsset),  chunklen)
     printstyled("== CHUNKS: $(length.(chunks)) ($(Threads.nthreads()) threads)\n"; color=:blue)
+    printstyled("  MEM[GB]: gbev $(Base.summarysize(gbev) / 1024^3), of which qf $(Base.summarysize(gbev.qf) / 1024^3); out $(Base.summarysize(out) / 1024^3)\n"; color=:blue)
     cache_dicts = Dict([tid => typeof(gbev.qf.cache)() for tid in Threads.threadpooltids(:default)])
 
     @assert length(chunks) <= Threads.nthreads()

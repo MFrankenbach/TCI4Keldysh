@@ -85,6 +85,7 @@ function getAcont_logBroaden(
         # modify xmin so that the grid of logωcont matches with the grid of the result
         xdiff = (xmin - log10(emin)) * estep
         xmin = xmin - (xdiff - floor(xdiff)) / estep
+        # printstyled("\n  Grid extension: log10(emin)=$(log10(emin)), xmin=$xmin\n"; color=:magenta)
 
         # temporary frequency grid
         logωcont = collect((xmin):1/estep:(log10(emax)))   # exponents of frequencies (base 10); increasing, column vector

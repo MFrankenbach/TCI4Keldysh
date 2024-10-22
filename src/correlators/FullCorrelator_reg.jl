@@ -193,7 +193,9 @@ struct FullCorrEvaluator_MF{T,D,N}
             for Gp in GF.Gps
                 # if any(size(Gp.tucker.legs[1]) .> 1000) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
                 size_old = size(Gp.tucker.center)
-                svd_kernels!(Gp.tucker; cutoff=cutoff)
+                @time svd_kernels!(Gp.tucker; cutoff=cutoff)
+                GC.gc(true)
+                # GC.enable_logging(true)
                 size_new = size(Gp.tucker.center)
                 println(" Reduced tucker center from $size_old to $size_new")
             end
@@ -207,7 +209,9 @@ struct FullCorrEvaluator_MF{T,D,N}
         tucker_cuts = Int[]
         for Gp in GF.Gps
             p = 2.0
-            prune_idx = compute_tucker_cut(Gp.tucker, GFmin, tucker_cutoff, p)
+            @time prune_idx = compute_tucker_cut(Gp.tucker, GFmin, tucker_cutoff, p)
+            GC.gc(true)
+            # GC.enable_logging(true)
         #     for idx_sum in reverse(3:sum(size(cen_)))
         #         for k in reverse(axes(cen_, 3))
         #             for j in reverse(axes(cen_, 2))
@@ -787,6 +791,8 @@ struct FullCorrEvaluator_KF{D,T}
             end
             tucker_cuts[p,D+1] = tucker_cuts[p,1]
             @show tucker_cuts[p,1:D]
+
+            GC.gc(true)
         end
 
         return new{D,T}(KFC, iso_kernels, tucker_centers, tucker_cuts)
@@ -1024,6 +1030,7 @@ function get_GR(
     #    return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωs_int...,), broadening_kwargs...)
     #end
     #@time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
-    _, Acont = getAcont(ωdisc, reshape(Adisc, length(Adisc), 1), sigmak, γ; ωcont = ωs_ext, broadening_kwargs...)
-    return -im * π * hilbert_fft(Acont; dims=1)[:]
+    ωcont = get_Acont_grid(;broadening_kwargs...)
+    _, Acont = getAcont(ωdisc, reshape(Adisc, length(Adisc), 1), sigmak, γ; ωcont = ωcont, broadening_kwargs...)
+    return -im * π * my_hilbert_trafo(ωs_ext, ωcont, vec(Acont))
 end

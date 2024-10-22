@@ -194,12 +194,15 @@ end
         # reference
         ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
         Σωgrid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
-        Σ_ref = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, sigmak, γ)
+        # Σ_ref = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, sigmak, γ)
+        (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, sigmak, γ)
         Γcore_ref = TCI4Keldysh.compute_Γcore_symmetric_estimator(
             "KF",
             PSFpath*"4pt/",
-            Σ_ref
+            # Σ_ref
+            Σ_R
             ;
+            Σ_calcL=Σ_L,
             T,
             flavor_idx = flavor_idx,
             ωs_ext = ωs_ext,

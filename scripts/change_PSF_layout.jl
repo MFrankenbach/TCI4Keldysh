@@ -10,12 +10,12 @@ read(f, "odisc") (same as read(f, "PSF")["odisc_info"]["odisc"])
 
 # data_dir = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/4pt";
 # backup_dir = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/original_files/4pt"
-data_dir = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg"
+data_dir = "data/SIAM_u=0.50/PSF_nz=4_conn_zavg"
 
 using MAT
 
 function change_PSF_layout()
-    @assert isdir(backup_dir)
+    # @assert isdir(backup_dir)
     @assert isdir(data_dir)
     for file in readdir(data_dir)
         if !isfile(joinpath(data_dir, file)) || !endswith(file, ".mat")
@@ -33,7 +33,7 @@ function change_PSF_layout()
             println("Altering file: $fullname")
             odisc = read(f_in, "PSF")["odisc_info"]["odisc"]
             Adisc = read(f_in, "Adisc")
-            mv(joinpath(data_dir, file), joinpath(backup_dir, file); force=true)
+            # mv(joinpath(data_dir, file), joinpath(backup_dir, file); force=true)
             close(f_in)
             f_out = matopen(fullname, "w")
             write(f_out, "Adisc", Adisc)
@@ -117,4 +117,4 @@ function check_flavor_ids(dir::String; nflavor=2)
     end
 end
 
-check_flavor_ids(data_dir)
+# check_flavor_ids(data_dir)

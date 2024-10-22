@@ -126,10 +126,6 @@ function compute_Γcore_symmetric_estimator(
         Σs_R
     end
 
-    if formalism=="KF" && !isnothing(Σ_calcL)
-        error("Still need to make KF part use two different self-energies")
-    end
-
     filelist = readdir(PSFpath)
 
     for letts in letter_combinations#[2:end]
@@ -162,7 +158,11 @@ function compute_Γcore_symmetric_estimator(
             for il in eachindex(letts)
                 if letts[il] == 'F'
                     #K2a_data_tmp[:,:,] = -K2a_data_tmp .* Σs[il]
-                    Γcore_data_tmp = _mult_Σ_KF(-Γcore_data_tmp, Σs_R[il]; idim=3+il, is_incoming=is_incoming[il])
+                    if is_incoming[il]
+                        Γcore_data_tmp = _mult_Σ_KF(-Γcore_data_tmp, Σs_R[il]; idim=3+il, is_incoming=is_incoming[il])
+                    else
+                        Γcore_data_tmp = _mult_Σ_KF(-Γcore_data_tmp, Σs_L[il]; idim=3+il, is_incoming=is_incoming[il])
+                    end
                 else
                     reverse!(Γcore_data_tmp, dims=3+il)
                 end

@@ -425,45 +425,39 @@ function main(args)
     
     println(" ==== RUN")
     run_nr = parse(Int, args[1])
+    PSFpath = if run_nr<10
+        nz = 4
+        "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/"
+        else
+            PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
+        end
     if run_nr==0
         println("test")
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:5, tolerance=1.e-2)
     elseif run_nr==1
-        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-2)
     elseif run_nr==2
-        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-4)
     elseif run_nr==3
-        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-6)
     elseif run_nr==4
-        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-8)
     elseif run_nr==5
-        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-3)
     elseif run_nr==6
-        PSFpath = "SIAM_u=0.50/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-5)
     # beta=200.0 
     elseif run_nr==11
-        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-2)
     elseif run_nr==12
-        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-4)
     elseif run_nr==13
-        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-6)
     elseif run_nr==14
-        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-8)
     elseif run_nr==15
-        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-3)
     elseif run_nr==16
-        PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
         time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-5)
     else
         error("invalid run number $run_nr")

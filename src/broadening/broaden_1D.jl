@@ -254,9 +254,11 @@ function getAcont(
         display_info()
     end
 
-    DEBUG_BROADEN = true
+    DEBUG_BROADEN = false
     if isCLG || isSLG
-        oks1 = ωdisc .>= ωcont_pos[1] # filter for positive frequencies
+        # oks1 = ωdisc .>= ωcont_pos[1] # filter for positive frequencies
+        oks1 = ωdisc .>= emin # filter for positive frequencies
+        # printstyled("  emin=$emin ωcont_pos[1]=$(ωcont_pos[1])\n"; color=:magenta)
         if any(oks1)
             odtmp = ωdisc[oks1]
             Adtmp = Adisc[oks1, :]
@@ -309,7 +311,8 @@ function getAcont(
             end
         end
 
-        oks2 = ωdisc .<= -ωcont_pos[1] # filter for negative frequencies
+        # oks2 = ωdisc .<= -ωcont_pos[1] # filter for negative frequencies
+        oks2 = ωdisc .<= -emin # filter for negative frequencies
         if any(oks2)
             odtmp = -ωdisc[oks2] # negative -> positive
             Adtmp = Adisc[oks2, :]
@@ -376,8 +379,14 @@ function getAcont(
     #    ωcont((end+1)/2) = [];
     #    Acont((end+1)/2,:) = [];
     #end    
+    isw0 = true
+    if !isw0 
+        mid_id = div(length(ωcont)+1,2)
+        deleteat!(ωcont, mid_id)
+        Acont = vcat(Acont[1:mid_id-1,:], Acont[mid_id+1:end,:])
+    end
     
-    if verbose || DEBUG_BROADEN
+    if verbose
         printstyled("∑Aend(tot)=$(sum(Acont .* Δωcont))\n"; color=:cyan)
         Acontsum = sum(Acont, dims=2)[:];
         # trapezoidal quadrature rule:

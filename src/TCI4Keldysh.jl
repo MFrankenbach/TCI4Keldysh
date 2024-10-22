@@ -48,6 +48,11 @@ macro VERBOSE(msgs)
     esc(:(if $(@__MODULE__).VERBOSE() print($msgs...) end))
 end
 
+# macro to unlock debugging of RAM issue
+DEBUG_RAM() = true
+
+
+
 
 include("TuckerDecomposition.jl")
 include("utils/utils.jl")
@@ -74,7 +79,7 @@ include("improved_estimators/improved_estimator_TCI.jl")
     T = 1.
     N_MF = 100
     ω_fer = (collect(-N_MF:N_MF-1) * (2.) .+ 1.) * π * T
-    PSFpath = "data/SIAM_u=0.50/PSF_nz=2_conn_zavg/"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
 
     G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=1, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
     precompute_all_values(G)
