@@ -56,10 +56,6 @@ end
         T = 1.0 / beta
         spin = 1
 
-        if (!batched) && use_ΣaIE
-            error("asymmetric estimators for self-energy without batching not (yet) supported")
-        end
-
         ωconvMat = TCI4Keldysh.channel_trafo(freq_conv)
 
         # tci

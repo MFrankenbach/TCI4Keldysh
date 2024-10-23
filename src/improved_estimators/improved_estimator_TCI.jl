@@ -368,7 +368,7 @@ function Γ_core_TCI_MF_batched(
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
-    use_ΣaIE::Bool=false,
+    use_ΣaIE::Bool=true,
     tcikwargs...
 )
 
@@ -418,8 +418,12 @@ function Γ_core_TCI_MF(
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
+    use_ΣaIE::Bool=true,
     qtcikwargs...
 )
+    if use_ΣaIE
+        error("Asymmetric self-energy estimators for non-batched MF vertex NYI!")
+    end
 
     println(">>Starting Γcore calculation")
     flush(stdout)

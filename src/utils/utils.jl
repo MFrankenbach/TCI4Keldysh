@@ -572,6 +572,7 @@ end
 
 function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
     fname = "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"
+    printstyled("Reading Adisc: $fname\n"; color=:magenta)
     f = matopen(joinpath(path, fname), "r")
     try 
         keys(f)
@@ -1071,6 +1072,13 @@ function datadir()
 end
 
 """
+Parent dir of datadir
+"""
+function pdatadir()
+    return dirname(datadir())
+end
+
+"""
 For given PSFpath, get corresponding temperature.
 """
 function dir_to_T(PSFpath::String) :: Float64
@@ -1171,13 +1179,13 @@ function channel_trafo(channel::String)
             -1  1  0; # ω-ν
             0  0  1; # -ν'
         ]
-    # NRG convention
+    # NRG convention (cf. eq. 138 Lihm et al symmetric estimators)
     elseif channel == "pNRG"
         [
         0 -1  0;
-        -1  0 -1;
-        1  1  0;
         0  0  1;
+        1  1  0;
+        -1  0 -1;
         ]
     elseif channel == "t"
         [

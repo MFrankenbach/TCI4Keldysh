@@ -117,4 +117,4 @@ function check_flavor_ids(dir::String; nflavor=2)
     end
 end
 
-# check_flavor_ids(data_dir)
+# check_flavor_ids(data_dir * "/4pt")

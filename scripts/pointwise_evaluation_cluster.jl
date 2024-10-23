@@ -255,8 +255,8 @@ function profile_FullCorrelator(npt=3)
 end
 
 
-function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta)
-    return "/scratch/m/M.Frankenbach/tci4keldysh/pwtcidata/timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta"
+function GFfilename(mode::String, xmin::Int, xmax::Int, tolerance, beta; folder="pwtcidata")
+    return joinpath(TCI4Keldysh.pdatadir(), "$folder/timing_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta")
 end
 
 function serialize_tt(qtt, outname::String, folder::String)
@@ -315,15 +315,13 @@ end
 
 """
 Store ranks and timings for computation of full 4-point correlators.
-Can vary:
-* beta
-* nωdisc
-* R
-* tolerance
+    * folder: where to store output
+    * addpivots: non-default initial pivots for  QTCI
 """
 function time_FullCorrelator_sweep(
         mode::String="R";
-        PSFpath="SIAM_u=0.50/PSF_nz=2_conn_zavg/", Rs=nothing, tolerance=1.e-8, folder="pwtcidata", serialize_tts=true
+        PSFpath="SIAM_u=0.50/PSF_nz=2_conn_zavg/", Rs=nothing, tolerance=1.e-8, folder="pwtcidata", serialize_tts=true,
+        add_pivots=true
     )
     npt = 4
     times = []
@@ -348,7 +346,8 @@ function time_FullCorrelator_sweep(
         d["tolerance"] = tolerance
         d["svd_kernel"] = svd_kernel
         d["job_id"] = ENV["SLURM_JOB_ID"]
-        outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta)
+        d["add_pivots"] = add_pivots
+        outname = GFfilename(mode, first(Rs), last(Rs), tolerance, beta; folder=folder)
         TCI4Keldysh.logJSON(d, outname, folder)
 
         for R in Rs
@@ -357,7 +356,7 @@ function time_FullCorrelator_sweep(
             nωdisc = div(maximum(size(GF.Gps[1].tucker.center)), 2)
             TCI4Keldysh.updateJSON(outname, "nomdisc", nωdisc, folder)
             t = @elapsed begin
-                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, svd_kernel; tolerance=tolerance, unfoldingscheme=:interleaved)
+                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(GF, svd_kernel; add_pivots=add_pivots, tolerance=tolerance, unfoldingscheme=:interleaved)
             end
             push!(times, t)
             push!(qttranks, TCI4Keldysh.rank(qtt))
@@ -422,9 +421,14 @@ function main(args)
     GF = TCI4Keldysh.multipeak_correlator_MF(4, R; beta=1.0, nωdisc=10)
     _ = TCI4Keldysh.compress_FullCorrelator_pointwise(GF; tolerance=1.e-3, unfoldingscheme=:interleaved)
     flush(stdout)
-    
+
     println(" ==== RUN")
     run_nr = parse(Int, args[1])
+    folder = if length(args)>1 && args[2]=="local"
+                ENV["PWTCIDIR"]
+            else
+                "pwtcidata"
+            end
     PSFpath = if run_nr<10
         nz = 4
         "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/"
@@ -432,33 +436,35 @@ function main(args)
             PSFpath = "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/"
         end
     if run_nr==0
-        println("test")
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:5, tolerance=1.e-2)
+        println("TEST")
+        println(args)
+        println(ENV["PWTCIDIR"])
+        # time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:5, tolerance=1.e-2)
     elseif run_nr==1
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-2)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-2)
     elseif run_nr==2
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-4)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-4)
     elseif run_nr==3
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-6)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-6)
     elseif run_nr==4
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-8)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-8)
     elseif run_nr==5
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-3)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-3)
     elseif run_nr==6
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-5)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-5)
     # beta=200.0 
     elseif run_nr==11
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-2)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-2)
     elseif run_nr==12
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-4)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-4)
     elseif run_nr==13
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-6)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-6)
     elseif run_nr==14
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-8)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-8)
     elseif run_nr==15
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-3)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-3)
     elseif run_nr==16
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:12, tolerance=1.e-5)
+        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-5)
     else
         error("invalid run number $run_nr")
     end

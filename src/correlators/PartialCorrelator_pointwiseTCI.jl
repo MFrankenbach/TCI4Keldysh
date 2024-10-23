@@ -310,7 +310,7 @@ end
 """
 Obtain qtt for full correlator by pointwise evaluation.
 """
-function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cut_tucker=true, qtcikwargs...) where {D}
+function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cut_tucker=true, add_pivots=false, qtcikwargs...) where {D}
     # check external frequency grids
     R = grid_R(GF)
 
@@ -319,7 +319,7 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel:
     fev = FullCorrEvaluator_MF(GF, svd_kernel; cutoff=cutoff, tucker_cutoff=cutoff*10.0)
 
     # collect anomalous term pivots
-    pivots = [zeros(Int, D)]
+    pivots = [ones(Int, D)]
     for i in eachindex(GF.Gps)
         if fev.ano_terms_required[i]
             Gp = GF.Gps[i]
@@ -331,6 +331,12 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel:
             pivot = round.(Int, w_ext)
             push!(pivots, pivot)
         end
+    end
+
+    if add_pivots
+        # add pivots along important features like for Γcore
+        pivots2 = initpivots_Γcore([GF])
+        append!(pivots, pivots2)
     end
 
     if !cut_tucker

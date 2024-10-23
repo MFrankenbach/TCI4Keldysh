@@ -642,6 +642,7 @@ CAREFUL: Need channel="pNRG" for p-channel to get a consistent frequency convent
 """
 function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true)
     basepath = "SIAM_u=0.50"
+    # basepath = "siam05_U0.05_T0.005_Delta0.0318"
     PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
     Vpath = joinpath(TCI4Keldysh.datadir(), basepath, "V_MF_" * TCI4Keldysh.channel_translate(channel))
 
@@ -731,11 +732,8 @@ function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true)
 
     # compare quantitatively
     window = (data_half-window_half+1:data_half+window_half+1, data_half-window_half+1:data_half+window_half, data_half-window_half+1:data_half+window_half)
-    diff = if channel in ["t", "a"]
-        Γcore_ref[window...] .- conj.(testval)
-    else
-        Γcore_ref[window...] .+ conj.(testval)
-    end
+    # Γ(ω,ν,ν')=Γ*(-ω,-ν,-ν')
+    diff = Γcore_ref[window...] .- reverse(testval)
     maxdiff = maximum(abs.(diff)) 
     amaxdiff = argmax(abs.(diff)) 
     @show amaxdiff
@@ -770,7 +768,8 @@ MuNRG results have frequency grids of size 2n+1 symmetric around 0.0
 """
 function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
     base_path = "SIAM_u=0.50"
-    PSFpath = joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
+    joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=2_conn_zavg/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=2_conn_zavg/")
     Vpath = joinpath(TCI4Keldysh.datadir(), base_path, "V_KF_" * TCI4Keldysh.channel_translate(channel))
 
     # Γcore data

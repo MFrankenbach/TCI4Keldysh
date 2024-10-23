@@ -279,7 +279,7 @@ function GFfilename(mode::String,
     sigmak_str = @sprintf("%.2f", sigmak)
     γ_str = @sprintf("%.2f", γ)
 
-    abs_prefix = "/scratch/m/M.Frankenbach/tci4keldysh/pwtcidata/"
+    abs_prefix = joinpath(joinpath(TCI4Keldysh.pdatadir()), "pwtcidata/")
     str1 = "KF_timing_iK=$(iK)_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta)"
     str2 = "_omega" * ommin * "_to_" * ommax * "_iK=$iK" * "_broaden_γ=$(γ_str)_σ=$(sigmak_str)"
 
@@ -523,7 +523,7 @@ function Γcore_filename(mode::String,
     sigmak_str = @sprintf("%.2f", sigmak)
     γ_str = @sprintf("%.2f", γ)
 
-    abs_prefix = "/scratch/m/M.Frankenbach/tci4keldysh/pwtcidata/"
+    abs_prefix = joinpath(joinpath(TCI4Keldysh.pdatadir()), "pwtcidata/")
     str1 = "KF_gammacore_iK=$(iK)_$(mode)_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta)"
     str2 = "_omega" * ommin * "_to_" * ommax * "_iK=$iK" * "_broaden_γ=$(γ_str)_σ=$(sigmak_str)"
 
