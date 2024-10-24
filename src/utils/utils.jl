@@ -572,7 +572,6 @@ end
 
 function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
     fname = "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"
-    printstyled("Reading Adisc: $fname\n"; color=:magenta)
     f = matopen(joinpath(path, fname), "r")
     try 
         keys(f)
@@ -1348,6 +1347,11 @@ Read broadening settings from file in the corresponding directory
 TODO: What about estep
 """
 function read_broadening_settings(path=joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50"); channel="t")
+
+    if !isdir(path)
+        path = joinpath(datadir(), path)
+    end
+
     d = Dict{Symbol, Any}()
     matopen(joinpath(path, "mpNRG_$(channel_translate(channel)).mat")) do f
         d[:emin] = read(f, "emin")

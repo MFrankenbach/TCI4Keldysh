@@ -6,7 +6,7 @@ Compute Keldysh correlators @ TCI by pointwise evaluation.
 Compress Keldysh Correlator at given contour index.
 * iK::Int linear index ranging from 1:2^D
 """
-function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; qtcikwargs...) where {D}
+function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; add_pivots=true, qtcikwargs...) where {D}
     R_f = log2(length(GF.ωs_ext[1]))
     R = round(Int, R_f)
     @assert length(GF.ωs_ext[1])==2^R+1
@@ -21,7 +21,14 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; qt
     cutoff = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance]*1.e-3 : 1.e-15
     KFev = FullCorrEvaluator_KF_single(GF, iK; cutoff=cutoff)
 
-    qtt, _, _ = quanticscrossinterpolate(ComplexF64, KFev, ntuple(_ -> 2^R, D); qtcikwargs...)
+    pivots = if add_pivots
+                initpivots_Γcore([GF])
+            else
+                # quanticscrossinterpolate default
+                [ones(Int,D)]
+            end
+
+    qtt, _, _ = quanticscrossinterpolate(ComplexF64, KFev, ntuple(_ -> 2^R, D), pivots; qtcikwargs...)
 
     return qtt
 end

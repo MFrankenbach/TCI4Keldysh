@@ -585,12 +585,14 @@ struct FullCorrelator_KF{D}
             ωconts = ntuple(_->ωcont, D)
             return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωconts...,), broadening_kwargs...)
         end
-        @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
-        # for Acont in Aconts
-        #     @show size.(Acont.legs)
-        #     @show size.(Acont.ωs_legs)
-        #     println("")
-        # end
+        perms_vec = collect(perms)
+        Aconts = Vector{TuckerDecomposition{Float64,D}}(undef, length(perms_vec))
+        # @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
+        @time begin Threads.@threads for i in eachindex(Aconts)
+                p = perms_vec[i]
+                Aconts[i] = get_Acont_p(i,p)
+            end
+        end
 
         # write to HDF5 format
         if !isnothing(write_Aconts)

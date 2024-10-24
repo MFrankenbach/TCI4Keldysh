@@ -146,6 +146,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     T = TCI4Keldysh.dir_to_T(PSFpath)
     ωmax = maximum(ωs_ext[1])
     (γ, sigmak) = read_broadening_params(basepath; channel=channel)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath; channel=channel)
     ωconvMat = channel_trafo(channel)
     flavor_idx=1
 
@@ -172,7 +173,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
         if !any(parse_Ops_to_filename(ops) .== filelist)
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
-        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ);
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...);
     end
 
     # evaluate self-energy
@@ -181,7 +182,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
     Σω_grid = KF_grid_fer(2*ωmax, R+1)
     # Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
-    (Σ_L,Σ_R) = calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
+    (Σ_L,Σ_R) = calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
 
     # frequency grid offset for self-energy
     ΣωconvMat = incoming_trafo * ωconvMat
@@ -213,7 +214,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     Neval += 2*Ncenter_h
     @assert length(gridslice)==Neval
 
-    println("Box extent: ωmax=$ωmax, Neval=$Neval, Ncenter_half=$Ncenter_h")
+    println("Box extent: ommax=$ωmax, Neval=$Neval, Ncenter_half=$Ncenter_h")
 
     # reference values
     println("Computing reference...")
@@ -236,7 +237,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     maxref = maximum(abs.(refval))
     diffabs = abs.(testval - refval)
     diff = diffabs ./ maxref
-    printstyled("ΓcoreEvaluator_MF error for tol=$tolerance\n"; color=:blue)
+    printstyled("Keldysh GammaCoreEvaluator error for tol=$tolerance\n"; color=:blue)
     @show maxref
     @show maximum(diff)
     @show maximum(diffabs)
@@ -293,7 +294,7 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
 
     maxref = maximum(abs.(refval))
     diff = abs.(testval - refval) ./ maxref
-    printstyled("ΓcoreEvaluator_MF error for tol=$tolerance\n"; color=:blue)
+    printstyled("Matsubara GammaCoreEvaluator error for tol=$tolerance\n"; color=:blue)
     @show maxref
     @show maximum(diff)
     open("MFgamcoreEvaluator.txt", "a") do f
