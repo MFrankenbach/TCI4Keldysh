@@ -6,7 +6,7 @@ Compute Keldysh correlators @ TCI by pointwise evaluation.
 Compress Keldysh Correlator at given contour index.
 * iK::Int linear index ranging from 1:2^D
 """
-function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; add_pivots=true, qtcikwargs...) where {D}
+function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; do_check_interpolation=true, add_pivots=true, qtcikwargs...) where {D}
     R_f = log2(length(GF.ωs_ext[1]))
     R = round(Int, R_f)
     @assert length(GF.ωs_ext[1])==2^R+1
@@ -29,6 +29,17 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; ad
             end
 
     qtt, _, _ = quanticscrossinterpolate(ComplexF64, KFev, ntuple(_ -> 2^R, D), pivots; qtcikwargs...)
+
+    if do_check_interpolation
+        Nhalf = 2^(R-1)
+        gridmin = max(1, Nhalf-2^5)
+        gridmax = min(2^R, Nhalf+2^5)
+        grid1D = gridmin:2:gridmax
+        grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+        maxerr = check_interpolation(qtt, KFev, grid)
+        tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+        println(" Maximum interpolation error: $maxerr (tol=$tol)")
+    end
 
     return qtt
 end

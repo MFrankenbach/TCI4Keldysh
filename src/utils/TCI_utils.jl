@@ -2028,3 +2028,35 @@ Check whether tucker center (PSF) contains any values larger than tolerance.
 function check_zero(Gp::TCI4Keldysh.PartialCorrelator_reg{D}, tolerance::Float64) :: Bool where {D}
     return all(abs.(Gp.tucker.center) .<= tolerance)
 end
+
+"""
+Check interpolation quality of qtt compared to f on a given grid
+* grid: Vector of grid indices
+* f(::Vararg{T,D}) takes grid index
+"""
+function check_interpolation(qtt::QuanticsTCI.QuanticsTensorCI2, f, grid::AbstractArray{NTuple{D,Int}}) where {D}
+    f_(v::Vector{Int}) = f(QuanticsGrids.quantics_to_grididx(qtt.grid, v)...)
+    qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, p) for p in grid]
+    return check_interpolation(qtt.tci, f_, qgrid)
+end
+
+
+"""
+Check interpolation quality of tt compared to f on a given grid
+* grid: Array of quantics indices
+* f(::Vector{Int}) takes quantics index
+"""
+function check_interpolation(tt::TCI.TensorCI2, f, grid::AbstractArray{Vector{Int}})
+    if isa(f, TCI.CachedFunction)
+        @warn "Cached function will be used in multithreaded loop!"
+    end
+    maxref = tt.maxsamplevalue
+    errors = zeros(Float64, size(grid))
+    Threads.@threads for ip in eachindex(grid)    
+        qp = grid[ip]
+        ref = f(qp)
+        val = tt(qp)
+        errors[ip] = abs(ref - val)
+    end
+    return maximum(errors) / maxref
+end

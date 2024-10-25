@@ -101,7 +101,12 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
                     @assert (maximum(ωs_int[i]) <= maximum(Acont.ωs_legs[i])) "Cannot interpolate real part of kernel"
                     @assert (minimum(ωs_int[i]) >= minimum(Acont.ωs_legs[i])) "Cannot interpolate real part of kernel"
                 end
-                [-im * π * my_hilbert_trafo(ωs_int[i], Acont.ωs_legs[i], Acont.legs[i]) for i in 1:D]
+                # [-im * π * my_hilbert_trafo(ωs_int[i], Acont.ωs_legs[i], Acont.legs[i]) for i in 1:D]
+                hts = Vector{Matrix{ComplexF64}}(undef,D)
+                Threads.@threads for i in 1:D
+                    hts[i] = -im * π * my_hilbert_trafo(ωs_int[i], Acont.ωs_legs[i], Acont.legs[i])
+                end
+                hts
             elseif hilbert_method=="fft"
                 # check that grid is equidistant:
                 error("TODO: fix hilbert_fft")

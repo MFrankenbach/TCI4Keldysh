@@ -310,7 +310,12 @@ end
 """
 Obtain qtt for full correlator by pointwise evaluation.
 """
-function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel::Bool=false; cut_tucker=true, add_pivots=false, qtcikwargs...) where {D}
+function compress_FullCorrelator_pointwise(
+    GF::FullCorrelator_MF{D}, svd_kernel::Bool=false;
+    cut_tucker=true,
+    add_pivots=false, 
+    do_check_interpolation::Bool=true,
+    qtcikwargs...) where {D}
     # check external frequency grids
     R = grid_R(GF)
 
@@ -345,9 +350,32 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_MF{D}, svd_kernel:
         end
         qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), _eval, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
 
+        if do_check_interpolation
+            Nhalf = 2^(R-1)
+            gridmin = max(1, Nhalf-2^5)
+            gridmax = min(2^R, Nhalf+2^5)
+            grid1D = gridmin:2:gridmax
+            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            maxerr = check_interpolation(qtt, _eval, grid)
+            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        end
+
         return qtt
     else
         qtt, _, _ = quanticscrossinterpolate(eltype(GF.Gps[1].tucker.center), fev, ntuple(i -> 2^R, D), pivots; qtcikwargs...)
+
+        if do_check_interpolation
+            Nhalf = 2^(R-1)
+            gridmin = max(1, Nhalf-2^5)
+            gridmax = min(2^R, Nhalf+2^5)
+            grid1D = gridmin:2:gridmax
+            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            maxerr = check_interpolation(qtt, fev, grid)
+            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        end
+
         return qtt
     end
 end

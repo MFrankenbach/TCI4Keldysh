@@ -50,7 +50,7 @@ function SigmaEvaluator_MF(PSFpath::String, R::Int, T::Float64, ωconvMat::Matri
     G_FQ = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
     G_QQ = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
 
-    Adisc_Σ_H = load_Adisc_0pt(PSFpath, "Q12", flavor_idx)
+    Adisc_Σ_H = load_Adisc_0pt(PSFpath, "Q12")
     Σ_H = only(Adisc_Σ_H)
 
     return SigmaEvaluator_MF(G_QQ, G_QF, G_FQ, G, Σ_H, ωconvMat)
@@ -370,6 +370,7 @@ function Γ_core_TCI_MF_batched(
     T::Float64,
     flavor_idx::Int=1,
     use_ΣaIE::Bool=true,
+    do_check_interpolation::Bool=true,
     tcikwargs...
 )
 
@@ -401,6 +402,19 @@ function Γ_core_TCI_MF_batched(
     end
     qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
     @info "quanticscrossinterpolate time batched (nocache): $t"
+
+    if do_check_interpolation
+        Nhalf = 2^(R-1)
+        gridmin = max(1, Nhalf-2^5)
+        gridmax = min(2^R, Nhalf+2^5)
+        grid1D = gridmin:2:gridmax
+        grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+        qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
+        maxerr = check_interpolation(qtt.tci, gbev, qgrid)
+        tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+        println(" Maximum interpolation error: $maxerr (tol=$tol)")
+    end
+
     return qtt
 
 end
@@ -630,6 +644,8 @@ Compute Keldysh core vertex for single Keldysh component
 
 * iK: Keldysh component
 * sigmak, γ: broadening parameters
+* batched: Use batched evaluator
+* do_check_interpolation: Check interpolation on small grid at the end, report error
 """
 function Γ_core_TCI_KF(
     PSFpath::String,
@@ -641,11 +657,12 @@ function Γ_core_TCI_KF(
     emin::Float64=1.e-12,
     emax::Float64=1.e4,
     estep::Int=200,
-    cache_center::Int=0, # later: cache central values
+    # cache_center::Int=0, # maybe later: cache central values
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
     batched=true,
+    do_check_interpolation=true,
     unfoldingscheme=:interleaved,
     tcikwargs...
     )
@@ -705,34 +722,6 @@ function Γ_core_TCI_KF(
         end
     end
 
-    # function eval_Γ_core(w::Vararg{Int,3})
-    #     addvals = Vector{ComplexF64}(undef, Ncorrs)
-    #     Threads.@threads for i in 1:Ncorrs
-    #         # first all Keldysh indices
-    #         # res = reshape(evaluate_all_iK(GFs[i], w...), ntuple(_->2, D+1))
-    #         res = reshape(GFevs[i](w...), ntuple(_->2, D+1))
-    #         val_legs = Vector{Vector{ComplexF64}}(undef, length(is_incoming))
-    #         for il in eachindex(is_incoming)
-    #             mat = if letter_combinations[i][il]==='F'
-    #                     -sev(il, w...)
-    #                 else
-    #                     X
-    #                 end
-    #             leg = if is_incoming[il]
-    #                     vec(mat[:, iK_tuple[il]])
-    #                 else
-    #                     vec(mat[iK_tuple[il], :])
-    #                 end
-    #             val_legs[il] = leg
-    #         end
-    #         for d in 1:D+1
-    #             res = res[1,ntuple(_->Colon(),D+1-d)...].*val_legs[d][1] .+ res[2,ntuple(_->Colon(),D+1-d)...].*val_legs[d][2]
-    #         end
-    #         addvals[i] = res
-    #     end
-    #     return sum(addvals)
-    # end
-
     kwargs_dict = Dict(tcikwargs)
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
     gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
@@ -747,14 +736,39 @@ function Γ_core_TCI_KF(
             tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
         end
         qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
+
+        if do_check_interpolation
+            Nhalf = 2^(R-1)
+            gridmin = max(1, Nhalf-2^5)
+            gridmax = min(2^R, Nhalf+2^5)
+            grid1D = gridmin:2:gridmax
+            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
+            maxerr = check_interpolation(qtt.tci, gbev, qgrid)
+            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        end
+
         @info "quanticscrossinterpolate time (nocache, batched): $t"
         return qtt
     else
         t = @elapsed begin
             qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(i -> 2^R, D), initpivots_ω; unfoldingscheme=unfoldingscheme, tcikwargs...)
         end
+
+        if do_check_interpolation
+            Nhalf = 2^(R-1)
+            gridmin = max(1, Nhalf-2^5)
+            gridmax = min(2^R, Nhalf+2^5)
+            grid1D = gridmin:2:gridmax
+            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            maxerr = check_interpolation(qtt, gev, grid)
+            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        end
+
         @info "quanticscrossinterpolate time (nocache, not batched): $t"
-    return qtt
+        return qtt
     end
 
 end
@@ -919,7 +933,7 @@ function ΓcoreEvaluator_KF(
 end
 
 """
-Evaluate Γcore using sIE for self-energy on all legs
+Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
 """
 function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
     addvals = Vector{T}(undef, gev.Ncorrs)

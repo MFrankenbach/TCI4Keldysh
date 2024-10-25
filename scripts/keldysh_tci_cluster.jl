@@ -984,7 +984,6 @@ format: run_nr{PSFpath_id}{iK}{logtol}{R}
 """
 function parse_run_nr(run_nr::Int; nz::Int=4)
     dd = digits(run_nr)
-    @show dd
     psf_path_id = dd[end]
     @assert length(dd)==6 "Invalid run_nr"
     iK = div(run_nr - psf_path_id * 10^(length(dd)-1), 10^3)

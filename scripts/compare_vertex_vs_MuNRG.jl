@@ -640,7 +640,7 @@ end
 Compare MuNRG Matsubara vertices with TCI4Keldysh.
 CAREFUL: Need channel="pNRG" for p-channel to get a consistent frequency convention
 """
-function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true)
+function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1)
     basepath = "SIAM_u=0.50"
     # basepath = "siam05_U0.05_T0.005_Delta0.0318"
     PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
@@ -651,7 +651,6 @@ function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true)
     CF = nothing
     Γcore_ref = nothing
     ωs_ext = nothing
-    spin = 1
     matopen(joinpath(Vpath, core_file), "r") do f
         CF = read(f, "CF")
         CFdat = read(f, "CFdat")
@@ -768,8 +767,8 @@ MuNRG results have frequency grids of size 2n+1 symmetric around 0.0
 """
 function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
     base_path = "SIAM_u=0.50"
-    joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=2_conn_zavg/")
-    PSFpath = joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=2_conn_zavg/")
+    joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
     Vpath = joinpath(TCI4Keldysh.datadir(), base_path, "V_KF_" * TCI4Keldysh.channel_translate(channel))
 
     # Γcore data
@@ -785,7 +784,8 @@ function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
         ωs_ext = ntuple(i -> real.(vec(vec(CFdat["ogrid"])[i])), 3)
     end
     iK_tuple = TCI4Keldysh.KF_idx(iK, 3)
-    # Γcore_ref = permutedims(Γcore_ref, (3,2,1, 7,6,5,4))
+    Γcore_ref = permutedims(Γcore_ref, (3,1,2,4,5,6,7))
+    Γcore_ref = reverse(Γcore_ref; dims=(1,2,3))
     @show size.(ωs_ext)
     @show size(Γcore_ref)
 
@@ -855,48 +855,57 @@ function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
 
     block = ntuple(i->ωs_cen[i] - Nhalf : ωs_cen[i] + Nhalf, 3)
     mindevs = fill(Inf, 4)
-    for p in permutations(4:7)
-        for pω in permutations(1:3)
-            # printstyled("\n-- Permutation: $p (iK_p=$(iK_tuple_p))\n"; color=:blue)
-            Γcore_ref_act = permutedims(Γcore_ref, (pω..., p...))
-            diff = testval[:,:,:,iK_tuple...] .- Γcore_ref_act[block...,iK_tuple...]
-            diff_p = testval[:,:,:,iK_tuple...] .+ Γcore_ref_act[block...,iK_tuple...]
-            diff_c = testval[:,:,:,iK_tuple...] .- conj.(Γcore_ref_act[block...,iK_tuple...])
+    check_index_ordering = false
+    if check_index_ordering
+        #=
+        It seems that the frequency grids are reversed and the frequencies are permuted as (3,1,2) compared to the Julia code, i.e.
+        one has to compare
+            permutedims(Γcore_Matlab, (3,1,2,4,5,6,7))[:,:,:,iK...]
+            vs.
+            reverse(Γcore_Julia)
+        =#
+        for p in permutations(4:7)
+            # for pω in permutations(1:3)
+            for pω in [[1,2,3]]
+                # printstyled("\n-- Permutation: $p (iK_p=$(iK_tuple_p))\n"; color=:blue)
+                Γcore_ref_act = permutedims(Γcore_ref, (pω..., p...))
+                diff = testval[:,:,:,iK_tuple...] .- Γcore_ref_act[block...,iK_tuple...]
+                diff_p = testval[:,:,:,iK_tuple...] .+ Γcore_ref_act[block...,iK_tuple...]
+                # diff_c = testval[:,:,:,iK_tuple...] .- conj.(Γcore_ref_act[block...,iK_tuple...])
+                diff_r = reverse(testval[:,:,:,iK_tuple...]) .- (Γcore_ref_act[block...,iK_tuple...])
 
-            mindev_act_re = maximum(abs.(real.(diff)))
-            min_realdev = min(mindevs[1], mindev_act_re)
-            mindev_act_im = maximum(abs.(imag.(diff)))
-            min_imagdev = min(mindevs[2], mindev_act_im)
+                mindev_act_re = maximum(abs.(real.(diff)))
+                min_realdev = min(mindevs[1], mindev_act_re)
+                mindev_act_im = maximum(abs.(imag.(diff)))
+                min_imagdev = min(mindevs[2], mindev_act_im)
 
-            mindev_act_rep = maximum(abs.(real.(diff_p)))
-            min_realdev_p = min(mindevs[3], mindev_act_rep)
-            mindev_act_imp = maximum(abs.(imag.(diff_p)))
-            min_imagdev_p = min(mindevs[4], mindev_act_imp)
+                mindev_act_rep = maximum(abs.(real.(diff_p)))
+                min_realdev_p = min(mindevs[3], mindev_act_rep)
+                mindev_act_imp = maximum(abs.(imag.(diff_p)))
+                min_imagdev_p = min(mindevs[4], mindev_act_imp)
 
-            mindev_act_re_c = maximum(abs.(real.(diff_c)))
-            min_realdev_c = min(mindevs[3], mindev_act_re_c)
-            mindev_act_im_c = maximum(abs.(imag.(diff_c)))
-            min_imagdev_c = min(mindevs[4], mindev_act_im_c)
+                mindev_act_re_c = maximum(abs.(real.(diff_r)))
+                min_realdev_c = min(mindevs[3], mindev_act_re_c)
+                mindev_act_im_c = maximum(abs.(imag.(diff_r)))
+                min_imagdev_c = min(mindevs[4], mindev_act_im_c)
 
-            mindevs_act = [mindev_act_re, mindev_act_im, mindev_act_rep, mindev_act_imp, mindev_act_re_c, mindev_act_im_c]
-            mindevs = [min_realdev, min_imagdev, min_realdev_p, min_imagdev_p, min_realdev_c, min_imagdev_c]
-            if all(mindevs_act[1:2] .< 1.e-3) || all(mindevs_act[3:4] .< 1.e-3) || all(mindevs_act[5:6] .< 1.e-3)
-                printstyled("-- For permutations pω=$(pω), p=$(p): mindevs_act=$(mindevs_act)\n"; color=:blue)
+                mindevs_act = [mindev_act_re, mindev_act_im, mindev_act_rep, mindev_act_imp, mindev_act_re_c, mindev_act_im_c]
+                mindevs = [min_realdev, min_imagdev, min_realdev_p, min_imagdev_p, min_realdev_c, min_imagdev_c]
+                if all(mindevs_act[1:2] .< 1.e-3) || all(mindevs_act[3:4] .< 1.e-3) || all(mindevs_act[5:6] .< 1.e-3)
+                    printstyled("-- For permutations pω=$(pω), p=$(p): mindevs_act=$(mindevs_act)\n"; color=:blue)
+                end
+                Γcore_ref_act=nothing
             end
-            Γcore_ref_act=nothing
         end
     end
 
-    diff = testval .- Γcore_ref[window1D(1),window1D(2),window1D(3),iK_tuple...]
+    diff = testval[:,:,:,iK_tuple...] .- Γcore_ref[block..., iK_tuple...]
     @show maximum(abs.(diff) ./ maximum(abs.(Γcore_ref[:,:,:,iK_tuple...])))
     diff_slice = testval[slice...] .- Γcore_ref[slice_ref...]
-    diff_slice_p = testval[slice...] .+ Γcore_ref[slice_ref...]
     maxref_slice = maximum(abs.(Γcore_ref))
-    heatmap(log10.(abs.(diff_slice) ./ maxref_slice))
     @show maxref_slice
+    heatmap(log10.(abs.(diff_slice) ./ maxref_slice))
     savefig("diff.pdf")
-    heatmap(log10.(abs.(diff_slice_p) ./ maxref_slice))
-    savefig("diff_p.pdf")
 end
 
 function load_Γcore_KF(base_path::String = "SIAM_u=0.50"; channel="t")

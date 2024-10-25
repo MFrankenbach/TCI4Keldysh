@@ -555,21 +555,25 @@ function my_hilbert_trafo(
 end
 
 """
-Load 0-point correlator, i.e., a single value.
+Load 0-point PSF, i.e., a single value.
 """
-function load_Adisc_0pt(path::String, Op::String, flavor_idx::Int) :: Float64
+function load_Adisc_0pt(path::String, Op::String) :: Float64
     f = matopen(joinpath(path, parse_Ops_to_filename([Op])), "r")
     try 
         keys(f)
     catch
         keys(f)
     end
-    Adisc = read(f, "Adisc")[flavor_idx]
+    Adisc = only(read(f, "Adisc"))
     close(f)
     return only(Adisc)
 end
 
 
+"""
+Read PSF.
+Some 2-point PSFs only have one flavor.
+"""
 function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
     fname = "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"
     f = matopen(joinpath(path, fname), "r")
@@ -578,7 +582,14 @@ function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
     catch
         keys(f)
     end
-    Adisc = read(f, "Adisc")[flavor_idx]
+    Adisc_full = read(f, "Adisc")
+    Adisc = if length(Ops)==2 && length(Adisc_full)==1
+            only(Adisc_full) 
+        elseif length(Adisc_full)>1
+            Adisc_full[flavor_idx]
+        else
+            error("Flavor component may be missing in $(length(Ops))-point function")
+        end
     Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
 
     close(f)
