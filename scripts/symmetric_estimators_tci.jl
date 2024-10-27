@@ -199,7 +199,7 @@ end
 """
 Check interpolation error of TCI-ed Γcore
 """
-function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata_cluster")
+function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata_KCS")
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
     T = 1.0/beta
     @assert occursin("R=$R", qttfile) && occursin("$beta", qttfile) "Does the file $qttfile match parameters R=$R, beta=$beta?"
@@ -221,39 +221,22 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     end
 
     # ==== create ΓcoreEvaluator_MF
-
-    # make frequency grid
-    D = size(ωconvMat, 2)
-    Nhalf = 2^(R-1)
-    ωs_ext = TCI4Keldysh.MF_npoint_grid(T, Nhalf, D)
-
-    # all 16 4-point correlators
-    letter_combinations = TCI4Keldysh.letter_combonations_Γcore()
-    is_incoming = (false, true, false, true)
-
-    Ncorrs = length(letter_combinations)
-    GFs = Vector{TCI4Keldysh.FullCorrelator_MF{3}}(undef, Ncorrs)
-
-    TCI4Keldysh.read_GFs_Γcore!(
-        GFs, PSFpath, letter_combinations;
-        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
-        )
-
-    # create self-energy evaluator
-    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
-    sev = TCI4Keldysh.SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
-
-    # Numerically exact evaluator
-    # gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=1.e-20)
-    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(deepcopy(GFs), sev; cutoff=cutoff)
-
+    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(
+        PSFpath,
+        R;
+        ωconvMat=ωconvMat,
+        flavor_idx=flavor_idx,
+        T=T,
+        cutoff = cutoff
+    )
+    gbev_ref = TCI4Keldysh.ΓcoreBatchEvaluator_MF(gev_ref; use_ΣaIE=true)
     # ==== SETUP DONE
 
     # where to evaluate the stuff
-    N_eval = 2^4
-    eval_step = max(div(2^R, N_eval), 1)
-    gridslice = 1:eval_step:2^R
-    # gridslice = 2^(R-1)-div(N_eval,2) : 2^(R-1)+div(N_eval,2)-1
+    N_eval = 2^5
+    # eval_step = max(div(2^R, N_eval), 1)
+    # gridslice = 1:eval_step:2^R
+    gridslice = 2^(R-1)-div(N_eval,2) : 2^(R-1)+div(N_eval,2)-1
     eval_size = ntuple(_->length(gridslice), 3)
     refval = zeros(ComplexF64, eval_size)
     tcival = zeros(ComplexF64, eval_size)
@@ -261,8 +244,9 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
 
     Threads.@threads for id in ids
         w = ntuple(i -> gridslice[id[i]], 3)
-        refval[id...] = gev_ref(w...)
-        tcival[id...] = tci(QG.origcoord_to_quantics(grid, tuple(w...)))
+        wq = QG.origcoord_to_quantics(grid, tuple(w...))
+        refval[id...] = gbev_ref(wq)
+        tcival[id...] = tci(wq)
     end
 
     println("==== ERROR REPORT")
@@ -291,13 +275,13 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     cdepth = 1
     heatmap(scfun.(tcival[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
     title!("Γ (TCI) / max|Γ|")
-    savefig("gam_tci_check_interpolation.png")
+    savefig("gam_tci_check_interpolation.pdf")
     heatmap(scfun.(refval[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
     title!("Γ (reference) / max|Γ|")
-    savefig("gam_ref_check_interpolation.png")
-    heatmap(scfun.(diff[slice...]) ./ maxref)
+    savefig("gam_ref_check_interpolation.pdf")
+    heatmap(scfun.(diff[slice...] ./ maxref))
     title!("Error (TCI-ref)/absmax(ref)")
-    savefig("gam_diff_check_interpolation.png")
+    savefig("gam_diff_check_interpolation.pdf")
 end
 
 function time_Γcore()
@@ -728,13 +712,16 @@ function check_serialized_files()
     @show successcount
 end
 
-PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+# PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
 
 R = 12
 # qttfile = "gammacore_timing_R_min=12_max=12_tol=-4_beta=200.0_R=$(R)_qtt.serialized"
-qttfile = "gammacore_timing_R_min=12_max=12_tol=-3_beta=200.0_R=$(R)_qtt.serialized"
-# check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
+beta = 2000
+tol = 2
+dirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE"
+qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
+check_interpolation(joinpath(dirname, qttfile), R, PSFpath; folder="pwtcidata_KCS")
 
 
 # plot_vertex_ranks([-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")

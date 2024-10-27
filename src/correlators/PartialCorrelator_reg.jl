@@ -88,7 +88,7 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
         ωs_int, ωconvOff, isFermi = _trafo_ω_args(ωs_ext, ωconvMat)
         #println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
         δωcont = get_ω_binwidths(Acont.ωs_legs[1])
-        tucker = TuckerDecomposition(Acont.center .+ 0im, Acont.legs; ωs_center=Acont.ωs_center, ωs_legs=Acont.ωs_legs)#deepcopy(Acont)
+        tucker = TuckerDecomposition(Acont.center .+ 0im, Acont.legs; ωs_center=Acont.ωs_center, ωs_legs=ωs_int)#deepcopy(Acont)
         if formalism == "MF"
             # 1.: rediscretization of broadening kernel
             # 2.: contraction with regular kernel

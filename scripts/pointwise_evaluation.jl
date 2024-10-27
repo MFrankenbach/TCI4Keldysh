@@ -5,6 +5,7 @@ using Profile
 using QuanticsTCI
 using StatProfilerHTML
 using Serialization
+using LaTeXStrings
 import TensorCrossInterpolation as TCI
 
 """
@@ -329,6 +330,24 @@ end
 """
 Check rank of Matsubara kernel
 """
+function plot_svd_rank_kernel(R::Int)
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg")
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, PSFpath=PSFpath)
+    # fermionic kernel
+    k = GF[1].Gps[1].tucker.legs[2]
+    _, S, _ = svd(k)
+    σmax = maximum(S)
+    p = TCI4Keldysh.default_plot()
+    plot!(p, S, 1:length(S); xscale=:log10, xflip=true, label="")
+    xlabel!(L"\sigma_{\mathrm{cut}}")
+    ylabel!(L"\mathrm{rank}(k)")
+    savefig("svd_kernelrank.pdf")
+end
+
+"""
+Check rank of Matsubara kernel
+"""
 function svd_rank_kernel(R::Int, beta::Float64, cutoff::Float64=1.e-15)
     GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
     kernels = GF[1].Gps[1].tucker.legs
@@ -431,7 +450,7 @@ end
 """
 Check interpolation error of TCI-ed Full Correlator
 """
-function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata_cluster")
+function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata_KCS")
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
     T = 1.0/beta
     @assert occursin("R=$R", qttfile) && occursin("$beta", qttfile) "Does the file $qttfile match parameters R=$R, beta=$beta?"
@@ -504,13 +523,13 @@ function check_interpolation(qttfile::String, R::Int, PSFpath; folder="pwtcidata
     cdepth = 0
     heatmap(scfun.(tcival[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
     title!("G (TCI) / max|G|")
-    savefig("tci_check_interpolation.png")
+    savefig("tci_check_interpolation.pdf")
     heatmap(scfun.(refval[slice...] ./ maxref); clim=(log10(tol) - cdepth, cdepth))
     title!("G (reference) / max|G|")
-    savefig("ref_check_interpolation.png")
+    savefig("ref_check_interpolation.pdf")
     heatmap(scfun.(diff[slice...]) ./ maxref; clim=(log10(tol) - 2, 0))
     title!("Error (TCI-ref)/absmax(ref)")
-    savefig("diff_check_interpolation.png")
+    savefig("diff_check_interpolation.pdf")
 end
 
 
@@ -595,10 +614,10 @@ end
 
 
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
 
 # R = 12
 # qttfile = "timing_R_min=5_max=12_tol=-5_beta=200.0_R=$(R)_qtt.serialized"
 # check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
 
-plot_FullCorrelator_ranks([-2,-4,-6,-8], PSFpath; folder="pwtcidata")
+# plot_FullCorrelator_ranks([-2,-4,-6,-8], PSFpath; folder="pwtcidata")

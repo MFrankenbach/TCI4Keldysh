@@ -49,7 +49,7 @@ macro VERBOSE(msgs)
 end
 
 # macro to unlock debugging of RAM issue
-DEBUG_RAM() = true
+DEBUG_RAM() = false
 
 
 

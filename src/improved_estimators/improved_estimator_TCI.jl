@@ -320,21 +320,35 @@ function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullC
         for Gp in GF.Gps
 
             w_cen = collect(ntuple(i -> div(length(Gp.tucker.ωs_legs[i]), 2), D))
-            bos_idx = get_bosonic_idx(Gp)
-            if !isnothing(bos_idx)
-                zero_idx = findfirst(x -> abs(x)<=1.e-2*Gp.T, Gp.tucker.ωs_legs[bos_idx])
-                w_cen[bos_idx] = zero_idx
+            if isa(GFs[1], FullCorrelator_MF{D})
+                bos_idx = get_bosonic_idx(Gp)
+                if !isnothing(bos_idx)
+                    zero_idx = findfirst(x -> abs(x)<=1.e-2*Gp.T, Gp.tucker.ωs_legs[bos_idx])
+                    w_cen[bos_idx] = zero_idx
+                end
             end
 
             w_ext = Gp.ωconvMat \ (w_cen .- Gp.ωconvOff)
+            w_ext_max = length.(GF.ωs_ext)
             for l in 1:D
-                w_int_act = copy(w_cen)
-                # stay somewhat close to the centre
-                w_int_act[l] += min(div(w_cen[l], 2), 10)
-                w_ext_act = Gp.ωconvMat \ (w_int_act .- Gp.ωconvOff)
-                line = w_ext_act .- w_ext
+
+                w_int_actp = copy(w_cen)
+                w_int_actm = copy(w_cen)
+                # stay somewhat close to the centre, go in two opposite directions
+                w_int_actp[l] += min(div(w_cen[l], 2), 10)
+                w_int_actm[l] -= min(div(w_cen[l], 2), 10)
+                w_ext_actp = Gp.ωconvMat \ (w_int_actp .- Gp.ωconvOff)
+                w_ext_actm = Gp.ωconvMat \ (w_int_actm .- Gp.ωconvOff)
+                line = w_ext_actp .- w_ext
+
+                # eliminate invalid entries; only occurs for small ω_ext anyways
+                w_ext_actp = [max(1, w) for w in w_ext_actp]
+                w_ext_actm = [max(1, w) for w in w_ext_actm]
+                w_ext_actp = [min(w_ext_max[l], w_ext_actp[l]) for l in 1:D]
+                w_ext_actm = [min(w_ext_max[l], w_ext_actm[l]) for l in 1:D]
+
+                # decide whether to add pivot
                 pushline = true
-                # check whether we found a new direction
                 for line2 in lines[l]
                     if abs(dot(line2, line)) / (norm(line)*norm(line2)) >= 0.9
                         pushline = false
@@ -343,7 +357,8 @@ function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullC
                 end
                 if pushline
                     push!(lines[l], line)
-                    push!(pivots, round.(Int, w_ext_act))
+                    push!(pivots, round.(Int, w_ext_actp))
+                    push!(pivots, round.(Int, w_ext_actm))
                 end
             end
         end
@@ -433,7 +448,7 @@ function Γ_core_TCI_MF(
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
-    use_ΣaIE::Bool=true,
+    use_ΣaIE::Bool=false,
     qtcikwargs...
 )
     if use_ΣaIE
@@ -1111,8 +1126,8 @@ function (gbev::ΓcoreBatchEvaluator{T})(
     # chunklen = max(div(length(leftindexsset), Threads.nthreads()), 1)
     chunklen = ceil(Int, length(leftindexsset) / Threads.nthreads())
     chunks = Iterators.partition(eachindex(leftindexsset),  chunklen)
-    printstyled("== CHUNKS: $(length.(chunks)) ($(Threads.nthreads()) threads)\n"; color=:blue)
-    printstyled("  MEM[GB]: gbev $(Base.summarysize(gbev) / 1024^3), of which qf $(Base.summarysize(gbev.qf) / 1024^3); out $(Base.summarysize(out) / 1024^3)\n"; color=:blue)
+    # printstyled("== CHUNKS: $(length.(chunks)) ($(Threads.nthreads()) threads)\n"; color=:blue)
+    # printstyled("  MEM[GB]: gbev $(Base.summarysize(gbev) / 1024^3), of which qf $(Base.summarysize(gbev.qf) / 1024^3); out $(Base.summarysize(out) / 1024^3)\n"; color=:blue)
     cache_dicts = Dict([tid => typeof(gbev.qf.cache)() for tid in Threads.threadpooltids(:default)])
 
     @assert length(chunks) <= Threads.nthreads()
