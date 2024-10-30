@@ -306,7 +306,10 @@ function time_Γcore_KF(iK::Int, R=4, tolerance=1.e-6)
         ; 
         sigmak=sigmak,
         γ=γ,
-        T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+        T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved,
+        estep=20,
+        emin=1.e-6,
+        emax=1.e2
         )
 end
 
@@ -954,5 +957,6 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
     return nothing
 end
 
-# time_FullCorrelator_sweep(2, 1.0/2000.0, 0.4; Rs=6:6, tolerance=1.e-2, serialize_tts=true)
-time_Γcore_KF_sweep(3:4, 2, 1000.0, 0.5; tolerance=1.e-3, serialize_tts=true)
+# time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:4, tolerance=1.e-3, serialize_tts=true)
+# time_Γcore_KF_sweep(10:10, 2, 2000.0, 0.4; tolerance=1.e-2, serialize_tts=false)
+time_Γcore_KF(2,10,1.e-2)

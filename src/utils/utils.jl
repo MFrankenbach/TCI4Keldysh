@@ -1077,8 +1077,7 @@ end
 Where to find PSF data
 """
 function datadir()
-    # return joinpath(dirname(Base.current_project()), "data")
-    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
+    return joinpath(dirname(Base.current_project()), "data")
 end
 
 """

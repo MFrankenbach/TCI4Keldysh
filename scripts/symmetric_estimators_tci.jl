@@ -117,7 +117,7 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
 
     # Numerically exact evaluator
     tol = qtt_data["tolerance"]
-    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=tol*1.e-3)
+    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=tol*1.e-5)
     printstyled("== Memory used by ΓcoreEvaluator_MF: $(Base.summarysize(gev_ref))\n"; color=:blue)
     # ==== SETUP DONE
 
@@ -165,10 +165,10 @@ end
 function triptych_vertex_plot(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata")
     (refval, tcival, diff, maxref) = triptych_vertex_data(qttfile, Rplot, PSFpath; folder=folder)
 
-    triptych_vertex_plot(refval, tcival, diff, maxref, qttfile)
+    triptych_vertex_plot(refval, tcival, diff, maxref, qttfile; folder=folder)
 end
 
-function triptych_vertex_plot(refval, tcival, diff, maxref, qttfile::String)
+function triptych_vertex_plot(refval, tcival, diff, maxref, qttfile::String; folder="pwtcidata")
     if ndims(refval)==3
         sdims = findall(i -> size(refval, i)==1, 1:3)
         refval = dropdims(refval; dims=tuple(sdims...))
@@ -182,18 +182,18 @@ function triptych_vertex_plot(refval, tcival, diff, maxref, qttfile::String)
         diff = dropdims(diff; dims=tuple(sdims...))
     end
 
-    qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), "pwtcidata")
+    qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
     tolerance = qtt_data["tolerance"]
     p = TCI4Keldysh.default_plot()
     heatmap!(p, abs.(refval))
-    savefig("V_MFref_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+    savefig("V_MFref_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
 
     heatmap!(p, abs.(tcival))
-    savefig("V_MFtci_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+    savefig("V_MFtci_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
 
     scfun(x) = log10(abs(x)) 
     heatmap!(p, scfun.(diff ./ maxref))
-    savefig("V_MFdiff_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+    savefig("V_MFdiff_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
 end
 
 """
