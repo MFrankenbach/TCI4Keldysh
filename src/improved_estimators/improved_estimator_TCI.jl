@@ -306,15 +306,18 @@ function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullC
 
     pivots = Vector{Int}[]
 
-    # # central 3^D block
-    # ωs_ext = first(GFs).ωs_ext
-    # centre_ids = ntuple(i -> ifelse(isodd(length(ωs_ext[i])), div(length(ωs_ext[i]),2)+1, div(length(ωs_ext[i]),2)), D)
-    # centre_block = ntuple(i -> centre_ids[i]-1:centre_ids[i]+1, D)
-    # for c in Iterators.product(centre_block...)
-    #     push!(pivots,  collect(c))
-    # end
+    # central shell
+    ωs_ext = first(GFs).ωs_ext
+    centre_ids = ntuple(i -> ifelse(isodd(length(ωs_ext[i])), div(length(ωs_ext[i]),2)+1, div(length(ωs_ext[i]),2)), D)
+    centre_block = ntuple(i -> centre_ids[i]-2:centre_ids[i]+2, D)
+    for c in Iterators.product(centre_block...)
+        if any([c[ic] in [first(centre_block[ic]), last(centre_block[ic])] for ic in 1:D])
+            push!(pivots,  collect(c))
+        end
+    end
 
     # find all lines that are rotated onto some coordinate axis in and internal frequency grid of a partial correlator
+    #=
     lines = [Vector{Float64}[] for _ in 1:D]
     for GF in GFs
         for Gp in GF.Gps
@@ -363,6 +366,7 @@ function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullC
             end
         end
     end
+    =#
 
     printstyled("==== Using $(length(pivots)) initial pivots:\n"; color=:blue)
     # display([p .- [div(length(GFs[1].ωs_ext[i]), 2) for i in 1:D] for p in pivots])
@@ -655,12 +659,57 @@ end
 # ========== KELDYSH
 
 """
+Struct needed to serialize the self-energy evaluating function in Γcore_TCI_KF
+TODO: Do this more cleanly / consistently?
+"""
+struct SigmaEvaluator_KF <: Function
+    Σ_R::Array{ComplexF64,3}
+    Σ_L::Array{ComplexF64,3}
+    ΣωconvMat::Matrix{Int}
+    ωconvOff::Vector{Int}
+end
+
+function (sev::SigmaEvaluator_KF)(row::Int, is_inc::Bool, w::Vararg{Int,3})
+    w_int = dot(sev.ΣωconvMat[row,:], SA[w...]) + sev.ωconvOff[row]
+    if is_inc
+        return sev.Σ_R[w_int,:,:]
+    else
+        return sev.Σ_L[w_int,:,:]
+    end
+end
+
+"""
+Name to serialize cache of ΓcoreBatchEvaluator_KF
+"""
+function gbevcache_filename()
+    return "gammacorecacheKF.jld2"
+end
+
+
+"""
+Name to serialize ΓcoreBatchEvaluator_KF
+"""
+function gev_filename()
+    return "gammacoreEvKF.jld2"
+end
+
+"""
+Name to serialize tci in Γcore Keldysh calculation
+"""
+function tcigammacore_filename()
+    return "tcigammacoreKF.jld2"
+end
+
+
+"""
 Compute Keldysh core vertex for single Keldysh component
 
 * iK: Keldysh component
 * sigmak, γ: broadening parameters
 * batched: Use batched evaluator
 * do_check_interpolation: Check interpolation on small grid at the end, report error
+* dump_path: set to save intermediate results every couple of sweeps
+* resume_path: set to resume calculation based on intermediate results
 """
 function Γ_core_TCI_KF(
     PSFpath::String,
@@ -676,6 +725,8 @@ function Γ_core_TCI_KF(
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
+    dump_path=nothing,
+    resume_path=nothing,
     batched=true,
     do_check_interpolation=true,
     unfoldingscheme=:interleaved,
@@ -728,16 +779,10 @@ function Γ_core_TCI_KF(
     desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
     ωconvOff = desired_idx .- idx_image
 
-    function sev(row::Int, is_inc::Bool, w::Vararg{Int,3})
-        w_int = dot(ΣωconvMat[row,:], SA[w...]) + ωconvOff[row]
-        if is_inc
-            return Σ_R[w_int,:,:]
-        else
-            return Σ_L[w_int,:,:]
-        end
-    end
+    sev = SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
 
     kwargs_dict = Dict(tcikwargs)
+    tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
     gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
 
@@ -745,12 +790,60 @@ function Γ_core_TCI_KF(
     GC.gc(true)
 
     if batched
-        gbev = ΓcoreBatchEvaluator_KF(gev)
-        initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
-        t = @elapsed begin
-            tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
+        if isnothing(resume_path)
+            gbev = ΓcoreBatchEvaluator_KF(gev)
+        else
+            # load cached values
+            cache = load(joinpath(resume_path, gbevcache_filename()))[jld2_to_dictkey(gbevcache_filename())]
+            # load BatchEvaluator
+            gev = load(joinpath(resume_path, gev_filename()))[jld2_to_dictkey(gev_filename())]
+            gbev = ΓcoreBatchEvaluator_KF(gev; cache=cache)
         end
-        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
+
+        # it is enough to save ΓcoreEvaluator_KF
+        if !isnothing(dump_path)
+            file = File(format"JLD2", joinpath(dump_path, gev_filename()))
+            save(file, jld2_to_dictkey(gev_filename()), gev)
+        end
+
+        initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
+        # t = @elapsed begin
+        #     tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
+        # end
+
+        # create/load tensor train
+        if isnothing(resume_path)
+            tci = TCI.TensorCI2{ComplexF64}(gbev, gbev.qf.localdims, initpivots)
+        else
+            tci = load(joinpath(resume_path, tcigammacore_filename()))[jld2_to_dictkey(tcigammacore_filename())]
+            println("Loaded TCI with rank $(TCI.rank(tci))")
+        end
+
+        maxiter = haskey(kwargs_dict, :maxiter) ? kwargs_dict[:maxiter] : 20
+        # save result every ncheckpoint sweeps if dump_path is given
+        ncheckpoint = isnothing(dump_path) ? maxiter : 3  
+        converged = false
+        t = @elapsed begin
+            for icheckpoint in 1:Int(ceil(maxiter/ncheckpoint))
+                ranks, errors = TCI.optimize!(tci, gbev; maxiter=ncheckpoint, tcikwargs...)
+                println("  After <=$(icheckpoint*ncheckpoint) sweeps: ranks=$ranks, errors=$errors")
+                if _tciconverged(ranks, errors, tolerance, 3)
+                    converged = true
+                    println(" ==== CONVERGED")
+                    break
+                elseif !isnothing(dump_path)
+                    # save checkpoint
+                    filetci = File(format"JLD2", joinpath(dump_path, tcigammacore_filename()))
+                    save(filetci, jld2_to_dictkey(tcigammacore_filename()), tci)
+                    filecache = File(format"JLD2", joinpath(dump_path, gbevcache_filename()))
+                    save(filecache, jld2_to_dictkey(gbevcache_filename()), gbev.qf.cache)
+                end
+            end
+        end
+        if !converged
+            @warn "TCI did not converge within $maxiter sweeps!"
+        end
+        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tci, gbev.grid, gbev.qf)
 
         if do_check_interpolation
             Nhalf = 2^(R-1)
@@ -767,6 +860,9 @@ function Γ_core_TCI_KF(
         @info "quanticscrossinterpolate time (nocache, batched): $t"
         return qtt
     else
+        if !isnothing(dump_path) || !isnothing(resume_path)
+            error("Checkpoints only implemented for batched Γcore in Keldysh")
+        end
         t = @elapsed begin
             qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(i -> 2^R, D), initpivots_ω; unfoldingscheme=unfoldingscheme, tcikwargs...)
         end
@@ -902,7 +998,7 @@ end
 
 """
 Structure to evaluate Keldysh core vertex, i.e., wrap the required setup and capture relevant data.
-* sev: function with signature sev(i::Int, is_incoming::Bool, w::Vararg{Int,D}) to evaluate self-energy
+* sev: callable object with signature sev(i::Int, is_incoming::Bool, w::Vararg{Int,D}) to evaluate self-energy
 on i'th component of transformed frequency w
 """
 struct ΓcoreEvaluator_KF{T}
@@ -1057,7 +1153,7 @@ struct ΓcoreBatchEvaluator_KF{T} <: ΓcoreBatchEvaluator{T}
         return new{T}(grid, qf, localdims, gev)
     end
 
-    function ΓcoreBatchEvaluator_KF(gev::ΓcoreEvaluator_KF{T}) where {T}
+    function ΓcoreBatchEvaluator_KF(gev::ΓcoreEvaluator_KF{T}; cache::Dict{K,T}=Dict{UInt128,T}()) where {T,K<:Union{UInt32,UInt64,UInt128,BigInt}}
         # set up grid
         D = 3
         R = grid_R(gev.GFevs[1].KFC)
@@ -1069,7 +1165,7 @@ struct ΓcoreBatchEvaluator_KF{T} <: ΓcoreBatchEvaluator{T}
 
         # cached function
         qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
-        qf = TCI.CachedFunction{T}(qf_, localdims)
+        qf = TCI.CachedFunction{T,K}(qf_, localdims, cache)
 
         return new{T}(grid, qf, localdims, gev)
     end

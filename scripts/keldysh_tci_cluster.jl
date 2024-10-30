@@ -438,7 +438,9 @@ Can vary:
 function time_FullCorrelator_sweep(
         iK::Int, γ::Float64, sigmak::Float64, mode::String="R";
         PSFpath=joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/"),
-        folder = "pwtcidata",
+        folder="pwtcidata",
+        dump_path=nothing,
+        resume_path=nothing,
         channel = "t",
         tolerance=1.e-8,
         Rs=nothing,
@@ -491,7 +493,7 @@ function time_FullCorrelator_sweep(
             # create correlator END
 
             t = @elapsed begin
-                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(KFC, iK; tolerance=tolerance, unfoldingscheme=:interleaved)
+                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(KFC, iK; tolerance=tolerance, dump_path=dump_path, resume_path=resume_path, verbosity=2, unfoldingscheme=:interleaved)
             end
             push!(times, t)
             push!(qttranks, TCI4Keldysh.rank(qtt))
@@ -542,6 +544,8 @@ function time_Γcore_KF_sweep(
     folder="pwtcidata",
     tolerance=1.e-8,
     serialize_tts=false,
+    dump_path=nothing,
+    resume_path=nothing,
     broadening_kwargs...
     )
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
@@ -587,7 +591,14 @@ function time_Γcore_KF_sweep(
                     ; 
                     sigmak=[sigmak],
                     γ=γ,
-                    T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved,
+                    T=T,
+                    ωconvMat=ωconvMat,
+                    flavor_idx=flavor_idx,
+                    dump_path=dump_path,
+                    resume_path=resume_path,
+                    tolerance=tolerance,
+                    verbosity,
+                    unfoldingscheme=:interleaved,
                     broadening_kwargs...
                     )
             end 
@@ -1012,6 +1023,8 @@ function Γcore_jobs(args)
             else
                 "pwtcidata"
             end
+    dump_path = (args[3] in localargs) ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    resume_path = (args[3] == "resume") ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
 
     nz = 4
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/")
@@ -1022,7 +1035,15 @@ function Γcore_jobs(args)
         channel = "t"
         (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
         broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
-        time_Γcore_KF_sweep(R:R, PSFpath, iK, γ, only(sigmak); folder=folder, tolerance=tolerance, serialize_tts=true, broadening_kwargs...)
+        time_Γcore_KF_sweep(
+            R:R, PSFpath, iK, γ, only(sigmak);
+            folder=folder,
+            dump_path=dump_path,
+            resume_path=resume_path,
+            tolerance=tolerance,
+            serialize_tts=true,
+            broadening_kwargs...
+        )
     else
         error("Invalid run_nr $(run_nr)")
     end
@@ -1034,11 +1055,16 @@ function FullCorrelator_jobs(args)
     println(" ==== RUN")
     run_nr = parse(Int, args[2])
 
-    folder = if length(args)>2 && args[3]=="local"
+    # for "checkpoint" store intermediate results every couple of tci sweeps in ENV["PWTCIDIR"]
+    localargs = ["local", "checkpoint", "resume"]
+
+    folder = if length(args)>2 && (args[3] in localargs)
                 ENV["PWTCIDIR"]
             else
                 "pwtcidata"
             end
+    dump_path = (args[3] in localargs) ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    resume_path = (args[3] == "resume") ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
 
     if run_nr==0
         time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:3, tolerance=1.e-3, serialize_tts=true)
@@ -1047,7 +1073,7 @@ function FullCorrelator_jobs(args)
         channel = "t"
         (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
         broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
-        time_FullCorrelator_sweep(iK, γ, only(sigmak); PSFpath=PSFpath, folder=folder, Rs=R:R, channel=channel, tolerance=tolerance, serialize_tts=true, broadening_kwargs...)
+        time_FullCorrelator_sweep(iK, γ, only(sigmak); PSFpath=PSFpath, folder=folder, dump_path=dump_path, resume_path=resume_path, Rs=R:R, channel=channel, tolerance=tolerance, serialize_tts=true, broadening_kwargs...)
     else
         error("Invalid run_nr $(run_nr)")
     end

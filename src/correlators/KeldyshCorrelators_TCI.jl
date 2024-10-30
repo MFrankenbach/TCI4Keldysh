@@ -2,11 +2,34 @@
 Compute Keldysh correlators @ TCI by pointwise evaluation.
 =#
 
+function KFev_filename()
+    return "KFev.jld2"    
+end
+
+function tciKFcorr_filename()
+    return "tciKFcorr.jld2"    
+end
+
+function cacheKFcorr_filename()
+    return "cacheKFcorr.jld2"
+end
+
 """
 Compress Keldysh Correlator at given contour index.
 * iK::Int linear index ranging from 1:2^D
+* dump_path: if given, store intermediate results in this path; no other calculation should rely on this path
+* resume_path: if given, load previous results from this path and continue calculation; no other calculation should rely on this path
 """
-function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; do_check_interpolation=true, add_pivots=true, qtcikwargs...) where {D}
+function compress_FullCorrelator_pointwise(
+    GF::FullCorrelator_KF{D}, iK::Int;
+    dump_path=nothing,
+    resume_path=nothing,
+    do_check_interpolation=true,
+    add_pivots=true,
+    unfoldingscheme=:interleaved,
+    tcikwargs...
+    ) where {D}
+
     R_f = log2(length(GF.ωs_ext[1]))
     R = round(Int, R_f)
     @assert length(GF.ωs_ext[1])==2^R+1
@@ -17,9 +40,27 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; do
         return evaluate(GF, idx...; iK=iK)        
     end
 
-    kwargs_dict = Dict(qtcikwargs...)
+    kwargs_dict = Dict(tcikwargs...)
+    tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
     cutoff = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance]*1.e-3 : 1.e-15
-    KFev = FullCorrEvaluator_KF_single(GF, iK; cutoff=cutoff)
+    if isnothing(resume_path)
+        KFev = FullCorrEvaluator_KF_single(GF, iK; cutoff=cutoff)
+    else
+        # load
+        KFev = load(joinpath(resume_path, KFev_filename()))[jld2_to_dictkey(KFev_filename())]
+        # check
+        KFC_ = KFev.KFC
+        @assert iK==KFev.iK
+        @assert length(KFC_.ωs_ext)==length(GF.ωs_ext)
+        @assert all([maximum(abs.(KFC_.ωs_ext[wi] .- GF.ωs_ext[wi]))<1.e-12 for wi in 1:D])
+        @assert KFC_.ωconvMat==GF.ωconvMat
+    end
+
+    if !isnothing(dump_path) && resume_path!=dump_path
+        # dump Keldysh correlator evaluator
+        file = File(format"JLD2", joinpath(dump_path, KFev_filename()))
+        save(file, jld2_to_dictkey(KFev_filename()), KFev)
+    end
 
     pivots = if add_pivots
                 initpivots_Γcore([GF])
@@ -28,7 +69,63 @@ function compress_FullCorrelator_pointwise(GF::FullCorrelator_KF{D}, iK::Int; do
                 [ones(Int,D)]
             end
 
-    qtt, _, _ = quanticscrossinterpolate(ComplexF64, KFev, ntuple(_ -> 2^R, D), pivots; qtcikwargs...)
+    # checkpoint results every couple of iterations
+
+    # set up crossinterpolate in quantics representation
+    grid = QuanticsGrids.InherentDiscreteGrid{D}(R ;unfoldingscheme=unfoldingscheme)
+
+    qlocaldimensions = if grid.unfoldingscheme === :interleaved
+        fill(2, D * R)
+    else
+        fill(2^D, R)
+    end
+
+    qKFev_ = (D == 1
+           ? q -> KFev(only(QuanticsGrids.quantics_to_origcoord(grid, q)))
+           : q -> KFev(QuanticsGrids.quantics_to_origcoord(grid, q)...))
+    if !isnothing(resume_path)
+        # load saved cache and coefficients
+        cache = load(joinpath(resume_path,cacheKFcorr_filename()))[jld2_to_dictkey(cacheKFcorr_filename())]
+        println("Loaded cached function values")
+        qKFev = TCI.CachedFunction{ComplexF64,UInt128}(qKFev_, qlocaldimensions, cache)
+    else
+        qKFev = TCI.CachedFunction{ComplexF64}(qKFev_, qlocaldimensions)
+    end
+
+    qpivots = [QuanticsGrids.origcoord_to_quantics(grid, Tuple(p)) for p in pivots]
+
+    ncheckhistory = 3
+
+    maxiter = haskey(kwargs_dict, :maxiter) ? kwargs_dict[:maxiter] : 20
+    # if no dump path is given, just do a normal TCI with maxiter iterations
+    ncheckpoint = isnothing(dump_path) ? maxiter : 3 
+    if isnothing(resume_path)
+        tci = TCI.TensorCI2{ComplexF64}(qKFev, qlocaldimensions, qpivots)
+    else
+        tci = load(joinpath(resume_path, tciKFcorr_filename()))[jld2_to_dictkey(tciKFcorr_filename())]
+        println("Loaded TCI with rank $(TCI.rank(tci))")
+    end
+    # crossinterpolate2 with checkpoints every ncheckpoint sweeps
+    converged = false
+    for icheckpoint in 1:Int(ceil(maxiter/ncheckpoint))
+        ranks, errors = TCI.optimize!(tci, qKFev; maxiter=ncheckpoint, tcikwargs...)
+        println("  After <=$(icheckpoint*ncheckpoint) sweeps: ranks=$ranks, errors=$errors")
+        if _tciconverged(ranks, errors, tolerance, ncheckhistory)
+            converged = true
+            println(" ==== CONVERGED")
+            break
+        elseif !isnothing(dump_path)
+            # dump results
+            filetci = File(format"JLD2", joinpath(dump_path, tciKFcorr_filename()))
+            save(filetci, jld2_to_dictkey(tciKFcorr_filename()), tci)
+            filecache = File(format"JLD2", joinpath(dump_path, cacheKFcorr_filename()))
+            save(filecache, jld2_to_dictkey(cacheKFcorr_filename()), qKFev.cache)
+        end
+    end
+    if !converged
+        @warn "TCI did not converge within $maxiter sweeps!"
+    end
+    qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tci, grid, qKFev)
 
     if do_check_interpolation
         Nhalf = 2^(R-1)

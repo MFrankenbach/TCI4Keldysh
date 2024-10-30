@@ -7,6 +7,8 @@ using PrecompileTools
     using LinearAlgebra.BLAS
     using Match
     using Printf
+    using JLD2
+    using FileIO
     #using Tullio
     using Dates
     using Quantics
@@ -14,7 +16,7 @@ using PrecompileTools
     using QuanticsGrids
     import TensorCrossInterpolation as TCI
     using ITensors
-    import TCIAlgorithms as TCIA
+    #import TCIAlgorithms as TCIA
 
     using Lehmann
 

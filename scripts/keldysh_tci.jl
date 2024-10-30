@@ -12,6 +12,7 @@ using Printf
 import TensorCrossInterpolation as TCI
 import QuanticsGrids as QG
 
+using TCI4Keldysh
 using Test
 
 """
@@ -430,7 +431,7 @@ function time_FullCorrelator_sweep(
     qttranks = []
     bonddims = []
     svd_kernel = true
-    ωmax = 1.0
+    ωmax = 0.1
     ωmin = -ωmax
     flavor_idx = 1
     if mode=="R"
@@ -468,7 +469,9 @@ function time_FullCorrelator_sweep(
             # create correlator END
 
             t = @elapsed begin
-                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(KFC, iK; tolerance=tolerance, unfoldingscheme=:interleaved)
+                dump_path = TCI4Keldysh.datadir()
+                resume_path = TCI4Keldysh.datadir()
+                qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(KFC, iK; dump_path=dump_path, resume_path=nothing, verbosity=2, tolerance=tolerance, unfoldingscheme=:interleaved)
             end
             push!(times, t)
             push!(qttranks, TCI4Keldysh.rank(qtt))
@@ -550,12 +553,20 @@ function time_Γcore_KF_sweep(
 
         for R in Rs
             t = @elapsed begin
+                dump_path = TCI4Keldysh.datadir()
+                resume_path = nothing
                 qtt = TCI4Keldysh.Γ_core_TCI_KF(
                     PSFpath, R, iK, ωmax
                     ; 
                     sigmak=[sigmak],
                     γ=γ,
-                    T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved
+                    T=T,
+                    dump_path=dump_path,
+                    resume_path=resume_path,
+                    ωconvMat=ωconvMat,
+                    flavor_idx=flavor_idx,
+                    tolerance=tolerance,
+                    unfoldingscheme=:interleaved
                     )
             end 
             push!(times, t)
@@ -943,5 +954,5 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
     return nothing
 end
 
-# time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:4, tolerance=1.e-3, serialize_tts=true)
-# time_Γcore_KF_sweep(3:4, 2, 1000.0, 0.5; tolerance=1.e-3, serialize_tts=true)
+# time_FullCorrelator_sweep(2, 1.0/2000.0, 0.4; Rs=6:6, tolerance=1.e-2, serialize_tts=true)
+time_Γcore_KF_sweep(3:4, 2, 1000.0, 0.5; tolerance=1.e-3, serialize_tts=true)

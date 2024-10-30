@@ -1088,6 +1088,10 @@ function pdatadir()
     return dirname(datadir())
 end
 
+function jld2_to_dictkey(jldfile::AbstractString)
+    return reduce(*, split(jldfile, '.')[1:end-1])
+end
+
 """
 For given PSFpath, get corresponding temperature.
 """

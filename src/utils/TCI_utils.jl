@@ -2060,3 +2060,13 @@ function check_interpolation(tt::TCI.TensorCI2, f, grid::AbstractArray{Vector{In
     end
     return maximum(errors) / maxref
 end
+
+"""
+Convergence check for error and rank history of a TCI run.
+CAREFUL: This does not check whether global pivots have been found in the past ncheckhistory sweeps!
+"""
+function _tciconverged(ranks::AbstractVector{Int}, errors::AbstractVector{Float64}, tolerance::Float64, ncheckhistory::Int=3)
+    lastranks = last(ranks, ncheckhistory)
+    # TODO: This does not check whether global pivots have been found in the last sweep!
+    return all(last(errors, ncheckhistory) .< tolerance) && minimum(lastranks) == lastranks[end]
+end

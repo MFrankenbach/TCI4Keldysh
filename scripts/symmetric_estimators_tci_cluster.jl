@@ -128,6 +128,7 @@ function time_Γcore_sweep(
         d["job_id"] = ENV["SLURM_JOB_ID"]
         d["cache_center"] = cache_center
         d["use_Sigma_aIE"] = use_ΣaIE
+        d["tcikwargs"] = Dict(tcikwargs)
         outname = Γcore_filename(mode, first(Rs), last(Rs), tolerance, beta; folder=folder)
         TCI4Keldysh.logJSON(d, outname, folder)
 
@@ -264,6 +265,8 @@ function main(args)
         time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-3)
     elseif run_nr==6
         time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-5)
+    elseif run_nr==7
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-7)
     # beta=200.0 
     elseif run_nr==11
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
@@ -283,6 +286,9 @@ function main(args)
     elseif run_nr==16
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
         time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-5)
+    elseif run_nr==17
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-7)
     elseif run_nr>=10^4
         # for more global pivots
         nsearchglobalpivot = div(run_nr, 10^4)  

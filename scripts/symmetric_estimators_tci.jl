@@ -713,15 +713,15 @@ function check_serialized_files()
 end
 
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
-R = 12
+R = 11 
 # qttfile = "gammacore_timing_R_min=12_max=12_tol=-4_beta=200.0_R=$(R)_qtt.serialized"
 beta = 2000
 tol = 2
-dirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE"
+dirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_morepivot"
 qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
-check_interpolation(joinpath(dirname, qttfile), R, PSFpath; folder="pwtcidata_KCS")
+check_interpolation(joinpath(dirname, qttfile), R, PSFpath; folder="MF_KCS_morepivot")
 
 
 # plot_vertex_ranks([-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")
