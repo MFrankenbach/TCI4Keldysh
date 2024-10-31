@@ -68,8 +68,9 @@ end
 
 """
 Generate data for triptych Reference - QTCI - Error
+Generate data for triptych Reference - QTCI - Error
 """
-function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=false)
+function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=true)
     (tci, grid) = deserialize(joinpath(folder, qttfile)) 
     qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
     tolerance = qtt_data["tolerance"]
@@ -118,7 +119,7 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
 
     # Numerically exact evaluator
     tol = qtt_data["tolerance"]
-    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=tol*1.e-5)
+    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=tol*1.e-3)
     printstyled("== Memory used by ΓcoreEvaluator_MF: $(Base.summarysize(gev_ref))\n"; color=:blue)
     # ==== SETUP DONE
 
@@ -146,7 +147,7 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     diff = refval .- tcival
     # diff = dropdims(diff; dims=slice_id)
     if store
-        h5file = "vertex_MF_slice_beta=$(beta)_slicesz=$(length.(plot_slice))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
+        h5file = "vertex_MF_slice_beta=$(beta)_slices=$(length.(plot_slice))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
         h5write(joinpath(folder, h5file), "reference", refval)
         h5write(joinpath(folder, h5file), "qttdata", tcival)
         h5write(joinpath(folder, h5file), "diff", diff)
@@ -737,13 +738,14 @@ folder = "pwtcidata_KCS"
 PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
-R = 7
-beta = 200
-tol = 4
-dirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_morepivot"
+R = 5
+# qttfile = "gammacore_timing_R_min=12_max=12_tol=-4_beta=200.0_R=$(R)_qtt.serialized"
+beta = 2000
+tol = 2
+dirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_shellpivot"
 qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
-qttfile = joinpath(dirname, qttfile)
-# check_interpolation(qttfile, R, PSFpath; folder="MF_KCS_shellpivot")
+# check_interpolation(joinpath(dirname, qttfile), R, PSFpath; folder="MF_KCS_shellpivot")
+triptych_vertex_data(joinpath(dirname, qttfile), R, PSFpath; folder="MF_KCS_shellpivot", store=true)
 
 # plot_vertex_ranks([-2, -4], PSFpath; folder=folder, subfolder_str="shellpivot")
 # tol_vs_rank_vertex(10, [-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")

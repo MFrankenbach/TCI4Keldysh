@@ -320,7 +320,12 @@ Store ranks and timings for computation of full 4-point correlators.
 """
 function time_FullCorrelator_sweep(
         mode::String="R";
-        PSFpath="SIAM_u=0.50/PSF_nz=2_conn_zavg/", Rs=nothing, tolerance=1.e-8, folder="pwtcidata", serialize_tts=true,
+        PSFpath="SIAM_u=0.50/PSF_nz=2_conn_zavg/",
+        Rs=nothing,
+        flavor_idx=1,
+        tolerance=1.e-8,
+        folder="pwtcidata",
+        serialize_tts=true,
         add_pivots=true
     )
     npt = 4
@@ -352,7 +357,7 @@ function time_FullCorrelator_sweep(
 
         for R in Rs
             # GF = TCI4Keldysh.multipeak_correlator_MF(npt, R; beta=beta, nωdisc=nωdisc)
-            GF = TCI4Keldysh.dummy_correlator(npt, R; PSFpath=PSFpath, beta=beta)[1]
+            GF = TCI4Keldysh.dummy_correlator(npt, R; PSFpath=PSFpath, beta=beta)[flavor_idx]
             nωdisc = div(maximum(size(GF.Gps[1].tucker.center)), 2)
             TCI4Keldysh.updateJSON(outname, "nomdisc", nωdisc, folder)
             t = @elapsed begin
@@ -423,12 +428,22 @@ function main(args)
     flush(stdout)
 
     println(" ==== RUN")
+    # first argument: different settings
     run_nr = parse(Int, args[1])
+    # second argument: store everything locally
     folder = if length(args)>1 && args[2]=="local"
                 ENV["PWTCIDIR"]
             else
                 "pwtcidata"
             end
+    # third argument: flavor_idx
+    flavor_idx = if length(args)>2
+                parse(Int, args[3])
+            else
+                1
+            end
+    @assert (flavor_idx in [1,2]) "Invalid flavor index"
+
     PSFpath = if run_nr<10
         nz = 4
         "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/"
@@ -441,30 +456,30 @@ function main(args)
         println(ENV["PWTCIDIR"])
         # time_FullCorrelator_sweep("R"; PSFpath=PSFpath, Rs=5:5, tolerance=1.e-2)
     elseif run_nr==1
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-2)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-2)
     elseif run_nr==2
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-4)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-4)
     elseif run_nr==3
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-6)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-6)
     elseif run_nr==4
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-8)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-8)
     elseif run_nr==5
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-3)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-3)
     elseif run_nr==6
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-5)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-5)
     # beta=200.0 
     elseif run_nr==11
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-2)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-2)
     elseif run_nr==12
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-4)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-4)
     elseif run_nr==13
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-6)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-6)
     elseif run_nr==14
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-8)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-8)
     elseif run_nr==15
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-3)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-3)
     elseif run_nr==16
-        time_FullCorrelator_sweep("R"; PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-5)
+        time_FullCorrelator_sweep("R"; flavor_idx=flavor_idx, PSFpath=PSFpath, folder=folder, Rs=5:12, tolerance=1.e-5)
     else
         error("invalid run number $run_nr")
     end

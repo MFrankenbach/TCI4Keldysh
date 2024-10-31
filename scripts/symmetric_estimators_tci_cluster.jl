@@ -94,6 +94,7 @@ function time_Γcore_sweep(
     cache_center=0,
     folder="pwtcidata",
     serialize_tts=true,
+    flavor_idx=1,
     # batched_eval=false,
     batched_eval=true,
     use_ΣaIE=true,
@@ -136,12 +137,12 @@ function time_Γcore_sweep(
             t = @elapsed begin
                 qtt = if batched_eval
                     TCI4Keldysh.Γ_core_TCI_MF_batched(
-                    PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, use_ΣaIE=use_ΣaIE, tolerance=tolerance, verbosity=2,
+                    PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, use_ΣaIE=use_ΣaIE, tolerance=tolerance, verbosity=2,
                     cache_center=cache_center, tcikwargs...
                     )
                 else
                     TCI4Keldysh.Γ_core_TCI_MF(
-                    PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=1, tolerance=tolerance, unfoldingscheme=:interleaved, verbosity=2,
+                    PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved, verbosity=2,
                     cache_center=cache_center, tcikwargs...
                     )
                 end
@@ -244,60 +245,70 @@ function main(args)
     flush(stderr)
     report_mem(true)
     println(" ==== RUN")
+    # first argument: different settings
     run_nr = parse(Int, args[1])
+    # second argument: store everything locally
     folder = if length(args)>1 && args[2]=="local"
                 ENV["PWTCIDIR"]
             else
                 "pwtcidata"
             end
+    # third argument: flavor_idx
+    flavor_idx = if length(args)>2
+                parse(Int, args[3])
+            else
+                # default
+                1
+            end
+    @assert (flavor_idx in [1,2]) "Invalid flavor index"
     if run_nr==0
         println("TEST")
-        time_Γcore_sweep(10:10, PSFpath, "R"; folder=folder, tolerance=1.e-2)
+        time_Γcore_sweep(10:10, PSFpath, "R"; folder=folder, tolerance=1.e-2, flavor_idx=flavor_idx)
     elseif run_nr==1
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-2)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-2, flavor_idx=flavor_idx)
     elseif run_nr==2
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-4)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-4, flavor_idx=flavor_idx)
     elseif run_nr==3
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-6)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-6, flavor_idx=flavor_idx)
     elseif run_nr==4
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-8)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-8, flavor_idx=flavor_idx)
     elseif run_nr==5
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-3)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-3, flavor_idx=flavor_idx)
     elseif run_nr==6
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-5)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-5, flavor_idx=flavor_idx)
     elseif run_nr==7
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-7)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-7, flavor_idx=flavor_idx)
     # beta=200.0 
     elseif run_nr==11
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-2)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-2, flavor_idx=flavor_idx)
     elseif run_nr==12
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-4)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-4, flavor_idx=flavor_idx)
     elseif run_nr==13
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-6)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-6, flavor_idx=flavor_idx)
     elseif run_nr==14
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-8)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-8, flavor_idx=flavor_idx)
     elseif run_nr==15
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-3)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-3, flavor_idx=flavor_idx)
     elseif run_nr==16
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-5)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-5, flavor_idx=flavor_idx)
     elseif run_nr==17
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
-        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-7)
+        time_Γcore_sweep(5:12, PSFpath, "R"; folder=folder, tolerance=1.e-7, flavor_idx=flavor_idx)
     elseif run_nr>=10^4
         # for more global pivots
         nsearchglobalpivot = div(run_nr, 10^4)  
         (PSFpath, R, tolerance) = parse_run_nr(run_nr)
-        time_Γcore_sweep(R:R, PSFpath, "R"; folder=folder, tolerance=tolerance, serialize_tts=true, batched_eval=true, nsearchglobalpivot=nsearchglobalpivot, maxnglobalpivot=nsearchglobalpivot)
+        time_Γcore_sweep(R:R, PSFpath, "R"; flavor_idx=flavor_idx, folder=folder, tolerance=tolerance, serialize_tts=true, batched_eval=true, nsearchglobalpivot=nsearchglobalpivot, maxnglobalpivot=nsearchglobalpivot)
     # single R/tol jobs: first digit: PSFpath, second digit: -log10(tolerance), last 2 digits: R
     elseif run_nr>=1000
         (PSFpath, R, tolerance) = parse_run_nr(run_nr)
-        time_Γcore_sweep(R:R, PSFpath, "R"; folder=folder, tolerance=tolerance, serialize_tts=true, batched_eval=true)
+        time_Γcore_sweep(R:R, PSFpath, "R"; flavor_idx=flavor_idx, folder=folder, tolerance=tolerance, serialize_tts=true, batched_eval=true)
     else
         error("invalid run number $run_nr")
     end

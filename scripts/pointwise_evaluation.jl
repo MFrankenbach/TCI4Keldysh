@@ -6,6 +6,7 @@ using QuanticsTCI
 using StatProfilerHTML
 using Serialization
 using LaTeXStrings
+using HDF5
 import TensorCrossInterpolation as TCI
 
 """
@@ -133,10 +134,14 @@ function time_tucker_cut()
     @btime $fev(Val{:nocut}(), rand(1:2^$R, $npt-1)...)
 end
 
+function triptych_filename(beta::Number, tolerance::Float64, plot_slice)
+    return "corrMF_slice_beta=$(beta)_slices=$(length.(plot_slice))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
+end
+
 """
 Generate data for triptych Reference - QTCI - Error
 """
-function triptych_corr_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=false)
+function triptych_corr_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=true)
     # (tci, grid) = deserialize(joinpath(folder, qttfile)) 
     qtt = deserialize(joinpath(folder, qttfile)) 
     qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
@@ -144,7 +149,6 @@ function triptych_corr_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcid
     R = qtt.grid.R
     @show R
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
-    T = 1. / beta
     @assert occursin("R=$R", qttfile) && occursin("$beta", qttfile) "Does the file $qttfile match parameters R=$R, beta=$beta?"
 
     if haskey(qtt_data, "flavor_idx")
@@ -165,13 +169,13 @@ function triptych_corr_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcid
     npt = 4
     GF = TCI4Keldysh.dummy_correlator(npt, R; PSFpath=PSFpath, beta=beta)[1]
     cutoff = tolerance*1.e-4
-    fev = FullCorrEvaluator_MF(GF, true; cutoff=cutoff, tucker_cutoff=cutoff*10.0)
+    fev = TCI4Keldysh.FullCorrEvaluator_MF(GF, true; cutoff=cutoff, tucker_cutoff=cutoff*10.0)
     # ==== setup DONE
 
     # tci values
     tcival = zeros(ComplexF64, length.(plot_slice))
     @show Base.summarysize(tcival)
-    @show Base.summarysize(tci)
+    @show Base.summarysize(qtt)
     Threads.@threads for id in collect(Iterators.product(ids...))
         w = ntuple(i -> plot_slice[i][id[i]], 3)
         tcival[id...] = qtt(w...)
@@ -192,13 +196,13 @@ function triptych_corr_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcid
     diff = refval .- tcival
     # diff = dropdims(diff; dims=slice_id)
     if store
-        h5file = "corrMF_slice_beta=$(beta)_slices=$(length.(plot_slice))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
+        h5file = triptych_filename(beta, tolerance, plot_slice)
         h5write(joinpath(folder, h5file), "reference", refval)
         h5write(joinpath(folder, h5file), "qttdata", tcival)
         h5write(joinpath(folder, h5file), "diff", diff)
-        h5write(joinpath(folder, h5file), "maxref", abs(tci.maxsamplevalue))
+        h5write(joinpath(folder, h5file), "maxref", abs(qtt.tci.maxsamplevalue))
     end
-    return (refval, tcival, diff, abs(tci.maxsamplevalue))
+    return (refval, tcival, diff, abs(qtt.tci.maxsamplevalue))
 end
 
 function triptych_corr_plot(h5file::String, qttfile::String; folder="pwtcidata")
@@ -740,11 +744,17 @@ end
 
 
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-
-# R = 12
-# qttfile = "timing_R_min=5_max=12_tol=-5_beta=200.0_R=$(R)_qtt.serialized"
-# check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
 folder="pwtcidata_KCS"
-plot_FullCorrelator_ranks([-2,-4,-6], PSFpath; folder=folder, subdir_str="shellpivot")
+R = 8
+tol = 4
+beta = 2000
+dirname = "corrMF_tol$(tol)_beta$(beta)_nz4_shellpivot"
+qttfile = joinpath(dirname, "timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized")
+
+# check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
+# plot_FullCorrelator_ranks([-2,-4,-6], PSFpath; folder=folder, subdir_str="shellpivot")
+# triptych_corr_data(qttfile, R, PSFpath; folder=folder, store=true)
+h5file = joinpath(folder, "corrMF_slice_beta=2000.0_slices=(1, 256, 256)_tol=-4.h5")
+triptych_corr_plot(h5file, qttfile; folder=folder)

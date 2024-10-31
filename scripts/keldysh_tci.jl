@@ -958,5 +958,5 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
 end
 
 # time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:4, tolerance=1.e-3, serialize_tts=true)
-# time_Γcore_KF_sweep(10:10, 2, 2000.0, 0.4; tolerance=1.e-2, serialize_tts=false)
-time_Γcore_KF(2,10,1.e-2)
+time_Γcore_KF_sweep(6:6, 2, 1/2000.0, 0.4; tolerance=1.e-2, serialize_tts=false)
+# time_Γcore_KF(2,10,1.e-2)
