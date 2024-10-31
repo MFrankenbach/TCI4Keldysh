@@ -88,7 +88,7 @@ function plot_benchmark_GF()
     end
     xlabel!(p, "β")
     ylabel!(p, "time[μs]")
-    savefig(p,"GF_eval_timing.png")
+    savefig(p,"GF_eval_timing.pdf")
 end
 
 function time_PartialCorrelator(perm_idx ;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=1000.0, nomdisc=10)
@@ -134,6 +134,117 @@ function time_tucker_cut()
 end
 
 """
+Generate data for triptych Reference - QTCI - Error
+"""
+function triptych_corr_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=false)
+    # (tci, grid) = deserialize(joinpath(folder, qttfile)) 
+    qtt = deserialize(joinpath(folder, qttfile)) 
+    qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
+    tolerance = qtt_data["tolerance"]
+    R = qtt.grid.R
+    @show R
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    T = 1. / beta
+    @assert occursin("R=$R", qttfile) && occursin("$beta", qttfile) "Does the file $qttfile match parameters R=$R, beta=$beta?"
+
+    if haskey(qtt_data, "flavor_idx")
+        flavor_idx = qtt_data["flavor_idx"]
+    else
+        @warn "Assuming flavor_idx=1"
+        flavor_idx = 1
+    end
+
+    Nhalf = 2^(R-1)
+    Nhplot = 2^(Rplot-1)
+    oneslice = Nhalf-Nhplot+1 : Nhalf+Nhplot
+    plot_slice = (Nhalf+1:Nhalf+1, oneslice, oneslice)
+    slice_id = findfirst(i -> length(plot_slice[i])==1, 1:3)
+    ids = Base.OneTo.(length.(plot_slice))
+
+    # ==== create correlator evaluator
+    npt = 4
+    GF = TCI4Keldysh.dummy_correlator(npt, R; PSFpath=PSFpath, beta=beta)[1]
+    cutoff = tolerance*1.e-4
+    fev = FullCorrEvaluator_MF(GF, true; cutoff=cutoff, tucker_cutoff=cutoff*10.0)
+    # ==== setup DONE
+
+    # tci values
+    tcival = zeros(ComplexF64, length.(plot_slice))
+    @show Base.summarysize(tcival)
+    @show Base.summarysize(tci)
+    Threads.@threads for id in collect(Iterators.product(ids...))
+        w = ntuple(i -> plot_slice[i][id[i]], 3)
+        tcival[id...] = qtt(w...)
+    end
+
+    # ref values
+    refval = zeros(ComplexF64, length.(plot_slice))
+    @show Base.summarysize(refval)
+    Threads.@threads for id in collect(Iterators.product(ids...))
+        w = ntuple(i -> plot_slice[i][id[i]], 3)
+        refval[id...] = fev(w...)
+    end
+    
+    println("  Finished computation of correlator on slice")
+
+    # refval = dropdims(refval; dims=slice_id)
+    # tcival = dropdims(tcival; dims=slice_id)
+    diff = refval .- tcival
+    # diff = dropdims(diff; dims=slice_id)
+    if store
+        h5file = "corrMF_slice_beta=$(beta)_slices=$(length.(plot_slice))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
+        h5write(joinpath(folder, h5file), "reference", refval)
+        h5write(joinpath(folder, h5file), "qttdata", tcival)
+        h5write(joinpath(folder, h5file), "diff", diff)
+        h5write(joinpath(folder, h5file), "maxref", abs(tci.maxsamplevalue))
+    end
+    return (refval, tcival, diff, abs(tci.maxsamplevalue))
+end
+
+function triptych_corr_plot(h5file::String, qttfile::String; folder="pwtcidata")
+    refval = h5read(h5file, "reference")
+    tcival = h5read(h5file, "qttdata")
+    diff = h5read(h5file, "diff")
+    maxref = h5read(h5file, "maxref")
+    triptych_corr_plot(refval, tcival, diff, maxref, qttfile; folder=folder)
+end
+
+function triptych_corr_plot(refval, tcival, diff, maxref, qttfile::String; folder="pwtcidata")
+    if ndims(refval)==3
+        sdims = findall(i -> size(refval, i)==1, 1:3)
+        refval = dropdims(refval; dims=tuple(sdims...))
+    end
+    if ndims(tcival)==3
+        sdims = findall(i -> size(tcival, i)==1, 1:3)
+        tcival = dropdims(tcival; dims=tuple(sdims...))
+    end
+    if ndims(diff)==3
+        sdims = findall(i -> size(diff, i)==1, 1:3)
+        diff = dropdims(diff; dims=tuple(sdims...))
+    end
+
+    qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
+    tolerance = qtt_data["tolerance"]
+    beta = qtt_data["beta"]
+    p = TCI4Keldysh.default_plot()
+    maxc = log10(abs(maxref))
+    minc = maxc + log10(tolerance) - 1
+    heatmap!(p, log10.(abs.(refval)); clim=(minc, maxc), right_margin=10Plots.mm)
+    title!(L"\log_{10}|G^{\mathrm{ref}}|")
+    savefig("corrMFref_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
+
+    heatmap!(p, log10.(abs.(tcival)); clim=(minc, maxc), right_margin=10Plots.mm)
+    title!(L"\log_{10}|G^{\mathrm{QTCI}}|")
+    savefig("corrMFtci_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
+
+    p = TCI4Keldysh.default_plot()
+    scfun(x) = log10(abs(x)) 
+    heatmap!(p, scfun.(diff ./ maxref); right_margin=10Plots.mm)
+    title!(L"\log_{10}\left(|G^{\mathrm{ref}}-G^{\mathrm{QTCI}}|/|G^{\mathrm{ref}}|\right)")
+    savefig("corrMFdiff_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
+end
+
+"""
 Check correlator values at the fringes of the grid and compare to tolerance.
 """
 function max_correlator_tail(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
@@ -156,7 +267,7 @@ function max_correlator_tail(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=
     ylabel!("|G(ω)|/max|G(ω)|")
     xlabel!("ω1")
     hline!(tolerance; label="tol", color=:red, linestyle=:dashed)
-    savefig("corr_tail.png")
+    savefig("corr_tail.pdf")
     return nothing
 end
 
@@ -270,18 +381,33 @@ end
 """
 Find file for given beta and tolerance with maximum R-range
 """
-function find_GF_file(tolerance::Float64, beta::Float64; folder="pwtcidata")
-    function _file_relevant(f)
-        desired = endswith(f, ".json") && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && startswith(f, "timing")
-        allowed = !occursin("gammacore", f) && !occursin("KF", f)
-        return desired && allowed
+function find_GF_file(tolerance::Float64, beta::Float64; folder="pwtcidata", subdir_str=nothing)
+    if isnothing(subdir_str)
+        function _file_relevant(f)
+            desired = endswith(f, ".json") && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && startswith(f, "timing")
+            allowed = !occursin("gammacore", f) && !occursin("KF", f)
+            return desired && allowed
+        end
+        files = filter(
+                _file_relevant,
+                readdir(folder)
+                )
+            
+        @show files
+    else
+        # files are distributed in sub-folders
+        folder_content = readdir(folder)
+        subdirs = [f for f in folder_content if isdir(joinpath(folder, f))]
+        @show subdirs
+        function _folder_relevant(f)
+            return occursin(subdir_str,f) && occursin("beta$(round(Int,beta))_",f) && occursin("corrMF",f) && occursin("tol$(-round(Int,log10(tolerance)))",f)
+        end
+        subdirs = filter(_folder_relevant, subdirs)
+        @show subdirs
+        files = [only(filter(f -> endswith(f,".json"), readdir(joinpath(folder,sd)))) for sd in subdirs]
+        @show files
+        files = [joinpath(subdirs[i], files[i]) for i in eachindex(subdirs)]
     end
-    files = filter(
-            _file_relevant,
-            readdir(folder)
-            )
-        
-    @show files
 
     if isempty(files)
         return nothing
@@ -564,21 +690,21 @@ function plot_FullCorrelator_timing(param_range, mode="R"; beta=10.0, tolerance=
             ylabel!(ptwin, "Memory for dense corr. [GB]")
         end
 
-        savefig(p, "corrtiming_beta=$(beta)_tol=$(round(Int,log10(tolerance))).png")
+        savefig(p, "corrtiming_beta=$(beta)_tol=$(round(Int,log10(tolerance))).pdf")
     end
 end
 
-function plot_FullCorrelator_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster")
-    plot_FullCorrelator_ranks(10.0 .^ tol_range, PSFpath; folder=folder)
+function plot_FullCorrelator_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster", subdir_str=nothing)
+    plot_FullCorrelator_ranks(10.0 .^ tol_range, PSFpath; folder=folder, subdir_str=subdir_str)
 end
 
-function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata")
+function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata", subdir_str=nothing)
     p = TCI4Keldysh.default_plot()    
 
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
 
     for tol in tol_range
-        file_act = find_GF_file(tol, beta; folder=folder)
+        file_act = find_GF_file(tol, beta; folder=folder, subdir_str=subdir_str)
         if isnothing(file_act)
             @warn "No file for tol=$tol, beta=$beta found!"
         else
@@ -597,7 +723,7 @@ function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata
     title!(p, "Matsubara Full Correlator, β=$beta")
     xlabel!("R")
     ylabel!("rank")
-    savefig("MFcorr_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.png")
+    savefig("MFcorr_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.pdf")
 end
 
 
@@ -620,4 +746,5 @@ end
 # qttfile = "timing_R_min=5_max=12_tol=-5_beta=200.0_R=$(R)_qtt.serialized"
 # check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
 
-# plot_FullCorrelator_ranks([-2,-4,-6,-8], PSFpath; folder="pwtcidata")
+folder="pwtcidata_KCS"
+plot_FullCorrelator_ranks([-2,-4,-6], PSFpath; folder=folder, subdir_str="shellpivot")

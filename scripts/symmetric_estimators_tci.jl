@@ -4,6 +4,7 @@ using StatProfilerHTML
 using Serialization
 using HDF5
 using LinearAlgebra
+using LaTeXStrings
 import QuanticsGrids as QG
 
 TCI4Keldysh.TIME() = false
@@ -66,7 +67,7 @@ function qttfile_to_json(qttfile::String)
 end
 
 """
-Generate data for tryptich Reference - QTCI - Error
+Generate data for triptych Reference - QTCI - Error
 """
 function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=false)
     (tci, grid) = deserialize(joinpath(folder, qttfile)) 
@@ -154,12 +155,12 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     return (refval, tcival, diff, abs(tci.maxsamplevalue))
 end
 
-function triptych_vertex_plot(h5file::String, qttfile::String)
+function triptych_vertex_plot(h5file::String, qttfile::String; folder="pwtcidata")
     refval = h5read(h5file, "reference")
     tcival = h5read(h5file, "qttdata")
     diff = h5read(h5file, "diff")
     maxref = h5read(h5file, "maxref")
-    triptych_vertex_plot(refval, tcival, diff, maxref, qttfile)
+    triptych_vertex_plot(refval, tcival, diff, maxref, qttfile; folder=folder)
 end
 
 function triptych_vertex_plot(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata")
@@ -184,16 +185,23 @@ function triptych_vertex_plot(refval, tcival, diff, maxref, qttfile::String; fol
 
     qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
     tolerance = qtt_data["tolerance"]
+    beta = qtt_data["beta"]
     p = TCI4Keldysh.default_plot()
-    heatmap!(p, abs.(refval))
-    savefig("V_MFref_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
+    maxc = log10(abs(maxref))
+    minc = maxc + log10(tolerance) - 1
+    heatmap!(p, log10.(abs.(refval)); clim=(minc, maxc), right_margin=10Plots.mm)
+    title!(L"\log_{10}|\Gamma_{\mathrm{core}}^{\mathrm{ref}}|")
+    savefig("V_MFref_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
 
-    heatmap!(p, abs.(tcival))
-    savefig("V_MFtci_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
+    heatmap!(p, log10.(abs.(tcival)); clim=(minc, maxc), right_margin=10Plots.mm)
+    title!(L"\log_{10}|\Gamma_{\mathrm{core}}^{\mathrm{QTCI}}|")
+    savefig("V_MFtci_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
 
+    p = TCI4Keldysh.default_plot()
     scfun(x) = log10(abs(x)) 
-    heatmap!(p, scfun.(diff ./ maxref))
-    savefig("V_MFdiff_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
+    heatmap!(p, scfun.(diff ./ maxref); right_margin=10Plots.mm)
+    title!(L"\log_{10}\left(|\Gamma_{\mathrm{core}}^{\mathrm{ref}}-\Gamma_{\mathrm{core}}^{\mathrm{QTCI}}|/|\Gamma_{\mathrm{core}}^{\mathrm{ref}}|\right)")
+    savefig("V_MFdiff_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
 end
 
 """
@@ -345,14 +353,27 @@ end
 """
 Find file for given beta and tolerance with maximum R-range
 """
-function find_Γcore_file(tolerance::Float64, beta::Float64; folder="pwtcidata")
-    function _file_relevant(f)
-        return endswith(f, ".json") && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && occursin("gammacore", f)
+function find_Γcore_file(tolerance::Float64, beta::Float64; folder="pwtcidata", subfolder_str=nothing)
+    if !isnothing(subfolder_str)
+        # files are distributed in sub-folders
+        folder_content = readdir(folder)
+        subdirs = [f for f in folder_content if isdir(joinpath(folder, f))]
+        function _folder_relevant(f)
+            return occursin(subfolder_str,f) && occursin("beta$(round(Int,beta))_",f) && occursin("gamcore",f) && occursin("tol$(-round(Int,log10(tolerance)))",f)
+        end
+        subdirs = filter(_folder_relevant, subdirs)
+        files = [only(filter(f -> endswith(f,".json"), readdir(joinpath(folder,sd)))) for sd in subdirs]
+        @show files
+        files = [joinpath(subdirs[i], files[i]) for i in eachindex(subdirs)]
+    else
+        function _file_relevant(f)
+            return endswith(f, ".json") && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && occursin("gammacore", f)
+        end
+        files = filter(
+                _file_relevant,
+                readdir(folder)
+                )
     end
-    files = filter(
-            _file_relevant,
-            readdir(folder)
-            )
 
     if isempty(files)
         return nothing
@@ -441,12 +462,12 @@ function to_intvec(x) :: Vector{Int}
     return convert(Vector{Int}, x)
 end
 
-function plot_vertex_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster")
-    plot_vertex_ranks(10.0 .^ tol_range, PSFpath; folder=folder)
+function plot_vertex_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster", subfolder_str=nothing)
+    plot_vertex_ranks(10.0 .^ tol_range, PSFpath; folder=folder, subfolder_str=subfolder_str)
 end
 
 function tol_vs_rank_vertex(R::Int, tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata")
-    tol_vs_rank_vertex(R::Int, 10.0 .^ tol_range, PSFpath::String; folder="pwtcidata")
+    tol_vs_rank_vertex(R::Int, 10.0 .^ tol_range, PSFpath::String; folder=folder)
 end
 
 function tol_vs_rank_vertex(R::Int, tol_range, PSFpath::String; folder="pwtcidata")
@@ -477,16 +498,16 @@ function tol_vs_rank_vertex(R::Int, tol_range, PSFpath::String; folder="pwtcidat
     title!(p, "Matsubara core vertex, β=$beta")
     xlabel!("tolerance")
     ylabel!("rank")
-    savefig("MFvertex_tol_vs_rank$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$(beta)_R=$(R).png")
+    savefig("MFvertex_tol_vs_rank$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$(beta)_R=$(R).pdf")
 end
 
-function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster")
+function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster", subfolder_str=nothing)
     p = TCI4Keldysh.default_plot()    
 
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
 
     for tol in tol_range
-        file_act = find_Γcore_file(tol, beta; folder=folder)
+        file_act = find_Γcore_file(tol, beta; folder=folder, subfolder_str=subfolder_str)
         if isnothing(file_act)
             @warn "No file for tol=$tol, beta=$beta found!"
         else
@@ -505,7 +526,7 @@ function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster
     title!(p, "Matsubara core vertex, β=$beta")
     xlabel!("R")
     ylabel!("rank")
-    savefig("MFvertex_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.png")
+    savefig("MFvertex_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.pdf")
 end
 
 function profile_Γcore()
@@ -712,17 +733,19 @@ function check_serialized_files()
     @show successcount
 end
 
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+folder = "pwtcidata_KCS"
+PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
-R = 11 
-# qttfile = "gammacore_timing_R_min=12_max=12_tol=-4_beta=200.0_R=$(R)_qtt.serialized"
-beta = 2000
-tol = 2
+R = 7
+beta = 200
+tol = 4
 dirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_morepivot"
 qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
-check_interpolation(joinpath(dirname, qttfile), R, PSFpath; folder="MF_KCS_morepivot")
+qttfile = joinpath(dirname, qttfile)
+# check_interpolation(qttfile, R, PSFpath; folder="MF_KCS_shellpivot")
 
-
-# plot_vertex_ranks([-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")
+# plot_vertex_ranks([-2, -4], PSFpath; folder=folder, subfolder_str="shellpivot")
 # tol_vs_rank_vertex(10, [-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")
+h5file = "vertex_MF_slice_beta=$(beta).0_slices=(1, 128, 128)_tol=-$tol.h5"
+triptych_vertex_plot(h5file, qttfile; folder=folder)
