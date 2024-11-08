@@ -654,6 +654,218 @@ function K2_TCI(
     return qtt
 end
 
+function precompute_K2r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ext::NTuple{2,Vector{Float64}}, channel="t", prime=false)
+    T = dir_to_T(PSFpath)
+    ωconvMat = channel_trafo_K2(channel,prime)
+    op_labels = Tuple(oplabels_K2(channel,prime))
+    basepath = dirname(rstrip(PSFpath, '/'))
+    sign = channel_K2_sign(channel, prime)
+    if formalism=="MF"
+
+        Nfer = length(last(ωs_ext))
+        ωs_Σ = MF_grid(T, Nfer, true)
+        (ΣL, ΣR) = calc_Σ_MF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor_idx,T=T)
+        printstyled("  Compute K2...\n"; color=:blue)
+        K2 = compute_K2r_symmetric_estimator(
+            "MF",
+            PSFpath,
+            op_labels,
+            ΣR;
+            Σ_calcL=ΣL,
+            T=T,
+            flavor_idx=flavor_idx,
+            ωs_ext=ωs_ext,
+            ωconvMat=ωconvMat
+        )
+        return sign*K2
+
+    elseif formalism=="KF"
+
+        (γ, sigmak) = read_broadening_params(basepath)
+        broadening_kwargs = read_broadening_settings(basepath)
+        @assert isodd(length(ωs_ext[1]))
+        @assert iseven(length(ωs_ext[2]))
+        Nfer = length(ωs_ext[2])
+        ωmax = ωs_ext[1][end]
+        ωs_Σ = KF_grid_fer_(ωmax, 2*Nfer)
+        (ΣL, ΣR) = calc_Σ_KF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor_idx,T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+        printstyled("  Compute K2...\n"; color=:blue)
+        K2 = compute_K2r_symmetric_estimator(
+            "KF",
+            PSFpath,
+            op_labels,
+            ΣR;
+            Σ_calcL=ΣL,
+            T=T,
+            flavor_idx=flavor_idx,
+            ωs_ext=ωs_ext,
+            ωconvMat=ωconvMat,
+            γ=γ,
+            sigmak=sigmak,
+            broadening_kwargs...
+        )
+        return sign*K2
+
+    else
+        error("Invalid formalism $formalism")
+    end
+end
+
+"""
+K1 for each channel on 1D frequency grid, both MF and KF
+TODO: Move this elsewhere? Not related to TCI...
+"""
+function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ext::Vector{Float64}, channel="t", broadening_kwargs...)
+
+    T = dir_to_T(PSFpath)
+    ops = channel_K1_Ops(channel)
+    G = if formalism=="MF"
+        FullCorrelator_MF(PSFpath, ops; T=T, flavor_idx=flavor_idx, ωs_ext=(ωs_ext,), ωconvMat=reshape([ 1; -1], (2,1)), name="K1$channel");
+    elseif formalism=="KF"
+        basepath = join(split(rstrip(PSFpath, '/'), "/")[1:end-1], "/")
+        (γ, sigmak) = read_broadening_params(basepath; channel=channel)
+        broaden_dict = Dict(broadening_kwargs)
+
+        # are different broadening parameters requested?
+        γ = if haskey(broaden_dict,:γ)
+                broaden_dict[:γ]
+            else
+                γ
+            end
+        sigmak = if haskey(broaden_dict,:sigmak)
+                broaden_dict[:sigmak]
+            else
+                sigmak
+            end
+
+        # actual computation
+        FullCorrelator_KF(
+            PSFpath, ops;
+            T=T, flavor_idx=flavor_idx, ωs_ext=(ωs_ext,), ωconvMat=reshape([ 1; -1], (2,1)), γ=γ, sigmak=sigmak, name="K1$channel",
+            broadening_kwargs...);
+    end
+    sign = TCI4Keldysh.channel_K1_sign(channel)
+    return sign * TCI4Keldysh.precompute_all_values(G)
+end
+
+"""
+QTCI-compress K1 contributions to full vertex; fourth row in Fig 13, Lihm et. al.
+Just compute correlator on dense grid and QTCI that.
+Works for Matsubara AND Keldysh.
+* formalism: For formalism="KF" (Keldysh), compress both Keldysh components in one go
+* ωmax: Only relevant for Keldysh. Margins of frequency grid.
+"""
+function K1_TCI(
+    PSFpath::String,
+    R::Int;
+    formalism::String,
+    channel::String,
+    T::Float64,
+    flavor_idx::Int=1,
+    ωmax::Float64=1.0,
+    # do_check_interpolation::Bool=true,
+    qtcikwargs...
+)::Array{<:Union{<:QuanticsTCI.QuanticsTensorCI2, Nothing}}
+    ωconvMat = ωconvMat_K1()
+    Ops = channel_K1_Ops(channel)
+    Nhalf = 2^(R-1)
+    initialpivots = [[Nhalf], [Nhalf + div(Nhalf,2)], [Nhalf - div(Nhalf,2)]]
+    if formalism=="MF"
+        # leave out final frequency
+        ωs_ext = MF_grid(T, Nhalf, false)
+        GF = FullCorrelator_MF(PSFpath, Ops; flavor_idx=flavor_idx, T=T, ωconvMat=ωconvMat, ωs_ext=(ωs_ext,), name="K1$channel")
+        println("==== Computing $(GF.name)...")
+        GFval = precompute_all_values(GF)
+        GFval .*= channel_K1_sign(channel)
+        # check whether component is identically 0
+        qtts = Array{Union{QuanticsTCI.QuanticsTensorCI2{eltype(GFval)}, Nothing}}(undef, 1)
+        if maximum(abs.(GFval))<1.e-10
+            println("    K1 compent is zero!")
+            qtts[1]=nothing
+            return qtts
+        end
+        qtt, _, _ = quanticscrossinterpolate(GFval[1:2^R], initialpivots; qtcikwargs...)
+        qtts[1]=qtt
+        return qtts
+    elseif formalism=="KF"
+        ωs_ext = KF_grid_bos(ωmax, R)
+        # broadening
+        basepath = dirname(rstrip(PSFpath, '/'))
+        (γ, sigmak) = read_broadening_params(basepath; channel=channel)
+        broadening_kwargs = read_broadening_settings(basepath; channel=channel)
+        GF = FullCorrelator_KF(PSFpath, Ops; γ=γ, sigmak=sigmak, flavor_idx=flavor_idx, T=T, ωconvMat=ωconvMat, ωs_ext=(ωs_ext,), name="K1$channel", broadening_kwargs...)
+        println("==== Computing $(GF.name)...")
+        GFval = precompute_all_values(GF)
+        GFval .*= channel_K1_sign(channel)
+        # all Keldysh components
+        qtts = Array{Union{QuanticsTCI.QuanticsTensorCI2{eltype(GFval)}, Nothing}}(undef, 2,2)
+        for id in Iterators.product([1,2],[1,2]) 
+            if maximum(abs.(GFval[1:2^R,id...]))<1.e-10
+                qtts[id...] = nothing
+            else
+                qtts[id...], _, _ = quanticscrossinterpolate(GFval[1:2^R,id...], initialpivots; qtcikwargs...) 
+            end
+        end
+        return qtts
+    end
+end
+
+"""
+QTCI-compress K2 contributions to full vertex; fourth row in Fig 13, Lihm et. al.
+Just compute correlator on dense grid and QTCI that.
+Works for Matsubara AND Keldysh.
+* formalism: For formalism="KF" (Keldysh), compress both Keldysh components in one go
+* ωmax: Only relevant for Keldysh. Margins of frequency grid.
+"""
+function K2_TCI_precomputed(
+    PSFpath::String,
+    R::Int;
+    formalism::String,
+    channel::String,
+    prime::Bool,
+    T::Float64,
+    flavor_idx::Int=1,
+    ωmax::Float64=1.0,
+    # do_check_interpolation::Bool=true,
+    qtcikwargs...
+)::Array{<:Union{<:QuanticsTCI.QuanticsTensorCI2, Nothing}}
+    Nhalf = 2^(R-1)
+    # 5x5 block around centre
+    initialpivots = vec([[i,j] for i in Nhalf-1:Nhalf+3, j in Nhalf-2:Nhalf+2])
+    if formalism=="MF"
+        # leave out final frequency
+        ωs_ext = MF_npoint_grid(T,Nhalf,2)
+        K2 = precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext, channel=channel, prime=prime)
+        # check whether component is identically 0
+        qtts = Array{Union{QuanticsTCI.QuanticsTensorCI2{eltype(K2)}, Nothing}}(undef, 1)
+        if maximum(abs.(K2))<1.e-10
+            println("    K2 compent is zero!")
+            qtts[1]=nothing
+            return qtts
+        end
+        qtt, _, _ = quanticscrossinterpolate(K2[1:2^R,:], initialpivots; qtcikwargs...)
+        qtts[1]=qtt
+        return qtts
+    elseif formalism=="KF"
+        ωs_ext = KF_grid(ωmax, R, 2)
+        # broadening
+        # basepath = dirname(rstrip(PSFpath, '/'))
+        # (γ, sigmak) = read_broadening_params(basepath; channel=channel)
+        # broadening_kwargs = read_broadening_settings(basepath; channel=channel)
+        K2 = precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext, channel=channel, prime=prime)
+        # all Keldysh components
+        qtts = Array{Union{QuanticsTCI.QuanticsTensorCI2{eltype(K2)}, Nothing}}(undef, 2,2,2)
+        for id in Iterators.product([1,2],[1,2],[1,2]) 
+            if maximum(abs.(K2[:,:,id...]))<1.e-10
+                qtts[id...] = nothing
+            else
+                qtts[id...], _, _ = quanticscrossinterpolate(K2[1:2^R,:,id...], initialpivots; qtcikwargs...) 
+            end
+        end
+        return qtts
+    end
+end
+
 # ========== MATSUBARA END
 
 # ========== KELDYSH

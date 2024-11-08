@@ -50,6 +50,141 @@ end
     end
 end
 
+@testset "SIE: K1" begin
+    
+    function test_K1_TCI(formalism="MF"; ωmax::Float64=1.0, channel="t", flavor=1)
+        basepath = "SIAM_u=0.50"
+        PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=2_conn_zavg/")
+        R = 8
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+
+        # TCI4Keldysh
+        ωs_ext = if formalism=="MF"
+                TCI4Keldysh.MF_grid(T, 2^(R-1), false)
+            else
+                TCI4Keldysh.KF_grid_bos(ωmax, R)
+            end
+        K1_slice = formalism=="MF" ? (1:2^R,) : (1:2^R,:,:)
+        broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath;channel=channel)
+        K1_test = TCI4Keldysh.precompute_K1r(PSFpath, flavor, formalism; channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)[K1_slice...]
+
+        ncomponents = formalism=="MF" ? 1 : 4
+        # TCI4Keldysh: TCI
+        tolerance=1.e-4
+        K1_tci = TCI4Keldysh.K1_TCI(
+            PSFpath,
+            R;
+            ωmax=ωmax,
+            formalism=formalism,
+            channel=channel,
+            T=T,
+            flavor_idx=flavor,
+            unfoldingscheme=:interleaved,
+            tolerance=tolerance
+            )
+
+        K1_tcivals_ = fill(zeros(ComplexF64, ntuple(_->2,R)), Int(sqrt(ncomponents)), Int(sqrt(ncomponents)))
+        for i in eachindex(K1_tcivals_)
+            if !isnothing(K1_tci[i])
+                K1_tcivals_[i] = TCI4Keldysh.qtt_to_fattensor(K1_tci[i].tci.sitetensors)
+            end
+        end
+        K1_tcivals = [TCI4Keldysh.qinterleaved_fattensor_to_regular(k1, R) for k1 in K1_tcivals_]
+        K1_tcivals_block = reshape(vcat(K1_tcivals...), (2^R, ncomponents))
+
+        K1_test = reshape(K1_test, 2^R, ncomponents)
+        diff = abs.(K1_tcivals_block .- K1_test)
+        if maximum(diff)<1.e-10
+            @test true
+            return
+        end
+        @test  maximum(diff) / maximum(abs.(K1_test)) < 2.0*tolerance
+    end
+
+    for channel in ["a","p","t"]
+        for flavor in [1,2]
+            for formalism in ["MF","KF"]
+                test_K1_TCI(formalism; channel=channel, flavor=flavor)
+            end
+        end
+    end
+
+end
+
+@testset "SIE: K2" begin
+
+    function test_K2_TCI_precomputed(;formalism="MF", channel="t", prime=false, flavor_idx=1)
+        basepath = "SIAM_u=0.50"
+        PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
+
+        R = 5
+        Nhalf = 2^(R-1)
+        ωmax = 1.0
+
+        # TCI4Keldysh: Reference
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+        ωs_ext = if formalism=="MF"
+                TCI4Keldysh.MF_npoint_grid(T, Nhalf, 2)
+            else
+                TCI4Keldysh.KF_grid(ωmax, R, 2)
+            end
+        K2 = TCI4Keldysh.precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext, channel=channel, prime=prime)
+        K2slice = if formalism=="MF"
+                (1:2^R,Colon())
+            else
+                (1:2^R,Colon(),:,:,:)
+            end
+        K2 = K2[K2slice...]
+
+        # TCI4Keldysh: TCI way
+        tolerance = 1.e-6
+        K2tci = TCI4Keldysh.K2_TCI_precomputed(
+            PSFpath,
+            R;
+            formalism=formalism,
+            flavor_idx=flavor_idx,
+            channel=channel,
+            prime=prime,
+            T=T,
+            ωmax=ωmax,
+            tolerance=tolerance
+        )
+
+        ncomponents = formalism=="MF" ? 1 : 8
+        nkeldysh = formalism=="MF" ? 1 : 2
+        K2tcivals = fill(zeros(ComplexF64, ntuple(_->2, 2*R)), nkeldysh,nkeldysh,nkeldysh)
+        for i in eachindex(K2tci)
+            if !isnothing(K2tci[i])
+                K2tcivals[i] = TCI4Keldysh.qtt_to_fattensor(K2tci[i].tci.sitetensors)
+            end
+        end
+        K2tcivals = [TCI4Keldysh.qinterleaved_fattensor_to_regular(k2, R) for k2 in K2tcivals]
+        @show size.(K2tcivals)
+
+        K2_test = reshape(K2, 2^R, 2^R, ncomponents)
+        @show size(K2_test)
+        for i in 1:ncomponents
+            diff = abs.(K2_test[:,:,i] .- K2tcivals[i]) ./ maximum(abs.(K2_test[:,:,i]))
+            if !isnan(maximum(diff))
+                @test maximum(diff) < 2.0*tolerance
+            else
+                @test maximum(abs.(K2_test[:,:,i]))<1.e-10
+            end
+        end
+    end
+
+    for channel in ["a","p","t"]
+        for flavor in [1,2]
+            for formalism in ["MF","KF"]
+                for prime in [true,false]
+                    test_K2_TCI_precomputed(;formalism=formalism, prime=prime, channel=channel, flavor_idx=flavor)
+                end
+            end
+        end
+    end
+
+end
+
 @testset "SIE: Vertex@Matsubara" begin
     
     function test_Gamma_core_TCI_MF(PSFpath; freq_conv="a", R=4, beta=15.0, tolerance=1.e-5, batched=false, use_ΣaIE=false)
@@ -132,10 +267,7 @@ end
         Σ_calc_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_aux_data, G_aux_data, G_aux_data, G_data, U/2)
 
 
-        (i,j) = TCI4Keldysh.merged_legs_K2(channel, prime)
-        nonij = sort(setdiff(1:4, (i,j)))
-        leg_labels = ("1", "1dag", "3", "3dag")
-        op_labels = ("Q$i$j", leg_labels[nonij[1]], leg_labels[nonij[2]])
+        op_labels = TCI4Keldysh.oplabels_K2(channel, prime)
         K2ref = TCI4Keldysh.compute_K2r_symmetric_estimator(
             "MF", PSFpath, op_labels, Σ_calc_sIE;
             ωs_ext=ωs_ext, T=T, flavor_idx=flavor, ωconvMat=TCI4Keldysh.channel_trafo_K2(channel, prime)
@@ -174,6 +306,7 @@ end
         test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.dir_to_beta(PSFpath), tolerance=1.e-6, batched=true)
         test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.dir_to_beta(PSFpath), tolerance=1.e-6, batched=true, use_ΣaIE=true)
     end
+
 end
 
 @testset "SIE: Vertex@Keldysh" begin

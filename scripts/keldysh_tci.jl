@@ -9,6 +9,7 @@ using JSON
 using LinearAlgebra
 using Serialization
 using Printf
+using MAT
 import TensorCrossInterpolation as TCI
 import QuanticsGrids as QG
 
@@ -20,6 +21,19 @@ using Test
 """
 function default_T()
     return 1.0/(2000.0)
+end
+
+"""
+Read ωmax used in MuNRG data
+"""
+function get_MuNRG_boxsize_V_KF()
+    ωmax = 0.0
+    matopen("data/SIAM_u=0.50/V_KF_ph/V_KF_U4.mat") do f
+        @show keys(f)
+        CFdata = read(f,"CFdat")
+        ωmax = vec(CFdata["ogrid"])[1][end]
+    end    
+    return ωmax
 end
 
 function plot_2pt_KeldyshCorrelator()
@@ -75,6 +89,142 @@ function plot_4pt_KeldyshCorrelator(γfac=30, sigmak_=0.1)
 
     plot(scfun.(data[:,div(length(ωs_ext[end]),2),div(length(ωs_ext[end]), 2), keldysh_idx...]))
     savefig("KFC1D.png")
+end
+
+function time_V_KF(R=4; ωmax::Float64=0.3183098861837907, channel="t", flavor=1)
+    
+    base_path = "SIAM_u=0.50"
+    joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
+
+    (γref, sigmakref) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, 3)
+    om_sig = TCI4Keldysh.KF_grid_fer(ωmax, R+1)
+
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(joinpath(TCI4Keldysh.datadir(), base_path); channel=channel)
+    if !haskey(broadening_kwargs, "estep")
+        broadening_kwargs[:estep] = 500
+    end
+
+    (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=flavor, sigmak=sigmakref, γ=γref, broadening_kwargs...)
+    t = @elapsed begin refval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+        "KF",
+        PSFpath*"4pt/",
+        Σ_R;
+        Σ_calcL=Σ_L,
+        T,
+        flavor_idx = flavor,
+        ωs_ext = ωs_ext,
+        ωconvMat=ωconvMat,
+        sigmak=sigmakref, γ=γref,
+        broadening_kwargs...
+    )
+    end
+    println("==== TIME FOR R=$R: $t sec ====\n")
+    return t
+end
+
+"""
+How do changes in broadening parameters affect the core vertex (10% change in sigmak and γ are >1% change in V_KF!)
+"""
+function V_KF_broadening_impact(fac_lin::Float64=1.1, fac_log::Float64=1.1; ωmax::Float64=0.3183098861837907, channel="t", flavor=1)
+    
+    base_path = "SIAM_u=0.50"
+    joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
+
+    R = 4
+    (γref, sigmakref) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, 3)
+    om_sig = TCI4Keldysh.KF_grid_fer(ωmax, R+1)
+
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(joinpath(TCI4Keldysh.datadir(), base_path); channel=channel)
+    if !haskey(broadening_kwargs, "estep")
+        broadening_kwargs[:estep] = 200
+    end
+
+    # with MuNRG broadening parameters
+    (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=flavor, sigmak=sigmakref, γ=γref, broadening_kwargs...)
+    refval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+        "KF",
+        PSFpath*"4pt/",
+        Σ_R;
+        Σ_calcL=Σ_L,
+        T,
+        flavor_idx = flavor,
+        ωs_ext = ωs_ext,
+        ωconvMat=ωconvMat,
+        sigmak=sigmakref, γ=γref,
+        broadening_kwargs...
+    )
+
+    # with rescaled broadening parameters
+    γ = fac_lin*γref
+    sigmak = fac_log*sigmakref
+    (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=flavor, sigmak=sigmak, γ=γ, broadening_kwargs...)
+    testval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+        "KF",
+        PSFpath*"4pt/",
+        Σ_R;
+        Σ_calcL=Σ_L,
+        T,
+        flavor_idx = flavor,
+        ωs_ext = ωs_ext,
+        ωconvMat=ωconvMat,
+        sigmak=sigmak, γ=γ,
+        broadening_kwargs...
+    )
+
+    diff = abs.(refval .- testval) ./ maximum(abs.(refval))
+    @show maximum(diff)
+    # plot slice
+    slice = (:,:,2^(R-1),2,2,2,1)
+    heatmap(abs.(refval[slice...]))
+    savefig("V_KF_broadeningref.pdf")
+    heatmap(abs.(testval[slice...]))
+    savefig("V_KF_broadeningtest.pdf")
+    heatmap(abs.(diff[slice...]))
+    savefig("V_KF_broadeningdiff.pdf")
+end
+
+"""
+How do changes in broadening parameters affect K1?
+"""
+function K1_broadening_impact(fac_lin::Float64=1.1, fac_log::Float64=1.1;ωmax::Float64=0.3183098861837907, channel="t", flavor=1)
+    basepath = "SIAM_u=0.50"
+    # basepath = "SIAM_u=1.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
+    R = 8
+
+    # TCI4Keldysh
+    ωs_ext = TCI4Keldysh.KF_grid_bos(ωmax, R)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath;channel=channel)
+
+    K1_ref = TCI4Keldysh.precompute_K1r(PSFpath, flavor, "KF"; channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)
+    (γref, sigmak_ref) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+    γ=fac_lin*γref
+    sigmak=fac_log*sigmak_ref
+    K1_test = TCI4Keldysh.precompute_K1r(PSFpath, flavor, "KF"; channel=channel, ωs_ext=ωs_ext, γ=γ, sigmak=sigmak, broadening_kwargs...)
+
+    @show size(K1_test)
+    @show size(K1_ref)
+    @show size(ωs_ext)
+
+    iK = (2,2)
+    p = TCI4Keldysh.default_plot()
+    plot!(p, ωs_ext, abs.(K1_ref[:,iK...]); label="K1:γ=$(@sprintf "%.2e" γref),σk=$(@sprintf "%.2f" only(sigmak_ref))")
+    plot!(p, ωs_ext, abs.(K1_test[:,iK...]); label="K1:γ=$(@sprintf "%.2e" γ),σk=$(@sprintf "%.2f" only(sigmak))")
+    savefig(p, "K1_broadening.pdf")
+
+    # normalized maximum error
+    diff = abs.(K1_ref .- K1_test) ./ maximum(abs.(K1_ref))
+    p = TCI4Keldysh.default_plot()
+    plot!(p, ωs_ext, diff[:,iK...]; label="diff")
+    savefig(p, "K1_broadeningdiff.pdf")
 end
 
 """
@@ -298,7 +448,6 @@ function time_Γcore_KF(iK::Int, R=4, tolerance=1.e-6)
     ωmax = 1.0
     D = 3
     γ, sigmak = beta2000_broadening(T)
-    # γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
     flavor_idx = 1
 
     @time qtt = TCI4Keldysh.Γ_core_TCI_KF(
@@ -957,6 +1106,9 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
     return nothing
 end
 
-# time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:4, tolerance=1.e-3, serialize_tts=true)
-time_Γcore_KF_sweep(6:6, 2, 1/2000.0, 0.4; tolerance=1.e-2, serialize_tts=false)
-# time_Γcore_KF(2,10,1.e-2)
+times = []
+for R in 3:7
+    t = time_V_KF(R)
+    push!(times, t)
+end
+@show times

@@ -184,50 +184,41 @@ function precompute_K1r_explicit(PSFpath::String, flavor_idx::Int, formalism="MF
     return sign * res
 end
 
-"""
-K1 for each channel on 1D frequency grid
-"""
-function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ext::Vector{Float64}, channel="t", broadening_kwargs...)
+# """
+# K1 for each channel on 1D frequency grid
+# """
+# function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ext::Vector{Float64}, channel="t", broadening_kwargs...)
 
-    T = TCI4Keldysh.dir_to_T(PSFpath)
-    ops = if channel=="t"
-        # G(12,34)
-        ["Q12", "Q34"]
-    elseif channel in ["p", "pNRG"]
-        # -ζ G(13,24)
-        ["Q13", "Q24"]
-    elseif channel=="a"
-        # -G(14,23)
-        ["Q14", "Q23"]
-    else
-        error("Invalid channel")
-    end
-    G = if formalism=="MF"
-            TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T=T, flavor_idx=flavor_idx, ωs_ext=(ωs_ext,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-        elseif formalism=="KF"
-            basepath = join(split(rstrip(PSFpath, '/'), "/")[1:end-1], "/")
-            (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
-            # (γ, sigmak) = (5.0*1.e-7, [0.01])
-            println("-- Broadening parameters: γ=$γ, σk=$(only(sigmak))")
-            TCI4Keldysh.FullCorrelator_KF(
-                PSFpath, ops;
-                T=T, flavor_idx=flavor_idx, ωs_ext=(ωs_ext,), ωconvMat=reshape([ 1; -1], (2,1)), γ=γ, sigmak=sigmak, name="SIAM 2pG",
-                broadening_kwargs...);
-        end
-    println("-- Adisc weight K1:")
-    println("  ($(sum(G.Gps[1].tucker.center)), $(sum(G.Gps[2].tucker.center)))")
-    sign = if channel=="t"
-        1
-    elseif channel in ["p", "pNRG"]
-        -1
-    elseif channel=="a"
-        -1
-    else
-        error("Invalid channel")
-    end
-
-    return sign * TCI4Keldysh.precompute_all_values(G)
-end
+#     T = TCI4Keldysh.dir_to_T(PSFpath)
+#     ops = if channel=="t"
+#         # G(12,34)
+#         ["Q12", "Q34"]
+#     elseif channel in ["p", "pNRG"]
+#         # -ζ G(13,24)
+#         ["Q13", "Q24"]
+#     elseif channel=="a"
+#         # -G(14,23)
+#         ["Q14", "Q23"]
+#     else
+#         error("Invalid channel")
+#     end
+#     G = if formalism=="MF"
+#             TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T=T, flavor_idx=flavor_idx, ωs_ext=(ωs_ext,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+#         elseif formalism=="KF"
+#             basepath = join(split(rstrip(PSFpath, '/'), "/")[1:end-1], "/")
+#             (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+#             # (γ, sigmak) = (5.0*1.e-7, [0.01])
+#             println("-- Broadening parameters: γ=$γ, σk=$(only(sigmak))")
+#             TCI4Keldysh.FullCorrelator_KF(
+#                 PSFpath, ops;
+#                 T=T, flavor_idx=flavor_idx, ωs_ext=(ωs_ext,), ωconvMat=reshape([ 1; -1], (2,1)), γ=γ, sigmak=sigmak, name="SIAM 2pG",
+#                 broadening_kwargs...);
+#         end
+#     println("-- Adisc weight K1:")
+#     println("  ($(sum(G.Gps[1].tucker.center)), $(sum(G.Gps[2].tucker.center)))")
+#     sign = TCI4Keldysh.channel_K1_sign(channel)
+#     return sign * TCI4Keldysh.precompute_all_values(G)
+# end
 
 function translate_K1_iK(ik::NTuple{4,Int}, channel::String)::NTuple{2,Int}
     _conv(k1::Int,k2::Int) = ifelse(isodd(k1+k2), 2, 1)
@@ -318,14 +309,14 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
     broadening_kwargs = read_broadening_settings(mpNRGpath ;channel=channel)
     # broadening_kwargs[:emax] += 20.0
     # broadening_kwargs[:emin] /= 100.0
-    if !haskey(broadening_kwargs, "estep")
-        broadening_kwargs[:estep] = 1000
+    if !haskey(broadening_kwargs, :estep)
+        broadening_kwargs[:estep] = 500
     end
 
 
     # TCI4Keldysh
     ωs_ext = vec(grid[end])
-    K1_test_alliK = precompute_K1r(PSFpath, flavor, "KF"; channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)
+    K1_test_alliK = TCI4Keldysh.precompute_K1r(PSFpath, flavor, "KF"; channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)
     for ik in Iterators.product(ntuple(_->[1,2], 2)...)
         @show (ik, norm(K1_test_alliK[:,ik...]))
     end
@@ -399,6 +390,63 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
 end
 
 
+function test_K1_TCI(formalism="MF"; ωmax::Float64=1.0, channel="t", flavor=1)
+    basepath = "SIAM_u=0.50"
+    # basepath = "SIAM_u=1.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=2_conn_zavg/")
+    R = 12
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    # TCI4Keldysh
+    ωs_ext = if formalism=="MF"
+            TCI4Keldysh.MF_grid(T, 2^(R-1), false)
+        else
+            TCI4Keldysh.KF_grid_bos(ωmax, R)
+        end
+    K1_slice = formalism=="MF" ? (1:2^R,) : (1:2^R,:,:)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath;channel=channel)
+    K1_test = TCI4Keldysh.precompute_K1r(PSFpath, flavor, formalism; channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)[K1_slice...]
+
+    ncomponents = formalism=="MF" ? 1 : 4
+    # TCI4Keldysh: TCI
+    K1_tci = TCI4Keldysh.K1_TCI(
+        PSFpath,
+        R;
+        ωmax=ωmax,
+        formalism=formalism,
+        channel=channel,
+        T=T,
+        flavor_idx=flavor,
+        unfoldingscheme=:interleaved,
+        tolerance=1.e-8
+        )
+
+    K1_tcivals_ = fill(zeros(ComplexF64, ntuple(_->2,R)), Int(sqrt(ncomponents)), Int(sqrt(ncomponents)))
+    for i in eachindex(K1_tcivals_)
+        if !isnothing(K1_tci[i])
+            K1_tcivals_[i] = TCI4Keldysh.qtt_to_fattensor(K1_tci[i].tci.sitetensors)
+        end
+    end
+    K1_tcivals = [TCI4Keldysh.qinterleaved_fattensor_to_regular(k1, R) for k1 in K1_tcivals_]
+    K1_tcivals_block = reshape(vcat(K1_tcivals...), (2^R, ncomponents))
+
+    # plot TCI
+    if formalism=="MF"
+        p = TCI4Keldysh.default_plot()
+        ωs_ext_TCI = ωs_ext[1:2^R]
+        plot!(p, ωs_ext_TCI, real.(K1_test); label="Re, Julia", linestyle=:dash)
+        plot!(p, ωs_ext_TCI, imag.(K1_test); label="Im, Julia", linestyle=:dash)
+        plot!(p, ωs_ext_TCI, real.(K1_tcivals[1]); label="Re, Julia@TCI", linestyle=:dot)
+        plot!(p, ωs_ext_TCI, imag.(K1_tcivals[1]); label="Im, Julia@TCI", linestyle=:dot)
+        title!(p, "K1@$(channel)-channel: TCI vs convenctional")
+        savefig("K1_comparison_tci.pdf")
+    end
+
+    K1_test = reshape(K1_test, 2^R, ncomponents)
+    diff = abs.(K1_tcivals_block .- K1_test)
+    @show maximum(diff) / maximum(abs.(K1_test))
+end
+
 """
 Comparison to MuNRG
 K1 is independent of the fermionic frequencies in all channels.
@@ -443,16 +491,49 @@ function check_K1_MF(;channel="t")
     # TCI4Keldysh
     ωs_ext = imag.(vec(grid[end]))
     @assert isodd(length(ωs_ext)) "Grid is not bosonic"
-    K1_test = precompute_K1r(PSFpath, flavor; channel=channel, ωs_ext=ωs_ext)
+    K1_test = TCI4Keldysh.precompute_K1r(PSFpath, flavor; channel=channel, ωs_ext=ωs_ext)
+
+    # TCI4Keldysh: TCI
+    R = Int(floor(log2(length(ωs_ext))))
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    K1_tci = TCI4Keldysh.K1_TCI(
+        PSFpath,
+        R;
+        formalism="MF",
+        channel=channel,
+        T=T,
+        flavor_idx=flavor,
+        unfoldingscheme=:interleaved,
+        tolerance=1.e-8
+        )[1]
+
+    K1_tcivals_ = TCI4Keldysh.qtt_to_fattensor(K1_tci.tci.sitetensors)
+    K1_tcivals = TCI4Keldysh.qinterleaved_fattensor_to_regular(K1_tcivals_, R)
+    ωs_ext_TCI = TCI4Keldysh.MF_grid(T, 2^(R-1), false)[1:2^R]
 
     # plot
     p = TCI4Keldysh.default_plot()
-    plot!(p, real.(K1D); label="Re, MuNRG")
-    plot!(p, imag.(K1D); label="Im, MuNRG")
-    plot!(p, real.(K1_test); label="Re, Julia", linestyle=:dash)
-    plot!(p, imag.(K1_test); label="Im, Julia", linestyle=:dash)
+    plot!(p, ωs_ext, real.(K1D); label="Re, MuNRG")
+    plot!(p, ωs_ext, imag.(K1D); label="Im, MuNRG")
+    plot!(p, ωs_ext, real.(K1_test); label="Re, Julia", linestyle=:dash)
+    plot!(p, ωs_ext, imag.(K1_test); label="Im, Julia", linestyle=:dash)
     title!(p, "K1@$(channel)-channel: MuNRG vs Julia")
     savefig("K1_comparison.pdf")
+
+    # plot TCI
+    p = TCI4Keldysh.default_plot()
+    iom = findfirst(w -> w==first(ωs_ext_TCI), ωs_ext)
+    @show iom
+    omslice = iom:iom+2^R-1
+    @show omslice
+    K1_test
+    plot!(p, ωs_ext_TCI, real.(K1_test)[omslice]; label="Re, Julia", linestyle=:dash)
+    plot!(p, ωs_ext_TCI, imag.(K1_test)[omslice]; label="Im, Julia", linestyle=:dash)
+    plot!(p, ωs_ext_TCI, real.(K1_tcivals); label="Re, Julia@TCI", linestyle=:dot)
+    plot!(p, ωs_ext_TCI, imag.(K1_tcivals); label="Im, Julia@TCI", linestyle=:dot)
+    title!(p, "K1@$(channel)-channel: TCI vs convenctional")
+    savefig("K1_comparison_tci.pdf")
+
 
     # diff
     diff = K1D .- K1_test
@@ -462,6 +543,241 @@ function check_K1_MF(;channel="t")
     title!(p, "K1@$(channel)-channel: real(MuNRG-Julia)";label="")
     savefig("K1_diff.pdf")
 end
+
+function check_K2_MF(;channel="t", prime=false)
+
+    basepath = "SIAM_u=0.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
+    Vpath = joinpath(TCI4Keldysh.datadir(), basepath, "V_MF_" * TCI4Keldysh.channel_translate(channel))
+    
+    # load K2
+    flavor = 1
+    K2 = nothing
+    grid = nothing
+    channel_id = if channel=="t"
+        ifelse(prime, 1, 6)
+    elseif channel=="pNRG"
+        ifelse(prime, 2, 5)
+    elseif channel=="a"
+        ifelse(prime, 3, 4)
+    else
+        error("Invalid channel $channel")
+    end
+    matopen(joinpath(Vpath, "V_MF_U3_$(channel_id).mat")) do f
+        CFdat = read(f, "CFdat")
+        K2 = CFdat["Ggrid"][flavor]
+        grid = vec(CFdat["ogrid"])
+        @show size(K2)
+        @show size(grid)
+    end
+
+    # Σ data
+    ωs_Σ = nothing
+    Σ_file = "SE_MF_1.mat"
+    matopen(joinpath(Vpath, Σ_file), "r") do f
+        CFdat = read(f, "CFdat")
+        ωs_Σ_ = vec(vec(CFdat["ogrid"])[1])
+        @assert norm(real.(ωs_Σ_)) <= 1.e-10
+        ωs_Σ = imag.(ωs_Σ_)
+    end
+
+    # extract 2D; frequencies in order (ν,ν',ω)
+    slice = ifelse(prime, (1,:,:), (:,1,:))
+    K2D = K2[slice...]
+    # move bosonic frequency to first argument
+    K2D = permutedims(K2D, [2,1])
+
+    # TCI4Keldysh
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    permute!(grid, [3,1,2])
+    ωconvMat = TCI4Keldysh.channel_trafo_K2(channel,prime)
+    ωs_ext = ntuple(i -> imag.(vec(grid[i])), 2)
+    op_labels = TCI4Keldysh.oplabels_K2(channel,prime)
+    (ΣL, ΣR) = TCI4Keldysh.calc_Σ_MF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor,T=T)
+    # ΣR = TCI4Keldysh.calc_Σ_MF_sIE(PSFpath, ωs_Σ; flavor_idx=flavor,T=T)
+    K2julia = TCI4Keldysh.compute_K2r_symmetric_estimator(
+        "MF",
+        PSFpath,
+        op_labels,
+        ΣR;
+        Σ_calcL=ΣL,
+        # Σ_calcL=nothing,
+        T=T,
+        flavor_idx=flavor,
+        ωs_ext=ωs_ext,
+        ωconvMat=ωconvMat
+    )
+    @show size(K2julia)
+    @show size(K2D)
+
+    # t-channel: no sign
+    # p-channel: 0
+    # a-channel: minus sign if prime===false
+    sign = ifelse(channel=="a" && !prime, -1, 1)
+    K2julia *= sign
+    reverse!(K2julia)
+    heatmap(real.(K2julia))
+    savefig("K2.pdf")
+    heatmap(real.(K2D))
+    savefig("K2_ref.pdf")
+    @show maximum(abs.(real.(K2D .- K2julia)))
+    @show maximum(abs.(imag.(K2D .- K2julia)))
+    @show maximum(abs.(K2D .- K2julia))
+end
+
+function test_K2_TCI_precomputed(;formalism="MF", channel="t", prime=false, flavor_idx=1)
+    basepath = "SIAM_u=0.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
+
+    R = 5
+    Nhalf = 2^(R-1)
+    ωmax = 1.0
+
+    # TCI4Keldysh: Reference
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ωs_ext = if formalism=="MF"
+            TCI4Keldysh.MF_npoint_grid(T, Nhalf, 2)
+        else
+            TCI4Keldysh.KF_grid(ωmax, R, 2)
+        end
+    K2 = TCI4Keldysh.precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext, channel=channel, prime=prime)
+    K2slice = if formalism=="MF"
+            (1:2^R,Colon())
+        else
+            (1:2^R,Colon(),:,:,:)
+        end
+    K2 = K2[K2slice...]
+
+    # TCI4Keldysh: TCI way
+    K2tci = TCI4Keldysh.K2_TCI_precomputed(
+        PSFpath,
+        R;
+        formalism=formalism,
+        flavor_idx=flavor_idx,
+        channel=channel,
+        prime=prime,
+        T=T,
+        ωmax=ωmax,
+        tolerance=1.e-8
+    )
+
+    ncomponents = formalism=="MF" ? 1 : 8
+    nkeldysh = formalism=="MF" ? 1 : 2
+    K2tcivals = fill(zeros(ComplexF64, ntuple(_->2, 2*R)), nkeldysh,nkeldysh,nkeldysh)
+    for i in eachindex(K2tci)
+        if !isnothing(K2tci[i])
+            K2tcivals[i] = TCI4Keldysh.qtt_to_fattensor(K2tci[i].tci.sitetensors)
+        end
+    end
+    K2tcivals = [TCI4Keldysh.qinterleaved_fattensor_to_regular(k2, R) for k2 in K2tcivals]
+    @show size.(K2tcivals)
+
+    K2_test = reshape(K2, 2^R, 2^R, ncomponents)
+    @show size(K2_test)
+    for i in 1:ncomponents
+        diff = abs.(K2_test[:,:,i] .- K2tcivals[i]) ./ maximum(abs.(K2_test[:,:,i]))
+        @show maximum(diff)
+    end
+
+    component = 1
+    scfun(x) = log10(abs(x))
+    # heatmap(scfun.(K2tcivals_block[:,:,component]))
+    heatmap(scfun.(K2tcivals[component][:,:]))
+    savefig("K2.pdf")
+    heatmap(scfun.(K2_test[:,:,component]))
+    savefig("K2_ref.pdf")
+end
+
+
+function check_K2_KF(;channel="t", prime=false)
+    basepath = "SIAM_u=0.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
+    Vpath = joinpath(TCI4Keldysh.datadir(), basepath, "V_KF_" * TCI4Keldysh.channel_translate(channel))
+    
+    # load K2
+    flavor = 1
+    K2 = nothing
+    grid = nothing
+    channel_id = if channel=="t"
+        ifelse(prime, 1, 6)
+    elseif channel=="pNRG"
+        ifelse(prime, 2, 5)
+    elseif channel=="a"
+        ifelse(prime, 3, 4)
+    else
+        error("Invalid channel $channel")
+    end
+    matopen(joinpath(Vpath, "V_KF_U3_$(channel_id).mat")) do f
+        CFdat = read(f, "CFdat")
+        K2 = CFdat["Ggrid"][flavor]
+        grid = vec(CFdat["ogrid"])
+        @show size(K2)
+        @show size(grid)
+    end
+
+    # Σ data
+    ωs_Σ = nothing
+    Σ_file = "SE_KF_1.mat"
+    matopen(joinpath(Vpath, Σ_file), "r") do f
+        CFdat = read(f, "CFdat")
+        ωs_Σ_ = vec(vec(CFdat["ogrid"])[1])
+        @assert norm(imag.(ωs_Σ_)) <= 1.e-10
+        ωs_Σ = real.(ωs_Σ_)
+    end
+
+    # extract 2D; frequencies in order (ν,ν',ω)
+    # K2 still carries 4 Keldysh indices
+    slice = ifelse(prime, (1,:,:, :,:,:,:), (:,1,:, :,:,:,:))
+    K2D = K2[slice...]
+    # move bosonic frequency to first argument
+    K2D = permutedims(K2D, [2,1,3,4,5,6])
+
+    # TCI4Keldysh
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    permute!(grid, [3,1,2])
+    ωconvMat = TCI4Keldysh.channel_trafo_K2(channel,prime)
+    ωs_ext = ntuple(i -> real.(vec(grid[i])), 2)
+    op_labels = TCI4Keldysh.oplabels_K2(channel,prime)
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath)
+    (ΣL, ΣR) = TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor,T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+    # ΣR = TCI4Keldysh.calc_Σ_KF_sIE(PSFpath, ωs_Σ; flavor_idx=flavor,T=T)
+    printstyled("  Compute K2...\n"; color=:blue)
+    K2julia = TCI4Keldysh.compute_K2r_symmetric_estimator(
+        "KF",
+        PSFpath,
+        op_labels,
+        ΣR;
+        Σ_calcL=ΣL,
+        # Σ_calcL=nothing,
+        T=T,
+        flavor_idx=flavor,
+        ωs_ext=ωs_ext,
+        ωconvMat=ωconvMat,
+        γ=γ,
+        sigmak=sigmak,
+        broadening_kwargs...
+    )
+    @show size(K2julia)
+    @show size(K2D)
+
+    error("nyi")
+
+    # t-channel: no sign
+    # p-channel: 0
+    # a-channel: minus sign if prime===false
+    sign = ifelse(channel=="a" && !prime, -1, 1)
+    K2julia *= sign
+    reverse!(K2julia)
+    heatmap(real.(K2julia))
+    savefig("K2.pdf")
+    heatmap(real.(K2D))
+    savefig("K2_ref.pdf")
+    @show maximum(abs.(real.(K2D .- K2julia)))
+    @show maximum(abs.(imag.(K2D .- K2julia)))
+    @show maximum(abs.(K2D .- K2julia))
+end
+
 
 """
 Comparison to MuNRG
@@ -751,7 +1067,7 @@ function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1)
     mean = sum(reldiff) / length(reldiff)
     @show mean
     heatmap(abs.(reldiff[slice...]); right_margin=10Plots.mm)
-    savefig("reldiff.png")
+    savefig("reldiff.pdf")
     return maxdiff
 end
 
@@ -759,6 +1075,17 @@ function check_V_MF_all()
    check_V_MF(2^4;channel="t") 
    check_V_MF(2^4;channel="a") 
    check_V_MF(2^4;channel="pNRG") 
+end
+
+function load_omgrid_gamcore(base_path="SIAM_u=0.50"; channel="t")
+    core_file = "V_KF_U4.mat"
+    ωs_ext = nothing
+    Vpath = joinpath(TCI4Keldysh.datadir(), base_path, "V_KF_" * TCI4Keldysh.channel_translate(channel))
+    matopen(joinpath(Vpath, core_file), "r") do f
+        CFdat = read(f, "CFdat")
+        ωs_ext = ntuple(i -> real.(vec(vec(CFdat["ogrid"])[i])), 3)
+    end
+    return ωs_ext
 end
 
 """
@@ -908,16 +1235,15 @@ function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
     savefig("diff.pdf")
 end
 
-function load_Γcore_KF(base_path::String = "SIAM_u=0.50"; channel="t")
+function load_Γcore_KF(base_path::String = "SIAM_u=0.50"; channel="t", flavor_idx=1)
     Vpath = joinpath(TCI4Keldysh.datadir(), base_path, "V_KF_" * TCI4Keldysh.channel_translate(channel))
 
     # Γcore data
     core_file = "V_KF_U4.mat"
     Γcore_ref = nothing
-    spin = 1
     matopen(joinpath(Vpath, core_file), "r") do f
         CFdat = read(f, "CFdat")
-        Γcore_ref = CFdat["Ggrid"][spin]
+        Γcore_ref = CFdat["Ggrid"][flavor_idx]
     end
     return Γcore_ref
 end
@@ -926,12 +1252,16 @@ function precomp_compr_filename(iK::Int, tolerance::Float64)
     return "vertex_iK=$(iK)_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"    
 end
 
+function compression_slice()
+    return 100-63:100+64
+end
+
 function compress_precomputed_V_KF(Γcore_ref::Array{ComplexF64,7}, iK::Int, channel="t"; store=false, tcikwargs...)
 
     iK_tuple = TCI4Keldysh.KF_idx(iK, 3)
     Γcore_ref = permutedims(Γcore_ref, (1,2,3, 4,5,6,7))
-    R5slice = 100-63:100+64
-    to_tci = Γcore_ref[R5slice, R5slice, R5slice, iK_tuple...]
+    R7slice = compression_slice()
+    to_tci = Γcore_ref[R7slice, R7slice, R7slice, iK_tuple...]
     # to_tci = TCI4Keldysh.zeropad_array(Γcore_ref[:,:,:,iK_tuple...])
     @show size(Γcore_ref)
 
@@ -947,7 +1277,7 @@ function compress_precomputed_V_KF(Γcore_ref::Array{ComplexF64,7}, iK::Int, cha
         # end
         qtt_fat = TCI4Keldysh.qtt_to_fattensor(qtt.tci.sitetensors)
         @show size(qtt_fat)
-        qtt_fat = TCI4Keldysh.qinterleaved_fattensor_to_regular(qtt_fat, round(Int, log2(length(R5slice))))
+        qtt_fat = TCI4Keldysh.qinterleaved_fattensor_to_regular(qtt_fat, round(Int, log2(length(R7slice))))
         @show size(qtt_fat)
         h5open(joinpath(precompressed_datadir(), precomp_compr_filename(iK, tolerance)), "w") do fid
             fid["qttdata"] = qtt_fat
@@ -968,29 +1298,44 @@ function triptych_vertex(iK::Int, tolerance::Float64)
     ref = h5read(fname, "reference")
     tcival = h5read(fname, "qttdata")
     diff = h5read(fname, "diff")
+    iKtuple = TCI4Keldysh.KF_idx(iK,3)
+
 
     @assert size(ref)==size(tcival)==size(diff) "incompatible sizes"
     Nhalf = div(size(ref)[1], 2)
 
     maxref = maximum(abs.(ref))
-    slice = (Nhalf, Colon(), Colon())
+    transfer_offset = 0 
+    # transfer frequency comes last in reference data!
+    slice = (Colon(), Colon(), Nhalf+1 + transfer_offset)
+    # slice = (Nhalf + transfer_offset, Colon(), Colon())
+    axis_ids = [1,2]
+    axis_labels = (L"\omega", L"\omega'", L"\nu")
+    # load frequency grid
+    omgrid = load_omgrid_gamcore()
+    omgrid_part = [om[compression_slice()] for om in omgrid]
 
     scfun(x) = abs(x)
     p = TCI4Keldysh.default_plot()
-    heatmap!(p, scfun.(ref[slice...]); right_margin=10Plots.mm)
-    title!(p, L"$\Gamma_{\mathrm{core}}$: Reference")
-    savefig("V_KFref_iK=$(iK)_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+    heatmap!(p, omgrid_part[axis_ids[1]], omgrid_part[axis_ids[2]], scfun.(ref[slice...]); right_margin=10Plots.mm)
+    ylabel!(axis_labels[axis_ids[1]])
+    xlabel!(axis_labels[axis_ids[2]])
+    title!(p, L"$\Gamma_{\mathrm{core}}^{%$iKtuple}$: Reference")
+    savefig("V_KFref_iK=$(iK)_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
 
     p = TCI4Keldysh.default_plot()
-    heatmap!(p, scfun.(tcival[slice...]); right_margin=10Plots.mm)
-    title!(p, L"$\Gamma_{\mathrm{core}}$: QTCI")
-    savefig("V_KFtci_iK=$(iK)_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+    heatmap!(p, omgrid_part[axis_ids[1]], omgrid_part[axis_ids[2]], scfun.(tcival[slice...]); right_margin=10Plots.mm)
+    ylabel!(axis_labels[axis_ids[1]])
+    xlabel!(axis_labels[axis_ids[2]])
+    title!(p, L"$\Gamma_{\mathrm{core}}^{%$iKtuple}$: QTCI")
+    savefig("V_KFtci_iK=$(iK)_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
 
     p = TCI4Keldysh.default_plot()
-    @show maxref
-    heatmap!(p, log10.(abs.(diff[slice...] ./ maxref)); right_margin=10Plots.mm)
-    title!(p, L"Error: $|\Gamma_{\mathrm{core}}^{\mathrm{ref}} - \Gamma_{\mathrm{core}}^{\mathrm{QTCI}}| / \max(\Gamma_{\mathrm{core}})$")
-    savefig("V_KFdiff_iK=$(iK)_tol=$(TCI4Keldysh.tolstr(tolerance)).png")
+    heatmap!(p, omgrid_part[axis_ids[1]], omgrid_part[axis_ids[2]], log10.(abs.(diff[slice...] ./ maxref)); right_margin=10Plots.mm)
+    ylabel!(axis_labels[axis_ids[1]])
+    xlabel!(axis_labels[axis_ids[2]])
+    title!(p, L"$\log_{10}|\Gamma_{\mathrm{core}}^{\mathrm{ref}} - \Gamma_{\mathrm{core}}^{\mathrm{QTCI}}|_\infty / |\Gamma_{\mathrm{core}}^{\mathrm{ref}}|_\infty$")
+    savefig("V_KFdiff_iK=$(iK)_tol=$(TCI4Keldysh.tolstr(tolerance)).pdf")
 end
 
 function V_KF_compressed_name(iK::Int, R::Int=7)
@@ -1007,7 +1352,7 @@ function compress_precomputed_V_KF_tolsweep(iK::Int, channel="t", tcikwargs...)
     end
     d = Dict{Int, Vector{Int}}()
     Γcore_ref = load_Γcore_KF(;channel=channel)
-    for tol in reverse(10.0 .^ (-6:-2))
+    for tol in reverse(10.0 .^ (-2:-6))
         ld = compress_precomputed_V_KF(Γcore_ref, iK, channel; tolerance=tol, tcikwargs...)
         d[round(Int, log10(tol))] = ld
     end
@@ -1036,7 +1381,7 @@ function plot_precomputed_V_KF_ranks(iK::Int, R::Int=7; p=TCI4Keldysh.default_pl
         ylabel!(p, L"\chi")
         xlabel!(p, "tolerance")
         title!(p, L"Keldysh $\Gamma_{\mathrm{core}}$: ranks vs. tolerance")
-        savefig(joinpath(precompressed_datadir(),"V_KF_ranks_iK=$(iK)_R=$(R).png"))
+        savefig(joinpath(precompressed_datadir(),"V_KF_ranks_iK=$(iK)_R=$(R).pdf"))
     end
 end
 
@@ -1049,13 +1394,13 @@ function plot_precomputed_V_KF_ranks_all(R::Int=7)
 
     ylabel!(p, L"\chi")
     xlabel!(p, "tolerance")
-    title!(p, L"Keldysh components of $\Gamma_{\mathrm{core}}$: QTCI-ranks")
+    title!(p, L"All Keldysh components of $\Gamma_{\mathrm{core}}$: QTCI-ranks")
     worstcase = 2^(div(3*R, 2)) 
     ylims!(0, worstcase+30)
     hline!(p, [worstcase]; color=:black, linestyle=:dash, label="worstcase")
-    savefig(p, joinpath(precompressed_datadir(), "V_KF_ranks.png"))
+    savefig(p, joinpath(precompressed_datadir(), "V_KF_ranks.pdf"))
 end
 
-# for iK in 12:15
+# for iK in 8:8
 #     compress_precomputed_V_KF_tolsweep(iK)
 # end

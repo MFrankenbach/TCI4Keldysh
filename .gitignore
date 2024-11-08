@@ -8,3 +8,4 @@ cluster_output/**
 *pdf
 slurm*log
 *.sh
+.CondaPkg/**

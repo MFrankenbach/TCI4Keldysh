@@ -345,6 +345,7 @@ function time_FullCorrelator_sweep(
         d["ranks"] = qttranks
         d["bonddims"] = qttbonddims
         d["Rs"] = Rs
+        d["flavor_idx"] = flavor_idx
         d["beta"] = beta
         d["PSFpath"] = PSFpath
         d["nomdisc"] = nωdisc

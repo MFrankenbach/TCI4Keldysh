@@ -643,22 +643,32 @@ function KF_grid(ωmax::Float64, R::Int, D::Int)
     return ntuple(i -> ifelse(i==1, ωbos, ωfer), D)
 end
 
-"""
-1D grid
-"""
 function KF_grid_fer(ωmax::Float64, R::Int)
-    @assert ωmax > 0.0
-    ωmin = -ωmax
-    ωfer_off = 0.5*(ωmax - ωmin)/2^R
-    return collect(range(-ωmax + ωfer_off, ωmax - ωfer_off; length=2^R))
+    KF_grid_fer_(ωmax, 2^R)
 end
 
 """
 1D grid
 """
-function KF_grid_bos(ωmax::Float64, R::Int)
+function KF_grid_fer_(ωmax::Float64, N::Int)
     @assert ωmax > 0.0
-    return collect(range(-ωmax, ωmax; length=2^R+1))
+    @assert iseven(N)
+    ωmin = -ωmax
+    ωfer_off = 0.5*(ωmax - ωmin)/N
+    return collect(range(-ωmax + ωfer_off, ωmax - ωfer_off; length=N))
+end
+
+function KF_grid_bos(ωmax::Float64, R::Int)
+    KF_grid_bos_(ωmax,2^R)
+end
+
+"""
+1D grid with N+1 points
+"""
+function KF_grid_bos_(ωmax::Float64, N::Int)
+    @assert ωmax > 0.0
+    @assert iseven(N)
+    return collect(range(-ωmax, ωmax; length=N+1))
 end
 
 """
@@ -1077,7 +1087,8 @@ end
 Where to find PSF data
 """
 function datadir()
-    return joinpath(dirname(Base.current_project()), "data")
+    # return joinpath(dirname(Base.current_project()), "data")
+    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
 end
 
 """
@@ -1138,6 +1149,29 @@ function report_mem(do_gc=false)
     println("-----------------------------------")
 end
 
+function channel_K1_Ops(channel::String)
+    if channel=="t"
+        return ["Q12", "Q34"]
+    elseif channel=="a"
+        return ["Q14", "Q23"]
+    elseif channel=="p" || channel=="pNRG"
+        return ["Q13", "Q24"]
+    else
+        error("Invalid channel $channel")
+    end
+end
+
+function channel_K1_sign(channel::String)
+    return if channel=="t"
+        1
+    elseif channel in ["p", "pNRG"]
+        -1
+    elseif channel=="a"
+        -1
+    else
+        error("Invalid channel")
+    end
+end
 
 function channel_translate(channel::String)
     if channel=="t"
@@ -1215,11 +1249,32 @@ end
 
 function merged_legs_K2(channel::String, prime::Bool)
     noprime_dict = Dict("a" => (2,3), "p" => (2,4), "t" => (3,4))
+    noprime_dict["pNRG"] = noprime_dict["p"]
     prime_dict = Dict("a" => (1,4), "p" => (1,3), "t" => (1,2))
+    prime_dict["pNRG"] = prime_dict["p"]
     if !prime
         return noprime_dict[channel]
     else
         return prime_dict[channel]
+    end
+end
+
+function oplabels_K2(channel::String, prime::Bool)
+    (i,j) = merged_legs_K2(channel, prime)
+    nonij = sort(setdiff(1:4, (i,j)))
+    leg_labels = ("1", "1dag", "3", "3dag")
+    return ["Q$i$j", leg_labels[nonij[1]], leg_labels[nonij[2]]]
+end
+
+function channel_K2_sign(channel::String, prime::Bool)
+    if channel=="a"
+        return ifelse(prime, -1, 1)
+    elseif channel in ["p", "pNRG"]
+        return ifelse(prime, -1, 1)
+    elseif channel=="t"
+        return 1
+    else
+        error("Invalid channel $channel")
     end
 end
 
@@ -1231,7 +1286,7 @@ function channel_trafo_K2(channel::String, prime::Bool)
                 sum(view(ωconvMat, [2,3], [1,2]), dims=1);
                 view(ωconvMat, [1,4], [1,2])
             ]
-        elseif channel=="p"
+        elseif channel in ["p","pNRG"]
             return [
                 sum(view(ωconvMat, [2,4], [1,2]), dims=1);
                 view(ωconvMat, [1,3], [1,2])
@@ -1248,7 +1303,7 @@ function channel_trafo_K2(channel::String, prime::Bool)
                 sum(view(ωconvMat, [1,4], [1,3]), dims=1);
                 view(ωconvMat, [2,3], [1,3])
             ]
-        elseif channel=="p"
+        elseif channel in ["p","pNRG"]
             return [
                 sum(view(ωconvMat, [1,3], [1,3]), dims=1);
                 view(ωconvMat, [2,4], [1,3])

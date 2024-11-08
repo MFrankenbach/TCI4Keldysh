@@ -37,25 +37,21 @@ function compute_K2r_symmetric_estimator(
         Σs_R
     end
 
-    if formalism=="KF" && !isnothing(Σ_calcL)
-        error("Still need to make KF part use two different self-energies")
-    end
-
     for letts in letter_combinations#[2:end]
 
         if formalism == "MF"
-        K2a_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; T, flavor_idx, ωs_ext, ωconvMat);
-        K2a_data_tmp = TCI4Keldysh.precompute_all_values(K2a_tmp)
+            K2a_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; T, flavor_idx, ωs_ext, ωconvMat);
+            K2a_data_tmp = TCI4Keldysh.precompute_all_values(K2a_tmp)
 
-        for il in eachindex(letts)
-            if letts[il] == 'F'
-                if is_incoming[il]
-                    K2a_data_tmp = -K2a_data_tmp .* Σs_R[il]
-                else
-                    K2a_data_tmp = -K2a_data_tmp .* Σs_L[il]
+            for il in eachindex(letts)
+                if letts[il] == 'F'
+                    if is_incoming[il]
+                        K2a_data_tmp = -K2a_data_tmp .* Σs_R[il]
+                    else
+                        K2a_data_tmp = -K2a_data_tmp .* Σs_L[il]
+                    end
                 end
             end
-        end
         else
             K2a_tmp      = TCI4Keldysh.FullCorrelator_KF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; T, flavor_idx, ωs_ext, ωconvMat, broadening_kwargs...);
 
@@ -64,7 +60,11 @@ function compute_K2r_symmetric_estimator(
             for il in eachindex(letts)
                 if letts[il] == 'F'
                     #K2a_data_tmp[:,:,] = -K2a_data_tmp .* Σs[il]
-                    K2a_data_tmp = _mult_Σ_KF(-K2a_data_tmp, Σs_R[il]; idim=3+il, is_incoming=is_incoming[il])
+                    if is_incoming[il]
+                        K2a_data_tmp = _mult_Σ_KF(-K2a_data_tmp, Σs_R[il]; idim=3+il, is_incoming=is_incoming[il])
+                    else
+                        K2a_data_tmp = _mult_Σ_KF(-K2a_data_tmp, Σs_L[il]; idim=3+il, is_incoming=is_incoming[il])
+                    end
                 else
                     reverse!(K2a_data_tmp, dims=3+il)
                 end

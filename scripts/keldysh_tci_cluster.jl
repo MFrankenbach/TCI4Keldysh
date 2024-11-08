@@ -405,6 +405,12 @@ function serialize_tt(qtt, outname::String, folder::String)
     serialize(fname_tt, qtt)
 end
 
+function serialize_tt(tci, grid, outname::String, folder::String)
+    R = grid.R
+    fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
+    serialize(fname_tt, (tci, grid))
+end
+
 function deserialize_tt(R::Int, outname::String, folder::String)
     fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
     return deserialize(fname_tt)
@@ -452,7 +458,8 @@ function time_FullCorrelator_sweep(
     qttranks = []
     bonddims = []
     svd_kernel = true
-    ωmax = 1.0
+    # box size used in MuNRG for beta=2000 Keldysh vertex
+    ωmax = 0.3183098861837907
     ωmin = -ωmax
     flavor_idx = 1
     if mode=="R"
@@ -556,8 +563,9 @@ function time_Γcore_KF_sweep(
     qttranks = []
     bonddims = []
     svd_kernel = true
-    ωmax = 1.0
-    ωmin = -1.0
+    # box size used in MuNRG for beta=2000 Keldysh vertex
+    ωmax = 0.3183098861837907
+    ωmin = -ωmax
     flavor_idx = 1
     if mode=="R"
         Rs = param_range
@@ -597,7 +605,7 @@ function time_Γcore_KF_sweep(
                     dump_path=dump_path,
                     resume_path=resume_path,
                     tolerance=tolerance,
-                    verbosity,
+                    verbosity=2,
                     unfoldingscheme=:interleaved,
                     broadening_kwargs...
                     )
@@ -610,7 +618,7 @@ function time_Γcore_KF_sweep(
             TCI4Keldysh.updateJSON(outname, "bonddims", bonddims, folder)
 
             if serialize_tts            
-                serialize_tt((qtt.tci, qtt.grid), outname, folder)
+                serialize_tt(qtt.tci, qtt.grid, outname, folder)
             end
 
             println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
@@ -991,6 +999,17 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
 end
 
 """
+format: run_nr{PSFpath_id}{iK}{logtol}{Rmin}{Rmax}
+"""
+function parse_run_nr_Rrange(run_nr::Int;nz::Int=4)
+    dd = digits(run_nr)
+    @assert length(dd)==8 "Invalid run_nr"
+    (PSFpath, base_path, iK, tolerance, Rmin) = parse_run_nr(div(run_nr,100); nz=nz)
+    Rmax = rem(run_nr, 100)
+    return (PSFpath, base_path, iK, tolerance, Rmin, Rmax)
+end
+
+"""
 format: run_nr{PSFpath_id}{iK}{logtol}{R}
 """
 function parse_run_nr(run_nr::Int; nz::Int=4)
@@ -1023,18 +1042,45 @@ function Γcore_jobs(args)
             else
                 "pwtcidata"
             end
-    dump_path = (args[3] in localargs) ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
-    resume_path = (args[3] == "resume") ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    localargs = ["local", "checkpoint", "resume"]
+    dump_path = (length(args)>2 && args[3] in localargs) ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    resume_path = (length(args)>2 && args[3] == "resume") ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
 
     nz = 4
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/")
     if run_nr==0
         time_Γcore_KF_sweep(3:3, PSFpath, 2, 1000.0, 0.5; tolerance=1.e-3, serialize_tts=true)
+
+    # format: run_nr{PSFpath_id}{iK}{logtol}{Rmin}{Rmax}
+    elseif run_nr>=10^7
+        # no dump, normal TCI convergence criterion
+        dump_path = nothing
+        (PSFpath, base_path, iK, tolerance, Rmin, Rmax) = parse_run_nr_Rrange(run_nr)
+        channel = "t"
+        (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
+        broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
+        if !haskey(broadening_kwargs, :estep)
+            broadening_kwargs[:estep] = 500
+        end
+        time_Γcore_KF_sweep(
+            Rmin:Rmax, PSFpath, iK, γ, only(sigmak);
+            folder=folder,
+            dump_path=dump_path,
+            resume_path=resume_path,
+            tolerance=tolerance,
+            serialize_tts=true,
+            broadening_kwargs...
+        )
+
+    # format: run_nr{PSFpath_id}{iK}{logtol}{R}
     elseif run_nr>=10^5
         (PSFpath, base_path, iK, tolerance, R) = parse_run_nr(run_nr)
         channel = "t"
         (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
         broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
+        if !haskey(broadening_kwargs, :estep)
+            broadening_kwargs[:estep] = 500
+        end
         time_Γcore_KF_sweep(
             R:R, PSFpath, iK, γ, only(sigmak);
             folder=folder,
@@ -1063,16 +1109,33 @@ function FullCorrelator_jobs(args)
             else
                 "pwtcidata"
             end
-    dump_path = (args[3] in localargs) ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
-    resume_path = (args[3] == "resume") ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    dump_path = (length(args)>2 && args[3] in localargs) ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    resume_path = (length(args)>2 && args[3] == "resume") ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
 
     if run_nr==0
         time_FullCorrelator_sweep(2, 1000.0, 0.5; Rs=3:3, tolerance=1.e-3, serialize_tts=true)
+
+    # format: run_nr{PSFpath_id}{iK}{logtol}{Rmin}{Rmax}
+    elseif run_nr >= 10^7
+        dump_path = nothing
+        (PSFpath, base_path, iK, tolerance, Rmin, Rmax) = parse_run_nr_Rrange(run_nr)
+        channel = "t"
+        (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
+        broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
+        if !haskey(broadening_kwargs, :estep)
+            broadening_kwargs[:estep] = 500
+        end
+        time_FullCorrelator_sweep(iK, γ, only(sigmak); PSFpath=PSFpath, folder=folder, dump_path=dump_path, resume_path=resume_path, Rs=Rmin:Rmax, channel=channel, tolerance=tolerance, serialize_tts=true, broadening_kwargs...)
+
+    # format: run_nr{PSFpath_id}{iK}{logtol}{R}
     elseif run_nr >= 10^5
         (PSFpath, base_path, iK, tolerance, R) = parse_run_nr(run_nr)
         channel = "t"
         (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
         broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
+        if !haskey(broadening_kwargs, :estep)
+            broadening_kwargs[:estep] = 500
+        end
         time_FullCorrelator_sweep(iK, γ, only(sigmak); PSFpath=PSFpath, folder=folder, dump_path=dump_path, resume_path=resume_path, Rs=R:R, channel=channel, tolerance=tolerance, serialize_tts=true, broadening_kwargs...)
     else
         error("Invalid run_nr $(run_nr)")

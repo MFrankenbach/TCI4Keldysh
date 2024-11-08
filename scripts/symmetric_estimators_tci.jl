@@ -5,12 +5,47 @@ using Serialization
 using HDF5
 using LinearAlgebra
 using LaTeXStrings
+using JSON
 import QuanticsGrids as QG
+import TensorCrossInterpolation as TCI
 
 TCI4Keldysh.TIME() = false
 
+# pythonplot()
+
 const DEFAULT_β::Float64 = 2000.0
 const DEFAULT_T::Float64 = 1.0/DEFAULT_β
+
+"""
+To merge two .json files containing results.
+Use to add missing data to a json file where the calculation did not finish.
+"""
+function merge_jsondata(file1::String, file_add::String)
+    # safety copy
+    file1_old = file1[1:end-5] * "_original.json"
+    cp(file1, file1_old; force=true)
+
+    data1 = open(file1) do f
+        JSON.parse(f)
+    end
+
+    data_add = open(file_add) do f
+        JSON.parse(f)
+    end
+
+    # Rs is not included because that will also contain the missing values
+    addkeys = ["times", "ranks", "bonddims"]
+
+    for key in addkeys
+        data1[key] = vcat(data1[key], data_add[key])
+    end
+
+    @show data1
+    # write
+    open(file1, "w") do f
+        JSON.print(f, data1)
+    end
+end
 
 """
 What is gained from caching central values?
@@ -66,8 +101,162 @@ function qttfile_to_json(qttfile::String)
     end
 end
 
+# =========== K1
+
+function plot_K1_ranks_MF(PSFpath;channel="t", flavor_idx=1)
+    tols = reverse(collect(10.0 .^ (-6:2:-2)))
+    Rs = 5:12
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ranks = zeros(Int, length(Rs), length(tols))
+    for (it,tol) in enumerate(tols)
+        for (iR,R) in enumerate(Rs)
+            qtt = TCI4Keldysh.K1_TCI(
+                PSFpath, R;
+                channel=channel, formalism="MF", flavor_idx=flavor_idx, T=T, tolerance=tol, unfoldingscheme=:interleaved
+                )
+            ranks[iR,it] = rank(qtt[1].tci)
+        end
+    end
+    p = TCI4Keldysh.default_plot()
+    for it in eachindex(tols)
+        tolexp = round(Int, log10(tols[it]))
+        plot!(p, Rs, ranks[:,it]; label=L"tol=$10^{%$tolexp}$", marker=:circle, seriescolor=:auto)
+    end
+    xlabel!("R")
+    ylabel!("rank")
+    title!(L"Rank of $K^1_{%$channel}$")
+    savefig("K1_ranks_MF.pdf")
+end
+
+function plot_K1_ranks_KF(PSFpath;channel="t", flavor_idx=1)
+    tols = reverse(collect(10.0 .^ (-4:1:-2)))
+    Rs = 5:15
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    iK = (2,2)
+    ranks = zeros(Int, length(Rs), length(tols))
+    for (it,tol) in enumerate(tols)
+        for (iR,R) in enumerate(Rs)
+            qtt = TCI4Keldysh.K1_TCI(
+                PSFpath, R;
+                channel=channel,
+                formalism="KF",
+                flavor_idx=flavor_idx,
+                T=T,
+                tolerance=tol,
+                unfoldingscheme=:interleaved
+                )
+            ranks[iR,it] = rank(qtt[iK...].tci)
+        end
+    end
+    p = TCI4Keldysh.default_plot()
+    for it in eachindex(tols)
+        tolexp = round(Int, log10(tols[it]))
+        plot!(p, Rs, ranks[:,it]; label=L"tol=$10^{%$tolexp}$", marker=:circle, yscale=:log10)
+    end
+    xlabel!("R")
+    ylabel!("rank")
+    title!(L"Rank of $K1_{%$channel}^{%$iK}$")
+    savefig("K1_ranks_KF.pdf")
+end
+
+# here one can see the broadening: the function has edges for R=16
+function plot_K1_zoomed()
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    channel = "t"
+    flavor_idx = 1
+    ωmax = 0.3183098861837907
+    R = 16
+    ωs_ext = TCI4Keldysh.KF_grid_bos(ωmax, R)
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath)
+    K1 = TCI4Keldysh.precompute_K1r(PSFpath, flavor_idx, "KF"; ωs_ext=ωs_ext, channel=channel, γ=γ, sigmak=sigmak, broadening_kwargs...)
+    # plot small window
+    slice = 2^(R-1)-10:2^(R-1)+10
+    # slice = 1:2^R
+    plot(ωs_ext[slice], abs.(K1[:,2,2])[slice])
+    savefig("K1zoomed.pdf")
+end
+
+# =========== K1 END
+
+function plot_K12_ranks_MF(PSFpath;channel="t", flavor_idx=1, prime=false)
+    tols = reverse(collect(10.0 .^ (-6:2:-2)))
+    Rs = 5:12
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ranks = zeros(Int, length(Rs), length(tols))
+    ranks2 = zeros(Int, length(Rs), length(tols))
+    for (it,tol) in enumerate(tols)
+        for (iR,R) in enumerate(Rs)
+            # K1
+            qtt = TCI4Keldysh.K1_TCI(
+                PSFpath, R;
+                channel=channel, formalism="MF", flavor_idx=flavor_idx, T=T, tolerance=tol, unfoldingscheme=:interleaved
+                )
+            ranks[iR,it] = rank(qtt[1].tci)
+
+            # K2
+            qtt2 = TCI4Keldysh.K2_TCI_precomputed(
+                PSFpath, R;
+                channel=channel,
+                prime=prime,
+                formalism="MF",
+                flavor_idx=flavor_idx,
+                T=T,
+                tolerance=tol,
+                unfoldingscheme=:interleaved
+                )
+            ranks2[iR,it] = rank(qtt2[1].tci)
+        end
+    end
+    p = TCI4Keldysh.default_plot()
+    for it in eachindex(tols)
+        tolexp = round(Int, log10(tols[it]))
+        plot!(p, Rs, ranks[:,it]; label=L"K^1,tol=$10^{%$tolexp}$", marker=:circle, seriescolor=:auto, linestyle=:dot)
+        plot!(p, Rs, ranks2[:,it]; label=L"K^2,tol=$10^{%$tolexp}$", marker=:diamond, seriescolor=:auto)
+    end
+    xlabel!("R")
+    ylabel!("rank")
+    title!(L"Rank of $K^1_{%$channel}$, $K^2_{%$channel}$")
+    savefig("K12_ranks_MF.pdf")
+end
+
+
+# =========== K2
+function plot_K2_ranks_MF(PSFpath;channel="t", flavor_idx=1, prime=false)
+    tols = reverse(collect(10.0 .^ (-8:2:-2)))
+    Rs = 5:12
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ranks = zeros(Int, length(Rs), length(tols))
+    for (it,tol) in enumerate(tols)
+        for (iR,R) in enumerate(Rs)
+            qtt = TCI4Keldysh.K2_TCI_precomputed(
+                PSFpath, R;
+                channel=channel,
+                prime=prime,
+                formalism="MF",
+                flavor_idx=flavor_idx,
+                T=T,
+                tolerance=tol,
+                unfoldingscheme=:interleaved
+                )
+            ranks[iR,it] = rank(qtt[1].tci)
+        end
+    end
+    p = TCI4Keldysh.default_plot()
+    for it in eachindex(tols)
+        tolexp = round(Int, log10(tols[it]))
+        plot!(p, Rs, ranks[:,it]; label=L"tol=$10^{%$tolexp}$", marker=:circle)
+    end
+    xlabel!("R")
+    ylabel!("rank")
+    title!(L"Rank of $K2_{%$channel}$")
+    savefig("K2_ranks_MF.pdf")
+end
+
+# =========== K2 END
+
 """
-Generate data for triptych Reference - QTCI - Error
 Generate data for triptych Reference - QTCI - Error
 """
 function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=true)
@@ -89,7 +278,8 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     Nhalf = 2^(R-1)
     Nhplot = 2^(Rplot-1)
     oneslice = Nhalf-Nhplot+1 : Nhalf+Nhplot
-    plot_slice = (Nhalf+1:Nhalf+1, oneslice, oneslice)
+    transfer_offset = 5
+    plot_slice = (Nhalf+1+transfer_offset:Nhalf+1+transfer_offset, oneslice, oneslice)
     slice_id = findfirst(i -> length(plot_slice[i])==1, 1:3)
     ids = Base.OneTo.(length.(plot_slice))
 
@@ -124,6 +314,7 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     # ==== SETUP DONE
 
     # tci values
+    println("-- Rank of tt : $(TCI.rank(tci))")
     tcival = zeros(ComplexF64, length.(plot_slice))
     @show Base.summarysize(tcival)
     @show Base.summarysize(tci)
@@ -157,10 +348,10 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
 end
 
 function triptych_vertex_plot(h5file::String, qttfile::String; folder="pwtcidata")
-    refval = h5read(h5file, "reference")
-    tcival = h5read(h5file, "qttdata")
-    diff = h5read(h5file, "diff")
-    maxref = h5read(h5file, "maxref")
+    refval = h5read(joinpath(folder,h5file), "reference")
+    tcival = h5read(joinpath(folder,h5file), "qttdata")
+    diff = h5read(joinpath(folder,h5file), "diff")
+    maxref = h5read(joinpath(folder,h5file), "maxref")
     triptych_vertex_plot(refval, tcival, diff, maxref, qttfile; folder=folder)
 end
 
@@ -187,21 +378,28 @@ function triptych_vertex_plot(refval, tcival, diff, maxref, qttfile::String; fol
     qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
     tolerance = qtt_data["tolerance"]
     beta = qtt_data["beta"]
+    (_, om1g, om2g) = TCI4Keldysh.MF_npoint_grid(1.0/beta, div(size(refval,2),2), 3)
     p = TCI4Keldysh.default_plot()
     maxc = log10(abs(maxref))
     minc = maxc + log10(tolerance) - 1
-    heatmap!(p, log10.(abs.(refval)); clim=(minc, maxc), right_margin=10Plots.mm)
+    heatmap!(p, om1g, om2g, log10.(abs.(refval)); clim=(minc, maxc), right_margin=10Plots.mm)
     title!(L"\log_{10}|\Gamma_{\mathrm{core}}^{\mathrm{ref}}|")
+    xlabel!(L"\omega'")
+    ylabel!(L"\omega")
     savefig("V_MFref_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
 
-    heatmap!(p, log10.(abs.(tcival)); clim=(minc, maxc), right_margin=10Plots.mm)
+    heatmap!(p, om1g, om2g, log10.(abs.(tcival)); clim=(minc, maxc), right_margin=10Plots.mm)
     title!(L"\log_{10}|\Gamma_{\mathrm{core}}^{\mathrm{QTCI}}|")
+    xlabel!(L"\omega'")
+    ylabel!(L"\omega")
     savefig("V_MFtci_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
 
     p = TCI4Keldysh.default_plot()
     scfun(x) = log10(abs(x)) 
-    heatmap!(p, scfun.(diff ./ maxref); right_margin=10Plots.mm)
-    title!(L"\log_{10}\left(|\Gamma_{\mathrm{core}}^{\mathrm{ref}}-\Gamma_{\mathrm{core}}^{\mathrm{QTCI}}|/|\Gamma_{\mathrm{core}}^{\mathrm{ref}}|\right)")
+    heatmap!(p, om1g, om2g, scfun.(diff ./ maxref); right_margin=10Plots.mm)
+    title!(L"\log_{10}\left(|\Gamma_{\mathrm{core}}^{\mathrm{ref}}-\Gamma_{\mathrm{core}}^{\mathrm{QTCI}}|_\infty/|\Gamma_{\mathrm{core}}^{\mathrm{ref}}|\_infty\right)")
+    xlabel!(L"\omega'")
+    ylabel!(L"\omega")
     savefig("V_MFdiff_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$(beta).pdf")
 end
 
@@ -363,12 +561,12 @@ function find_Γcore_file(tolerance::Float64, beta::Float64; folder="pwtcidata",
             return occursin(subfolder_str,f) && occursin("beta$(round(Int,beta))_",f) && occursin("gamcore",f) && occursin("tol$(-round(Int,log10(tolerance)))",f)
         end
         subdirs = filter(_folder_relevant, subdirs)
-        files = [only(filter(f -> endswith(f,".json"), readdir(joinpath(folder,sd)))) for sd in subdirs]
+        files = [only(filter(f -> endswith(f,".json") && !occursin("original", f), readdir(joinpath(folder,sd)))) for sd in subdirs]
         @show files
         files = [joinpath(subdirs[i], files[i]) for i in eachindex(subdirs)]
     else
         function _file_relevant(f)
-            return endswith(f, ".json") && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && occursin("gammacore", f)
+            return endswith(f, ".json") && !occursin("original", f) && occursin("beta=$beta", f) && occursin("tol=$(TCI4Keldysh.tolstr(tolerance))", f) && occursin("gammacore", f)
         end
         files = filter(
                 _file_relevant,
@@ -463,8 +661,26 @@ function to_intvec(x) :: Vector{Int}
     return convert(Vector{Int}, x)
 end
 
-function plot_vertex_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster", subfolder_str=nothing)
-    plot_vertex_ranks(10.0 .^ tol_range, PSFpath; folder=folder, subfolder_str=subfolder_str)
+"""
+Translate bonddims of a TT with complex entries and leg dimension d to RAM usage
+in MB
+"""
+function bonddims_to_RAM(bonddims::Vector{Int}, d::Int=2)
+    bonddims_ = vcat([1], bonddims, [1])
+    CPX_BYTES = 16
+    ram = 0
+    for ib in eachindex(bonddims_)[2:end]
+        ram += d*bonddims_[ib]*bonddims_[ib-1]
+    end
+    return ram*CPX_BYTES/10^6
+end
+
+function worstcase_bonddims(L::Int, d::Int=2)
+    return [min(d^i, d^(L-i)) for i in 1:(L-1)]
+end
+
+function plot_vertex_ranks(tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata_cluster", kwargs...)
+    plot_vertex_ranks(10.0 .^ tol_range, PSFpath; folder=folder, kwargs...)
 end
 
 function tol_vs_rank_vertex(R::Int, tol_range::Vector{Int}, PSFpath::String; folder="pwtcidata")
@@ -502,11 +718,12 @@ function tol_vs_rank_vertex(R::Int, tol_range, PSFpath::String; folder="pwtcidat
     savefig("MFvertex_tol_vs_rank$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$(beta)_R=$(R).pdf")
 end
 
-function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster", subfolder_str=nothing)
+function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster", subfolder_str=nothing, show_worstcase::Bool=true, ramplot::Bool=false)
     p = TCI4Keldysh.default_plot()    
 
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
 
+    Rs = []
     for tol in tol_range
         file_act = find_Γcore_file(tol, beta; folder=folder, subfolder_str=subfolder_str)
         if isnothing(file_act)
@@ -519,15 +736,39 @@ function plot_vertex_ranks(tol_range, PSFpath::String; folder="pwtcidata_cluster
         d = TCI4Keldysh.readJSON(file_act, folder)
         Rs = to_intvec(d["Rs"])
         ranks = to_intvec(d["ranks"])
-        @show Rs
-        @show ranks
-        plot!(p, Rs[1:length(ranks)], ranks; marker=:circle, label="tol=$(TCI4Keldysh.tolstr(tol))")
+        if !ramplot
+            @show Rs
+            @show ranks
+            plot!(p, Rs[1:length(ranks)], ranks; marker=:circle, label=L"tol=$10^{%$(TCI4Keldysh.tolstr(tol))}$")
+            ylabel!("rank")
+        else
+            bonddims = to_intvec.(d["bonddims"])
+            rams = [bonddims_to_RAM(b) for b in bonddims]
+            plot!(p, Rs[1:length(ranks)], rams; marker=:circle, label=L"tol=$10^{%$(TCI4Keldysh.tolstr(tol))}$")
+            ylabel!("RAM [MB]")
+        end
     end
 
-    title!(p, "Matsubara core vertex, β=$beta")
+    if show_worstcase
+        worstcase_ranks = [2^div(3*R,2) for R in Rs]
+        # worstcase_rams = [bonddims_to_RAM(worstcase_bonddims(3*R,2)) for R in Rs]
+        worstcase_rams = [16 * 2^(3*R) / 10^6 for R in Rs]
+        yvals = if ramplot
+                worstcase_rams
+            else
+                worstcase_ranks
+            end
+        yticks_exp = Int(floor(log10(yvals[1]))):Int(floor(log10(yvals[end])))
+        yticks = 10.0 .^ yticks_exp
+        yticks_labels = [L"10^{%$y}" for y in yticks_exp]
+        label = ramplot ? "dense grid" : "worst case"
+        plot!(p, Rs, yvals; label=label, yscale=:log10, color="black", linestyle=:dot, yticks=(yticks, yticks_labels), legend=:topleft)
+    end
+
+    title!(p, L"Matsubara core vertex, $\beta=%$beta$")
     xlabel!("R")
-    ylabel!("rank")
-    savefig("MFvertex_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$beta.pdf")
+    ramstr = ramplot ? "_RAM" : ""
+    savefig("MFvertex_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range)))_beta=$(beta)$(ramstr).pdf")
 end
 
 function profile_Γcore()
@@ -653,9 +894,10 @@ end
 """
 test & plot
 """
-function test_K2_TCI(; channel="a", R=4, beta=50.0, tolerance=1.e-5, prime=false)
+function test_K2_TCI(; channel="t", R=4, tolerance=1.e-5, prime=false)
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+    # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
     T = 1.0 / beta
     logtol = round(Int, log10(tolerance))
     flavor = 1
@@ -707,13 +949,13 @@ function test_K2_TCI(; channel="a", R=4, beta=50.0, tolerance=1.e-5, prime=false
     maxdiff = maximum(diff) / maxref
     @assert maxdiff < 5.0 * tolerance
 
-    clim_max = ceil(Int, log10(maxref))
-    clim = (clim_max + logtol - 1, clim_max)
-    # heatmap(log10.(abs.(test_qttval)); clim=clim)
-    heatmap(log10.(abs.(test_qttval)))
-    savefig("K2.png")
+    clim_max = log10(maxref)
+    clim = (clim_max + logtol - 1.0, clim_max)
+    heatmap(log10.(abs.(test_qttval)); clim=clim)
+    # heatmap(log10.(abs.(test_qttval)))
+    savefig("K2.pdf")
     heatmap(log10.(abs.(K2ref)); clim=clim)
-    savefig("K2_ref.png")
+    savefig("K2_ref.pdf")
 end
 
 function check_serialized_files()
@@ -734,20 +976,30 @@ function check_serialized_files()
     @show successcount
 end
 
-folder = "pwtcidata_KCS"
-PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+folder = "cluster_output_KCS"
+# PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+plot_K12_ranks_MF(PSFpath)
 
-R = 5
-# qttfile = "gammacore_timing_R_min=12_max=12_tol=-4_beta=200.0_R=$(R)_qtt.serialized"
-beta = 2000
-tol = 2
-dirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_shellpivot"
-qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
-# check_interpolation(joinpath(dirname, qttfile), R, PSFpath; folder="MF_KCS_shellpivot")
-triptych_vertex_data(joinpath(dirname, qttfile), R, PSFpath; folder="MF_KCS_shellpivot", store=true)
+# plot_vertex_ranks(collect(-7:-2), PSFpath; folder=folder, subfolder_str="shellpivot", show_worstcase=true, ramplot=true)
 
-# plot_vertex_ranks([-2, -4], PSFpath; folder=folder, subfolder_str="shellpivot")
+# R = 8
+# beta = 2000
+# tol = 2
+# thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_shellpivot"
+# # dirname = "gamcoreMF_tol$(tol)_beta$(beta)_updown"
+# qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
+# # check_interpolation(joinpath(thedirname, qttfile), R, PSFpath; folder="MF_KCS_shellpivot")
+# triptych_vertex_data(joinpath(thedirname, qttfile), R, PSFpath; folder="cluster_output_KCS", store=true)
+
+# VERTEX RANK PLOT
+# plot_vertex_ranks(collect(-5:-2), PSFpath; folder=folder, subfolder_str="shellpivot", ramplot=true)
+
 # tol_vs_rank_vertex(10, [-2, -3, -4, -5, -6], PSFpath; folder="pwtcidata")
-h5file = "vertex_MF_slice_beta=$(beta).0_slices=(1, 128, 128)_tol=-$tol.h5"
-triptych_vertex_plot(h5file, qttfile; folder=folder)
+# h5file = "vertex_MF_slice_beta=$(beta).0_slices=(1, 128, 128)_tol=-$tol.h5"
+# triptych_vertex_plot(h5file, qttfile; folder=joinpath(folder,thedirname))
+
+# MERGE JSON FILES
+# file1 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_tol5_beta200_nz4_aIE_shellpivot/gammacore_timing_R_min=5_max=12_tol=-5_beta=200.0.json")
+# file2 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_tol5_beta200_nz4_aIE_shellpivot_1012/gammacore_timing_R_min=10_max=12_tol=-5_beta=200.0.json")
+# merge_jsondata(file1, file2)

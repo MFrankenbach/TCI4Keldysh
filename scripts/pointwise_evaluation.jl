@@ -407,9 +407,7 @@ function find_GF_file(tolerance::Float64, beta::Float64; folder="pwtcidata", sub
             return occursin(subdir_str,f) && occursin("beta$(round(Int,beta))_",f) && occursin("corrMF",f) && occursin("tol$(-round(Int,log10(tolerance)))",f)
         end
         subdirs = filter(_folder_relevant, subdirs)
-        @show subdirs
         files = [only(filter(f -> endswith(f,".json"), readdir(joinpath(folder,sd)))) for sd in subdirs]
-        @show files
         files = [joinpath(subdirs[i], files[i]) for i in eachindex(subdirs)]
     end
 
@@ -702,11 +700,12 @@ function plot_FullCorrelator_ranks(tol_range::Vector{Int}, PSFpath::String; fold
     plot_FullCorrelator_ranks(10.0 .^ tol_range, PSFpath; folder=folder, subdir_str=subdir_str)
 end
 
-function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata", subdir_str=nothing)
+function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata", subdir_str=nothing, show_worstcase=true, ramplot=false)
     p = TCI4Keldysh.default_plot()    
 
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
 
+    Rs = []
     for tol in tol_range
         file_act = find_GF_file(tol, beta; folder=folder, subdir_str=subdir_str)
         if isnothing(file_act)
@@ -722,6 +721,21 @@ function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata
         @show Rs
         @show ranks
         plot!(p, Rs[1:length(ranks)], ranks; marker=:circle, label="tol=$(TCI4Keldysh.tolstr(tol))")
+    end
+
+    if show_worstcase
+        worstcase_ranks = [2^div(3*R,2) for R in Rs]
+        worstcase_rams = [16 * 2^(3*R) / 10^6 for R in Rs]
+        yvals = if ramplot
+                worstcase_rams
+            else
+                worstcase_ranks
+            end
+        yticks_exp = Int(floor(log10(yvals[1]))):Int(floor(log10(yvals[end])))
+        yticks = 10.0 .^ yticks_exp
+        yticks_labels = [L"10^{%$y}" for y in yticks_exp]
+        label = ramplot ? "dense grid" : "worst case"
+        plot!(p, Rs, yvals; label=label, yscale=:log10, color="black", linestyle=:dot, yticks=(yticks, yticks_labels), legend=:topleft)
     end
 
     title!(p, "Matsubara Full Correlator, β=$beta")
@@ -746,7 +760,7 @@ end
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
-folder="pwtcidata_KCS"
+folder="cluster_output_KCS"
 R = 8
 tol = 4
 beta = 2000
@@ -754,7 +768,9 @@ dirname = "corrMF_tol$(tol)_beta$(beta)_nz4_shellpivot"
 qttfile = joinpath(dirname, "timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized")
 
 # check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
-# plot_FullCorrelator_ranks([-2,-4,-6], PSFpath; folder=folder, subdir_str="shellpivot")
+plot_FullCorrelator_ranks(collect(-5:-2), PSFpath; folder=folder, subdir_str="shellpivot")
+
+# TRYPTICH
 # triptych_corr_data(qttfile, R, PSFpath; folder=folder, store=true)
-h5file = joinpath(folder, "corrMF_slice_beta=2000.0_slices=(1, 256, 256)_tol=-4.h5")
-triptych_corr_plot(h5file, qttfile; folder=folder)
+# h5file = joinpath(folder, "corrMF_slice_beta=2000.0_slices=(1, 256, 256)_tol=-4.h5")
+# triptych_corr_plot(h5file, qttfile; folder=folder)
