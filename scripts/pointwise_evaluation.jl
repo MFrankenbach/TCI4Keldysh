@@ -9,6 +9,8 @@ using LaTeXStrings
 using HDF5
 import TensorCrossInterpolation as TCI
 
+pythonplot()
+
 """
 Benchmark single-point evaluation of partial 4-point correlator
 """
@@ -700,6 +702,69 @@ function plot_FullCorrelator_ranks(tol_range::Vector{Int}, PSFpath::String; fold
     plot_FullCorrelator_ranks(10.0 .^ tol_range, PSFpath; folder=folder, subdir_str=subdir_str)
 end
 
+
+function plot_FullCorrelator_ranks_both(tol_range::Vector{Int}; folder="pwtcidata", subdir_str=nothing, show_worstcase=true, ramplot=false)
+    plot_FullCorrelator_ranks_both(10.0 .^ tol_range; folder="pwtcidata", subdir_str=nothing, show_worstcase=true, ramplot=false)
+end
+
+"""
+Two betas in one plot
+"""
+function plot_FullCorrelator_ranks_both(tol_range; folder="pwtcidata", subdir_str=nothing, show_worstcase=true, ramplot=false)
+    p = TCI4Keldysh.default_plot()    
+
+    PSFpath1 = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    PSFpath2 = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+    beta1 = TCI4Keldysh.dir_to_beta(PSFpath1)
+    beta2 = TCI4Keldysh.dir_to_beta(PSFpath2)
+
+    Rs = []
+    for tol in tol_range
+        file_act1 = find_GF_file(tol, beta1; folder=folder, subdir_str=subdir_str)
+        file_act2 = find_GF_file(tol, beta2; folder=folder, subdir_str=subdir_str)
+        files = [file_act1,file_act2]
+        markers = [:circle, :diamond]
+        for i in eachindex(files)
+            file_act = files[i]
+            if isnothing(file_act)
+                @warn "No file for tol=$tol found!"
+            else
+                @info "Processing file:\n    $file_act"
+            end
+
+            # plot
+            d = TCI4Keldysh.readJSON(file_act, folder)
+            Rs = to_intvec(d["Rs"])
+            ranks = to_intvec(d["ranks"])
+            @show Rs
+            @show ranks
+            plot!(p, Rs[1:length(ranks)], ranks; marker=markers[i], label="tol=$(TCI4Keldysh.tolstr(tol))")
+        end
+    end
+
+    if show_worstcase
+        worstcase_ranks = [2^div(3*R,2) for R in Rs]
+        worstcase_rams = [16 * 2^(3*R) / 10^6 for R in Rs]
+        yvals = if ramplot
+                worstcase_rams
+            else
+                worstcase_ranks
+            end
+        yticks_exp = Int(floor(log10(yvals[1]))):Int(floor(log10(yvals[end])))
+        yticks = 10.0 .^ yticks_exp
+        yticks_labels = [L"10^{%$y}" for y in yticks_exp]
+        label = ramplot ? "dense grid" : "worst case"
+        plot!(p, Rs, yvals; label=label, yscale=:log10, color="black", linestyle=:dot, yticks=(yticks, yticks_labels), legend=:outerright)
+    end
+
+    ylimits = ylims(p)
+    ylims!(p, ylimits[1], 10^4)
+    title!(p, "Matsubara correlator ranks")
+    xlabel!("R")
+    ylabel!("rank")
+    savefig("MFcorr_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range))).pdf")
+end
+
 function plot_FullCorrelator_ranks(tol_range, PSFpath::String; folder="pwtcidata", subdir_str=nothing, show_worstcase=true, ramplot=false)
     p = TCI4Keldysh.default_plot()    
 
@@ -757,8 +822,8 @@ function test_reduce_Gps!()
 end
 
 
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
-PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
+#PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
 folder="cluster_output_KCS"
 R = 8
@@ -768,7 +833,8 @@ dirname = "corrMF_tol$(tol)_beta$(beta)_nz4_shellpivot"
 qttfile = joinpath(dirname, "timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized")
 
 # check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
-plot_FullCorrelator_ranks(collect(-5:-2), PSFpath; folder=folder, subdir_str="shellpivot")
+#plot_FullCorrelator_ranks(collect(-5:-2), PSFpath; folder=folder, subdir_str="shellpivot")
+plot_FullCorrelator_ranks_both(collect(-5:-2); folder=folder, subdir_str="shellpivot")
 
 # TRYPTICH
 # triptych_corr_data(qttfile, R, PSFpath; folder=folder, store=true)
