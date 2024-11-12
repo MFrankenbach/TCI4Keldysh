@@ -9,8 +9,6 @@ using LaTeXStrings
 using HDF5
 import TensorCrossInterpolation as TCI
 
-pythonplot()
-
 """
 Benchmark single-point evaluation of partial 4-point correlator
 """
@@ -703,15 +701,15 @@ function plot_FullCorrelator_ranks(tol_range::Vector{Int}, PSFpath::String; fold
 end
 
 
-function plot_FullCorrelator_ranks_both(tol_range::Vector{Int}; folder="pwtcidata", subdir_str=nothing, show_worstcase=true, ramplot=false)
-    plot_FullCorrelator_ranks_both(10.0 .^ tol_range; folder="pwtcidata", subdir_str=nothing, show_worstcase=true, ramplot=false)
+function plot_FullCorrelator_ranks_both(tol_range::Vector{Int}; kwargs...)
+    plot_FullCorrelator_ranks_both(10.0 .^ tol_range; kwargs...)
 end
 
 """
 Two betas in one plot
 """
 function plot_FullCorrelator_ranks_both(tol_range; folder="pwtcidata", subdir_str=nothing, show_worstcase=true, ramplot=false)
-    p = TCI4Keldysh.default_plot()    
+    p = plot()
 
     PSFpath1 = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
     PSFpath2 = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
@@ -758,10 +756,10 @@ function plot_FullCorrelator_ranks_both(tol_range; folder="pwtcidata", subdir_st
     end
 
     ylimits = ylims(p)
-    ylims!(p, ylimits[1], 10^4)
     title!(p, "Matsubara correlator ranks")
     xlabel!("R")
     ylabel!("rank")
+    ylims!(p, ylimits[1], 10^4)
     savefig("MFcorr_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range))).pdf")
 end
 
@@ -825,7 +823,7 @@ end
 PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 #PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
-folder="cluster_output_KCS"
+folder="MF_KCS_rankdata"
 R = 8
 tol = 4
 beta = 2000

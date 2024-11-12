@@ -267,7 +267,7 @@ end
         Σ_calc_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_aux_data, G_aux_data, G_aux_data, G_data, U/2)
 
 
-        op_labels = TCI4Keldysh.oplabels_K2(channel, prime)
+        op_labels = Tuple(TCI4Keldysh.oplabels_K2(channel, prime))
         K2ref = TCI4Keldysh.compute_K2r_symmetric_estimator(
             "MF", PSFpath, op_labels, Σ_calc_sIE;
             ωs_ext=ωs_ext, T=T, flavor_idx=flavor, ωconvMat=TCI4Keldysh.channel_trafo_K2(channel, prime)

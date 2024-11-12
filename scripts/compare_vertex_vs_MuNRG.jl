@@ -598,7 +598,7 @@ function check_K2_MF(;channel="t", prime=false)
     K2julia = TCI4Keldysh.compute_K2r_symmetric_estimator(
         "MF",
         PSFpath,
-        op_labels,
+        Tuple(op_labels),
         ΣR;
         Σ_calcL=ΣL,
         # Σ_calcL=nothing,

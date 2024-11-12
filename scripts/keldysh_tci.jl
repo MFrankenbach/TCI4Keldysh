@@ -10,11 +10,12 @@ using LinearAlgebra
 using Serialization
 using Printf
 using MAT
-import TensorCrossInterpolation as TCI
-import QuanticsGrids as QG
-
+using LaTeXStrings
 using TCI4Keldysh
 using Test
+
+import TensorCrossInterpolation as TCI
+import QuanticsGrids as QG
 
 """
 β=2000.0 in Seung-Sup's data
@@ -228,6 +229,45 @@ function K1_broadening_impact(fac_lin::Float64=1.1, fac_log::Float64=1.1;ωmax::
 end
 
 """
+Plot kernel singular values
+"""
+function plot_kernel_singvals(R::Int; ωmax::Float64=1.0)
+    # create correlator
+    basepath = "SIAM_u=0.50"
+    nz = 4
+    PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=$(nz)_conn_zavg/4pt/")
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    npt = 4
+    D = npt-1
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    T = default_T()
+    ωmin = -ωmax
+    ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+    channel = "t"
+    ωconvMat = TCI4Keldysh.channel_trafo("t")
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath; channel=channel)
+    KFC = TCI4Keldysh.FullCorrelator_KF(
+        PSFpath, Ops;
+        T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken",
+        broadening_kwargs...
+        )
+
+    # SVD kernels
+    Gp = KFC.Gps[1]
+    k = Gp.tucker.legs[1]
+    _,S,_ = svd(k)
+
+    p = TCI4Keldysh.default_plot()
+    s0 = maximum(S)
+    plot!(p, S ./ s0; yscale=:log10, label="")
+    xlabel!(L"i")
+    ylabel!(L"\sigma_i/\sigma_0")
+    title!(L"Singular values of $k^{[0,0]}_b$, $\beta=%$beta$, $ω_{\mathrm{max}}=0.1$")
+    savefig("keldyshsvd.pdf")
+end
+
+"""
 Compute error introduced in regular partial correlators when the kernels are truncated with via SVD.
 """
 function svd_error_GF(R::Int, cutoff::Float64=1.e-15; ωmax::Float64=1.0)
@@ -260,7 +300,7 @@ end
 Check singular value distribution of kernels for different broadenings.
 """
 function kernel_svd_ranks()
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/4pt/")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt/")
     npt = 4
     D = npt-1
     Ops = TCI4Keldysh.dummy_operators(npt)
@@ -1106,9 +1146,11 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
     return nothing
 end
 
-times = []
-for R in 3:7
-    t = time_V_KF(R)
-    push!(times, t)
-end
-@show times
+plot_kernel_singvals(10; ωmax=0.3183098861837907)
+
+# times = []
+# for R in 3:7
+#     t = time_V_KF(R)
+#     push!(times, t)
+# end
+# @show times

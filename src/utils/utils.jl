@@ -1087,8 +1087,8 @@ end
 Where to find PSF data
 """
 function datadir()
-    # return joinpath(dirname(Base.current_project()), "data")
-    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
+    return joinpath(dirname(Base.current_project()), "data")
+    # return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
 end
 
 """
@@ -1362,6 +1362,21 @@ end
 function tolstr(tolerance::Float64)
     return "$(round(Int, log10(tolerance)))"
 end
+
+"""
+Translate bonddims of a TT with complex entries and leg dimension d to RAM usage
+in MB
+"""
+function bonddims_to_RAM(bonddims::Vector{Int}, d::Int=2)
+    bonddims_ = vcat([1], bonddims, [1])
+    CPX_BYTES = 16
+    ram = 0
+    for ib in eachindex(bonddims_)[2:end]
+        ram += d*bonddims_[ib]*bonddims_[ib-1]
+    end
+    return ram*CPX_BYTES/10^6
+end
+
 
 """
 Get plotting object with reasonable font sizes.
