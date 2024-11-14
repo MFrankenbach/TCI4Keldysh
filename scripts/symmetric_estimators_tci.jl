@@ -257,6 +257,57 @@ end
 # =========== K2 END
 
 """
+Check whether vertex can be computed on a frequecy grid which has a small grid in one direction.
+"""
+function precompute_V_MF_slice(R::Int=5, compute_ref=false)
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    flavor_idx = 1
+    Nhalf = 2^(R-1)
+    # bosonic direction is small.
+    nh = 1
+    omfer = TCI4Keldysh.MF_grid(T, Nhalf, true)
+    ombos = TCI4Keldysh.MF_grid(T, nh, false)
+    
+    channel = "a"
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    omsig = TCI4Keldysh.MF_grid(T, Nhalf+nh, true)
+    # slice computation
+    (ΣL, ΣR) = TCI4Keldysh.calc_Σ_MF_aIE(PSFpath, omsig; T=T, flavor_idx=flavor_idx)
+    @time gamcore = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+        "MF",
+        PSFpath*"4pt/",
+        ΣR;
+        Σ_calcL=ΣL,
+        T=T,
+        flavor_idx=flavor_idx,
+        ωs_ext=(ombos,omfer,omfer),
+        ωconvMat=ωconvMat
+    )
+
+    # reference
+    if compute_ref
+        ombos_ref = TCI4Keldysh.MF_grid(T, Nhalf, false)
+        omsig_ref = TCI4Keldysh.MF_grid(T, 2*Nhalf, true)
+        (ΣL_ref, ΣR_ref) = TCI4Keldysh.calc_Σ_MF_aIE(PSFpath, omsig_ref; T=T, flavor_idx=flavor_idx)
+        @time gamcore_ref = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+            "MF",
+            PSFpath*"4pt/",
+            ΣR_ref;
+            Σ_calcL=ΣL_ref,
+            T=T,
+            flavor_idx=flavor_idx,
+            ωs_ext=(ombos_ref,omfer,omfer),
+            ωconvMat=ωconvMat
+        )
+
+        # compare
+        refslice = gamcore_ref[Nhalf+1-nh:Nhalf+1+nh,:,:]
+        @show maximum(abs.(refslice .- gamcore))
+    end
+end
+
+"""
 Generate data for triptych Reference - QTCI - Error
 """
 function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtcidata", store=true)
@@ -283,34 +334,27 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     slice_id = findfirst(i -> length(plot_slice[i])==1, 1:3)
     ids = Base.OneTo.(length.(plot_slice))
 
-    # ==== create ΓcoreEvaluator_MF
+    # ==== reference data
 
     ωconvMat = TCI4Keldysh.channel_trafo(qtt_data["channel"])
     # make frequency grid
-    Nhalf = 2^(R-1)
-    D = size(ωconvMat, 2)
-    ωs_ext = TCI4Keldysh.MF_npoint_grid(T, Nhalf, D)
+    nh = max(1, transfer_offset)
+    omfer = TCI4Keldysh.MF_grid(T, Nhalf, true)
+    ombos = TCI4Keldysh.MF_grid(T, nh, false)
 
-    # all 16 4-point correlators
-    letter_combinations = TCI4Keldysh.letter_combonations_Γcore()
-    is_incoming = (false, true, false, true)
+    omsig = TCI4Keldysh.MF_grid(T, Nhalf+nh, true)
+    (ΣL, ΣR) = TCI4Keldysh.calc_Σ_MF_aIE(PSFpath, omsig; T=T, flavor_idx=flavor_idx)
+    @time gamcore = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+        "MF",
+        joinpath(PSFpath, "4pt"),
+        ΣR;
+        Σ_calcL=ΣL,
+        T=T,
+        flavor_idx=flavor_idx,
+        ωs_ext=(ombos,omfer,omfer),
+        ωconvMat=ωconvMat
+    )
 
-    Ncorrs = length(letter_combinations)
-    GFs = Vector{TCI4Keldysh.FullCorrelator_MF{3}}(undef, Ncorrs)
-
-    TCI4Keldysh.read_GFs_Γcore!(
-        GFs, PSFpath, letter_combinations;
-        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
-        )
-
-    # create self-energy evaluator
-    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
-    sev = TCI4Keldysh.SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
-
-    # Numerically exact evaluator
-    tol = qtt_data["tolerance"]
-    gev_ref = TCI4Keldysh.ΓcoreEvaluator_MF(GFs, sev; cutoff=tol*1.e-3)
-    printstyled("== Memory used by ΓcoreEvaluator_MF: $(Base.summarysize(gev_ref))\n"; color=:blue)
     # ==== SETUP DONE
 
     # tci values
@@ -324,19 +368,11 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     end
 
     # ref values
-    refval = zeros(ComplexF64, length.(plot_slice))
-    @show Base.summarysize(refval)
-    Threads.@threads for id in collect(Iterators.product(ids...))
-        w = ntuple(i -> plot_slice[i][id[i]], 3)
-        refval[id...] = gev_ref(w...)
-    end
-    
+    centre_id = div(size(gamcore,1),2)+1
+    refval = gamcore[centre_id+transfer_offset, oneslice, oneslice]    
     println("  Finished computation of vertex on slice")
 
-    # refval = dropdims(refval; dims=slice_id)
-    # tcival = dropdims(tcival; dims=slice_id)
     diff = refval .- tcival
-    # diff = dropdims(diff; dims=slice_id)
     if store
         h5file = "vertex_MF_slice_beta=$(beta)_slices=$(length.(plot_slice))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
         h5write(joinpath(folder, h5file), "reference", refval)
@@ -855,7 +891,7 @@ function test_Gamma_core_TCI_MF(; freq_conv="a", R=4, beta=50.0, tolerance=1.e-5
     G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
     G_aux    = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
     G_QQ_aux = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "Q1dag"]; T, flavor_idx=spin, ωs_ext=(ω_fer_int,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-    G_data      = TCI4Keldysh.precompute_all_values(G)
+    G_data      = TCI4Keldysh.precompute_all_values(G);
     G_aux_data  = TCI4Keldysh.precompute_all_values(G_aux)
     G_QQ_aux_data=TCI4Keldysh.precompute_all_values(G_QQ_aux)
     Σ_calc_sIE = TCI4Keldysh.calc_Σ_MF_sIE(G_QQ_aux_data, G_aux_data, G_aux_data, G_data, U/2)
@@ -958,6 +994,42 @@ function test_K2_TCI(; channel="t", R=4, tolerance=1.e-5, prime=false)
     savefig("K2_ref.pdf")
 end
 
+"""
+This shows that K2==K2' in both flavors
+"""
+function compare_K2_K2prime(channel="t", formalism="MF")
+    
+    #precompute_K2r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ext::NTuple{2,Vector{Float64}}, channel="t", prime=false)
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    Nhalf = 32
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    ωs_ext = if formalism=="MF"
+            TCI4Keldysh.MF_npoint_grid(T, Nhalf, 2)
+        else
+            ωmax = 0.3183098861837907
+            TCI4Keldysh.KF_grid(ωmax, 5, 2)
+        end
+    flavor_idx = 2
+    K2 = TCI4Keldysh.precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext, channel=channel, prime=false)
+    K2prime = TCI4Keldysh.precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext, channel=channel, prime=true)
+
+    @show maximum(abs.(K2 - K2prime))
+    @show maximum(abs.(K2 + K2prime))
+    @show maximum(abs.(K2 .- conj.(K2prime)))
+    if formalism=="MF"
+        heatmap(log10.(abs.(K2)))
+        savefig("K2.pdf")
+        heatmap(log10.(abs.(K2prime)))
+        savefig("K2prime.pdf")
+    else
+        for ik in Iterators.product(fill([1,2],3)...)
+            println("ik=$ik")
+            @show norm([K2[:,:,ik...]])
+            @show norm([K2prime[:,:,ik...]])
+        end
+    end
+end
+
 function check_serialized_files()
     failcount = 0
     successcount = 0
@@ -979,18 +1051,20 @@ end
 folder = "cluster_output_KCS"
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
-plot_K12_ranks_MF(PSFpath)
+# plot_K12_ranks_MF(PSFpath)
+
+# precompute_V_MF_slice(9, false)
 
 # plot_vertex_ranks(collect(-7:-2), PSFpath; folder=folder, subfolder_str="shellpivot", show_worstcase=true, ramplot=true)
 
 # R = 8
 # beta = 2000
 # tol = 2
-# thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_shellpivot"
-# # dirname = "gamcoreMF_tol$(tol)_beta$(beta)_updown"
-# qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
+thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_shellpivot"
+# dirname = "gamcoreMF_tol$(tol)_beta$(beta)_updown"
+qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
 # # check_interpolation(joinpath(thedirname, qttfile), R, PSFpath; folder="MF_KCS_shellpivot")
-# triptych_vertex_data(joinpath(thedirname, qttfile), R, PSFpath; folder="cluster_output_KCS", store=true)
+triptych_vertex_data(joinpath(thedirname, qttfile), R, PSFpath; folder="cluster_output_KCS", store=true)
 
 # VERTEX RANK PLOT
 # plot_vertex_ranks(collect(-5:-2), PSFpath; folder=folder, subfolder_str="shellpivot", ramplot=true)

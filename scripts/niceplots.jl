@@ -151,7 +151,8 @@ end
 
 
 """
-Plot kernel singular values of Keldysh kernel
+Plot kernel singular values of Keldysh kernel.
+Compare with Matsubara kernel
 """
 function plot_kernel_singvals_KF(R::Int; ωmax::Float64=1.0)
     # create correlator
@@ -175,24 +176,44 @@ function plot_kernel_singvals_KF(R::Int; ωmax::Float64=1.0)
         broadening_kwargs...
         )
 
+    # Matsubara correlator for comparison
+    GF = TCI4Keldysh.FullCorrelator_MF(
+        PSFpath, Ops;
+        T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, is_compactAdisc=true
+        )
+
     # SVD kernels
     Gp = KFC.Gps[1]
     k = Gp.tucker.legs[1]
     _,S,_ = svd(k)
 
+    kMF = GF.Gps[1].tucker.legs[1]
+    _,SMF,_ = svd(kMF)
+
+    set_rcParams(12)
+
     fig, axs = subplots(figsize=(COLUMN_INCH, COLUMN_INCH*9/16))
     axs.grid(true)
 
-    s0 = maximum(S)
+    # should we normalize?
+    normalize = false
+    s0 = normalize ? maximum(S) : 1.0
+    s0MF = normalize ? maximum(SMF) : 1.0
     yvals = S ./ s0
+    yvalsMF = SMF ./ s0MF
     xvals = collect(1:length(S))
-    axs.plot(xvals, yvals)
+    xvalsMF = collect(1:length(SMF))
+    h2, = axs.plot(xvalsMF, yvalsMF; linestyle="--", color="gray", label=L"\sigma_i\left((\mathrm{i}\omega-\omega_')^{-1}\right)")
+    h1, = axs.plot(xvals, yvals; color="blue", label=L"\sigma_i\left(k^{[0,0]}_b\right)")
     axs.set_yscale("log")
     axs.set_xlabel(L"i")
-    axs.set_ylabel(L"\sigma_i/\sigma_0")
+    ylabel = normalize ? L"\sigma_i/\sigma_0" : L"\sigma_i"
+    axs.set_ylabel(ylabel)
 
     ommax_str = @sprintf "%.3f" ωmax
-    axs.set_title(L"Singular values of $k^{[0,0]}_b$, $\beta=%$beta$, $ω_{\mathrm{max}}=%$ommax_str$")
+    # axs.set_title(L"Singular values of $k^{[0,0]}_b$, $\beta=%$beta$, $ω_{\mathrm{max}}=%$ommax_str$")
+    axs.set_title("Kernel singular values: Keldysh vs. Matsubara")
+    axs.legend(handles=[h1,h2])
     fig.tight_layout()
     savefig("keldyshsvd.pdf")
 end
@@ -531,9 +552,10 @@ function tol_vs_rank(R::Int, tol_range; folder="pwtcidata", subdir_str=nothing)
     savefig("MF_tol_vs_ranks=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range))).pdf")
 end
 
-function plot_K12_ranks_MF(PSFpath;channel="t", flavor_idx=1, prime=false)
-    tols = reverse(collect(10.0 .^ (-6:2:-2)))
-    Rs = 5:12
+function plot_K12_ranks_MF(PSFpath;channel="t", flavor_idx=1)
+    # prime=false since K2≡K2' in MF
+    tols = collect(10.0 .^ (-5:1:-2))
+    Rs = 5:10
     T = TCI4Keldysh.dir_to_T(PSFpath)
     ranks = zeros(Int, length(Rs), length(tols))
     ranks2 = zeros(Int, length(Rs), length(tols))
@@ -550,7 +572,7 @@ function plot_K12_ranks_MF(PSFpath;channel="t", flavor_idx=1, prime=false)
             qtt2 = TCI4Keldysh.K2_TCI_precomputed(
                 PSFpath, R;
                 channel=channel,
-                prime=prime,
+                prime=false,
                 formalism="MF",
                 flavor_idx=flavor_idx,
                 T=T,
@@ -566,22 +588,21 @@ function plot_K12_ranks_MF(PSFpath;channel="t", flavor_idx=1, prime=false)
     axs.grid(true)
 
     # markers = ["o", "^"]
-    colors = ["blue", "green", "red"]
+    colors = ["red", "blue", "green", "magenta", "brown"]
     # K1
     for it in eachindex(tols)
         tolexp = round(Int, log10(tols[it]))
-        axs.plot(Rs, ranks[:,it]; label=L"$K^1_{%$channel}$, tol=$10^{%$tolexp}$", marker="o", color=colors[it], linestyle="dashed")
+        axs.plot(Rs, ranks[:,it]; label=L"$K_1^{%$channel}$, tol=$10^{%$tolexp}$", marker="o", color=colors[it], linestyle="dashed")
     end
     # K2
     for it in eachindex(tols)
         tolexp = round(Int, log10(tols[it]))
-        axs.plot(Rs, ranks2[:,it]; label=L"$K^2_{%$channel}$, tol=$10^{%$tolexp}$", marker="^", color=colors[it])
+        axs.plot(Rs, ranks2[:,it]; label=L"$K_2^{%$channel}$, tol=$10^{%$tolexp}$", marker="^", color=colors[it])
     end
-
 
     axs.set_xlabel("R")
     axs.set_ylabel("rank")
-    axs.set_title(L"Matsubara: $K^1_{%$channel}$, $K^2_{%$channel}$")
+    axs.set_title(L"Matsubara: $K_1^{%$channel}$, $K_2^{%$channel}$")
     lgd = fig.legend(bbox_to_anchor=(1.30,0.95))
     save_bbox("K12_ranks_MF.pdf", fig, lgd)
     # savefig("K12_ranks_MF.pdf")
@@ -672,7 +693,7 @@ function triptych_corr_plot(h5files; folder="")
     # qtt_datas = [TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder) for qttfile in qttfiles]
     # tolerances = [qd["tolerance"] for qd in qtt_datas]
     # betas = [qd["beta"] for qd in qtt_datas]
-    tolerances = fill(0.01, nrows)
+    tolerances = fill(0.0001, nrows)
 
 
     # plot
@@ -722,7 +743,12 @@ function triptych_corr_plot(h5files; folder="")
             if ic!=3
                 im.set_clim(vmin, vmax)
             end
-            colorbar(im, fraction=0.045)
+            if ic==2
+                # common colorbar for axs[ir,0] and axs[ir,1]
+                fig.colorbar(im, fraction=0.045, ax=axs[ir,1:2], location="right")
+            elseif ic==3
+                fig.colorbar(im, fraction=0.045, ax=axs[ir,3], location="right")
+            end
 
             axs[ir,ic].invert_yaxis()
             axs[ir,ic].tick_params(axis="both", bottom=(ir==nrows), labelbottom=(ir==nrows), labelleft=(ic==1), left=(ic==1))
@@ -834,7 +860,12 @@ function triptych_vertex_plot(h5files; folder="")
             if ic!=3
                 im.set_clim(vmin, vmax)
             end
-            colorbar(im, fraction=0.045)
+            if ic==2
+                # common colorbar for axs[ir,0] and axs[ir,1]
+                fig.colorbar(im, fraction=0.045, ax=axs[ir,1:2], location="right")
+            elseif ic==3
+                fig.colorbar(im, fraction=0.045, ax=axs[ir,3], location="right")
+            end
 
             axs[ir,ic].invert_yaxis()
             axs[ir,ic].tick_params(axis="both", bottom=(ir==nrows), labelbottom=(ir==nrows), labelleft=(ic==1), left=(ic==1))
@@ -872,7 +903,7 @@ h5file1 = "vertex_MF_slice_beta=2000.0_slices=(0,128,128,)_tol=-2.h5"
 h5file2 = "vertex_MF_slice_beta=2000.0_slices=(5,128,128,)_tol=-2_upup.h5"
 h5file3 = "vertex_MF_slice_beta=2000.0_slices=(5,128,128,)_tol=-2_updown.h5"
 h5filecorr = "corrMF_slice_beta=2000.0_slices=(1, 256, 256)_tol=-4.h5"
-# triptych_vertex_plot([h5file1, h5file2, h5file3]; folder=folder)
+triptych_vertex_plot([h5file1, h5file2, h5file3]; folder=folder)
 # triptych_corr_plot([h5filecorr]; folder=folder)
 
 # plot_vertex_ranks_both(10.0 .^ collect(-5:-2); folder=folder, subdir_str="shellpivot")
@@ -880,6 +911,6 @@ h5filecorr = "corrMF_slice_beta=2000.0_slices=(1, 256, 256)_tol=-4.h5"
 
 # tol_vs_rank(10, 10.0 .^ collect(-6:-2); folder=folder, subdir_str="shellpivot")
 
-plot_K12_ranks_MF(PSFpath)
+# plot_K12_ranks_MF(PSFpath)
 
 # plot_kernel_singvals_KF(10; ωmax=0.3183098861837907)
