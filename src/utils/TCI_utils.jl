@@ -371,6 +371,52 @@ function eval(mps::MPS, idx::Vector{Int})
 end
 
 """
+* bit_val: between 1...d
+"""
+function saturate_bits(
+    tt::Vector{Array{T,3}}, bit_pos_::Vector{Int}, bit_val_::Vector{Int}
+    )::Vector{Array{T,3}} where {T}
+
+    @assert length(bit_pos_)==length(bit_val_)
+    sitedims = [size(t,2) for t in tt]
+    @assert all(0 .< bit_val_ .<= sitedims[bit_pos_])
+
+    res = deepcopy(tt)
+    perm = sortperm(bit_pos_)
+    bit_pos = bit_pos_[perm]
+    bit_val = bit_val_[perm]
+    # bit_pos is ascending -> contract to the right
+    for (ibp,bp) in enumerate(bit_pos)
+        if bp<length(tt)
+            right = res[bp+1]
+            d = size(right,2)
+            right_mat = reshape(right, size(right,1), d*size(right,3))
+            right_mat = res[bp][:,bit_val[ibp],:] * right_mat
+            res[bp+1] = reshape(right_mat, size(right_mat,1), d, div(size(right_mat,2),d))
+        else
+            # rightmost block
+            left = res[bp-1]
+            d = size(left,2)
+            left_mat = reshape(left, size(left,1)*d, size(left,3))
+            # this is a vector
+            left_mat = left_mat * res[bp][:,bit_val[ibp],1]
+            res[bp-1] = reshape(left_mat, size(left_mat,1), d, 1)
+            # take care if bp-1 is in bit_pos
+            j = findlast(i -> !(i in bit_pos), 1:length(tt))
+            if isnothing(j)
+                error("cannot contract all bits with this function")
+            end
+            resj = res[j]
+            d = size(resj,2)
+            res[j] = reshape(resj, size(resj,1)*d, size(resj,3)) * res[bp-1][:,:,1]
+            res[j] = reshape(res[j], div(size(res[j],1),d), d, 1)
+        end
+    end
+    not_bit_pos = filter(i -> !(i in bit_pos), 1:length(tt))
+    return res[not_bit_pos]
+end
+
+"""
 Eval MPS by contracting towards the given bond. Should be the one with largest bond dim.
 SLOWER than normal eval even for χ_max ≈ 500
 """

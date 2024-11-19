@@ -334,6 +334,39 @@ function kernel_svd_ranks()
     end
 end
 
+function test_KFCEvaluator()
+    # create correlator
+    npt = 4
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(basepath, "PSF_nz=2_conn_zavg/4pt")
+    D = npt-1
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    ωmax = 0.318
+    ωmin = -ωmax
+    R = 4
+    ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+    ωconvMat = if npt==4
+            TCI4Keldysh.channel_trafo("t")
+        elseif npt==3
+            TCI4Keldysh.channel_trafo_K2("t", false)
+        else
+            TCI4Keldysh.ωconvMat_K1()
+        end
+    γ, sigmak = TCI4Keldysh.read_broadening_params(basepath)
+    KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
+
+    KFev_new = TCI4Keldysh.KFCEvaluator(KFC)
+
+    refval = TCI4Keldysh.precompute_all_values(KFC)
+    refsz = size(refval)
+    refval = reshape(refval, refsz[1:3]..., 2^4)
+    for w in Iterators.product(fill(1:2^R,3)...)
+        @assert maximum(abs.(refval[w...,:] .- KFev_new(w...))) <= 1.e-10
+    end
+    println("Test passsed")
+end
 
 """
 To compare different pointwise evaluation methods.
@@ -346,9 +379,9 @@ function time_pointwise_eval()
     Ops = TCI4Keldysh.dummy_operators(npt)
     T = default_T()
 
-    ωmax = 1.0
+    ωmax = 0.318
     ωmin = -ωmax
-    R = 7
+    R = 10
     ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
     ωconvMat = if npt==4
             TCI4Keldysh.channel_trafo("t")
@@ -357,31 +390,35 @@ function time_pointwise_eval()
         else
             TCI4Keldysh.ωconvMat_K1()
         end
-    γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
-    KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
-
+    γ, sigmak = [T,[0.4]]
     iK = 8
-    KFev = TCI4Keldysh.FullCorrEvaluator_KF(KFC, iK; cutoff=1.e-10)
+    KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
     function KFC_(idx::Vararg{Int,3})
         return TCI4Keldysh.evaluate(KFC, idx...; iK=iK)        
     end
 
-    @btime $KFC_(rand(1:2^$R, 3)...)
-    @btime $KFev(rand(1:2^$R, 3)...)
+    tolerance = 1.e-4
+    KFev = TCI4Keldysh.FullCorrEvaluator_KF(KFC; cutoff=tolerance*1.e-2, tucker_cutoff=tolerance*0.1)
 
-    v = rand(1:2^R, 3)
-    @show abs(KFC_(v...) - KFev(v...)) / abs(KFev(v...))
+    KFev_new = TCI4Keldysh.KFCEvaluator(KFC)
+
+    println("KFCEvaluator:")
+    @btime $KFev_new(rand(1:2^$R, 3)...)
+    println("FullCorrEvaluator_KF:")
+    @btime $KFev(rand(1:2^$R, 3)...)
+    println("Naive contraction:")
+    @btime $KFC_(rand(1:2^$R, 3)...)
 
     # profile
-    # Profile.clear()
-    # Profile.@profile begin
-    #     dummy = zero(ComplexF64)
-    #     for _ in 1:1000
-    #         dummy += KFev(rand(1:2^R, 3)...)
-    #     end
-    #     println(dummy)
-    # end
-    # statprofilehtml()
+    Profile.clear()
+    Profile.@profile begin
+        dummy = zero(ComplexF64)
+        for _ in 1:10^4
+            dummy += KFev_new(rand(1:2^R, 3)...)[iK]
+        end
+        println(dummy)
+    end
+    statprofilehtml()
 end
 
 function time_compress_FullCorrelator_KF(iK::Int; R=4, tolerance=1.e-3)
@@ -1146,7 +1183,7 @@ function benchmark_FullCorrEvaluator_KF_alliK(npt::Int, R::Int; profile=false)
     return nothing
 end
 
-plot_kernel_singvals(10; ωmax=0.3183098861837907)
+# plot_kernel_singvals(10; ωmax=0.3183098861837907)
 
 # times = []
 # for R in 3:7
@@ -1154,3 +1191,19 @@ plot_kernel_singvals(10; ωmax=0.3183098861837907)
 #     push!(times, t)
 # end
 # @show times
+
+# time_pointwise_eval()
+
+using Random
+function time_matmul()
+    N = 10^4
+    Neps = 70
+    A = randn(N,Neps)
+    B = randn(Neps,Neps^2)
+    t = @elapsed begin C=A*B
+    end
+    @show sizeof(A)/10^9
+    @show sizeof(B)/10^9
+    @show sizeof(C)/10^9
+    println("Time: $t")
+end

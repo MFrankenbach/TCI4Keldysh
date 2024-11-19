@@ -1247,6 +1247,12 @@ function channel_trafo(channel::String)
     return ωconvMat
 end
 
+function channel_change(from::String, to::String)
+    trafo_from = channel_trafo(from)    
+    trafo_to = channel_trafo(to)
+    return round.(Int, pinv(trafo_to) * trafo_from)
+end
+
 function merged_legs_K2(channel::String, prime::Bool)
     noprime_dict = Dict("a" => (2,3), "p" => (2,4), "t" => (3,4))
     noprime_dict["pNRG"] = noprime_dict["p"]

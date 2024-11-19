@@ -192,3 +192,73 @@ function _mult_Σ_KF(G_data::Array{ComplexF64,N}, Σ::Array{ComplexF64,NΣ}; idi
     end
     return G_out
 end
+
+function compute_Γfull_symmetric_estimator(
+    formalism ::String,
+    PSFpath::String,
+    ;
+    T::Float64,
+    flavor_idx::Int,
+    omsig::Vector{Float64},
+    ωs_ext  ::NTuple{3,Vector{Float64}},
+    channel::String,
+    broadening_kwargs...
+)
+
+    ωconvMat4pt = channel_trafo(channel)
+
+    # self-energies
+    (ΣL, ΣR) = if formalism=="MF"
+            calc_Σ_MF_aIE(PSFpath, omsig; flavor_idx=flavor, T=T)
+        else
+            calc_Σ_KF_aIE(PSFpath, omsig; flavor_idx=flavor, T=T, broadening_kwargs...)
+        end
+
+    # Γcore
+    Γcore = compute_Γcore_symmetric_estimator(
+        formalism,
+        PSFpath * "/4pt",
+        ΣR;
+        Σ_calcL=ΣL,
+        ωs_ext=ωs_ext,
+        T=T,
+        flavor_idx=flavor_idx,
+        ωconvMat=ωconvMat4pt,
+        broadening_kwargs...
+    )
+
+    channels = ["a","t","p"]
+    if !(channel in channels)
+        error("Channel $channels not supported")
+    end
+
+    # add K2r, K2'r, r=a,t,p
+    K2s = []
+    for ch in channels
+        # TODO compute ωs_ext_K2
+        changeMat = channel_change(ch, channel)[1:2,:]
+        # does NOT work for non-square matrices
+        ωs_extK2, ωconvOff, _ = _trafo_ω_args(ωs_ext, changeMat)
+        K2 = precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_extK2, channel=ch, prime=false, broadening_kwargs...)
+        push!(K2s, K2)
+    end
+
+    K2primes = []
+    for ch in channels
+        # TODO compute ωs_ext_K2prime
+        changeMat = channel_change(ch, channel)[[1,3],:]
+        K2prime = precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_extK2prime, channel=ch, prime=true, broadening_kwargs...)
+        push!(K2primes, K2prime)
+    end
+
+    # add K1r, r=a,t,p
+    K1s = []
+    for ch in channels
+        # TODO compute ωs_ext_K1
+        changeMat = reshape(channel_change(ch, channel)[1,:], 1,3)
+        K1 = precompute_K1r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext_K1, channel=ch, broadening_kwargs...)
+        push!(K1s, K1)
+    end
+
+    # add bare vertex Γ_0
+end

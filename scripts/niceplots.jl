@@ -119,6 +119,20 @@ function set_rcParams(fs::Int=12)
     pyplot.rcParams["legend.fontsize"] = fs             # Legend font size
 end
 
+function annotate_topleft(ax, text; color="black")
+    subplotlabeloffset=3
+    ax.annotate(
+    text,
+    xy=(0,1),
+    xycoords="axes fraction",
+    horizontalalignment="left",
+    verticalalignment="top",
+    xytext=(+subplotlabeloffset, -subplotlabeloffset),
+    textcoords="offset points",
+    color=color
+    )
+end
+
 function abc_annotate(axs; color="black")
     subplotlabeloffset=3
     alphabet = "abcdefghijklmnopqrstuvwxyz"
@@ -190,6 +204,8 @@ function plot_kernel_singvals_KF(R::Int; ωmax::Float64=1.0)
     kMF = GF.Gps[1].tucker.legs[1]
     _,SMF,_ = svd(kMF)
 
+    kMFfer = GF.Gps[1].tucker.legs[2]
+
     set_rcParams(12)
 
     fig, axs = subplots(figsize=(COLUMN_INCH, COLUMN_INCH*9/16))
@@ -203,7 +219,7 @@ function plot_kernel_singvals_KF(R::Int; ωmax::Float64=1.0)
     yvalsMF = SMF ./ s0MF
     xvals = collect(1:length(S))
     xvalsMF = collect(1:length(SMF))
-    h2, = axs.plot(xvalsMF, yvalsMF; linestyle="--", color="gray", label=L"\sigma_i\left((\mathrm{i}\omega-\omega_')^{-1}\right)")
+    h2, = axs.plot(xvalsMF, yvalsMF; linestyle="--", color="gray", label=L"\sigma_i\left((\mathrm{i}\omega-\omega')^{-1}\right)")
     h1, = axs.plot(xvals, yvals; color="blue", label=L"\sigma_i\left(k^{[0,0]}_b\right)")
     axs.set_yscale("log")
     axs.set_xlabel(L"i")
@@ -272,11 +288,12 @@ function plot_vertex_ranks_both(tol_range; folder="pwtcidata", subdir_str=nothin
         end
     end
 
+    worst_line = nothing
     if show_worstcase
         worstcase_ranks = [2^div(3*R,2) for R in Rs]
         worstcase_rams = [16 * 2^(3*R) / 10^6 for R in Rs]
         label = ramplot ? "dense grid" : "worst case"
-        axs[0].plot(Rs, worstcase_ranks, label=label, color="black", linestyle=":", marker="None")
+        worst_line, = axs[0].plot(Rs, worstcase_ranks, label=label, color="black", linestyle=":", marker="None")
         axs[1].plot(Rs, worstcase_rams, label=label, color="black", linestyle=":", marker="None")
 
         for i in [0,1]
@@ -294,14 +311,14 @@ function plot_vertex_ranks_both(tol_range; folder="pwtcidata", subdir_str=nothin
         end
     end
 
-    axs[0].set_title("Matsubara vertex ranks")
-    axs[0].set_xlabel("R")
+    axs[0].set_title(L"Matsubara $\Gamma_{\mathrm{core}}$ ranks")
+    axs[0].set_xlabel(L"R")
     axs[0].set_ylabel("rank")
     (y1, y2) = axs[0].get_ylim()
     @show (y1,y2)
     axs[0].set_ylim(y1, 10^3)
-    axs[1].set_title("Matsubara vertex RAM")
-    axs[1].set_xlabel("R")
+    axs[1].set_title(L"Matsubara $\Gamma_{\mathrm{core}}$ RAM")
+    axs[1].set_xlabel(L"R")
     (y1, y2) = axs[1].get_ylim()
     axs[1].set_ylim(y1, 10^4)
     axs[1].set_ylabel("RAM [MB]")
@@ -316,7 +333,7 @@ function plot_vertex_ranks_both(tol_range; folder="pwtcidata", subdir_str=nothin
         [L"\beta=2000",L"\beta=200"]
     )
 
-    lgd = fig.legend(handles=handles, ncols=1, bbox_to_anchor=(1.04,0.90))
+    lgd = fig.legend(handles=vcat(handles, [worst_line]), ncols=1, bbox_to_anchor=(1.04,0.90))
     # fig.tight_layout()
     save_bbox(
         "MFvertex_ranks_tol=$(TCI4Keldysh.tolstr(minimum(tol_range)))to$(TCI4Keldysh.tolstr(maximum(tol_range))).pdf",
@@ -790,6 +807,9 @@ function triptych_vertex_plot(h5files; folder="")
 
     # eliminate singleton dims
     dvecs_ = [refvals_, qttvals_, diffs_]
+    @show size.(refvals_)
+    @show size.(qttvals_)
+    @show size.(diffs_)
     refvals = Vector{Matrix{ComplexF64}}(undef, nrows)
     qttvals = Vector{Matrix{ComplexF64}}(undef, nrows)
     diffs = Vector{Matrix{ComplexF64}}(undef, nrows)
@@ -807,8 +827,6 @@ function triptych_vertex_plot(h5files; folder="")
     # qtt_datas = [TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder) for qttfile in qttfiles]
     # tolerances = [qd["tolerance"] for qd in qtt_datas]
     # betas = [qd["beta"] for qd in qtt_datas]
-    tolerances = fill(0.01, nrows)
-
 
     # plot
     fig, axes = subplots(
@@ -823,6 +841,13 @@ function triptych_vertex_plot(h5files; folder="")
     axs = reshape(pyconvert(Array, axes), (nrows,3))
     @show axs
     @show size(axs)
+
+    # CHANGE MANUALLY
+    tolerances = fill(0.001, nrows)
+    annotate_topleft(axs[1,2], L"\chi=96"; color="white")
+    annotate_topleft(axs[2,2], L"\chi=96"; color="white")
+    annotate_topleft(axs[3,2], L"\chi=111"; color="white")
+
     # assume the same sizes everywhere
     xsz, ysz = size(refvals[1])
     @assert xsz==ysz "Non-square data grid?"
@@ -830,7 +855,7 @@ function triptych_vertex_plot(h5files; folder="")
     @show xvals
     # yvals = ysz-div(ysz,2)-1 : ysz+div(ysz,2)-1
     # steps of 5, including 0
-    step = 20
+    step = 50
     neg_0tick = -1 * reverse(collect(0:step:-xvals[1]))
     pos_tick = collect(step:step:xvals[end])
     xticks_label = vcat(neg_0tick, pos_tick)
@@ -897,13 +922,13 @@ end
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
-folder="triptych_data"
+folder="MF_KCS_rankdata"
 
-h5file1 = "vertex_MF_slice_beta=2000.0_slices=(0,128,128,)_tol=-2.h5"
-h5file2 = "vertex_MF_slice_beta=2000.0_slices=(5,128,128,)_tol=-2_upup.h5"
-h5file3 = "vertex_MF_slice_beta=2000.0_slices=(5,128,128,)_tol=-2_updown.h5"
+h5file1 = "vertex_MF_slice_beta=2000.0_slices=(0,256,256,)_tol=-2_upup.h5"
+h5file2 = "vertex_MF_slice_beta=2000.0_slices=(5,256,256,)_tol=-3_upup.h5"
+h5file3 = "vertex_MF_slice_beta=2000.0_slices=(5,256,256,)_tol=-3_updown.h5"
 h5filecorr = "corrMF_slice_beta=2000.0_slices=(1, 256, 256)_tol=-4.h5"
-triptych_vertex_plot([h5file1, h5file2, h5file3]; folder=folder)
+# triptych_vertex_plot([h5file1, h5file2, h5file3]; folder=folder)
 # triptych_corr_plot([h5filecorr]; folder=folder)
 
 # plot_vertex_ranks_both(10.0 .^ collect(-5:-2); folder=folder, subdir_str="shellpivot")
@@ -913,4 +938,4 @@ triptych_vertex_plot([h5file1, h5file2, h5file3]; folder=folder)
 
 # plot_K12_ranks_MF(PSFpath)
 
-# plot_kernel_singvals_KF(10; ωmax=0.3183098861837907)
+plot_kernel_singvals_KF(10; ωmax=0.3183098861837907)

@@ -802,6 +802,59 @@ struct FullCorrEvaluator_KF{D,T}
 end
 
 """
+Contract one frequency into PSF.
+* KFC: Keldysh Correlator
+* omPSFs: ∑_ϵ1 k^R(ω,ϵ1)*Acont(ϵ1,ϵ2,ϵ3) for each partial correlator
+* remLegs: p×2 matrix of remaining tucker legs (kernels) to be contracted into omPSFs
+copied here to improve memory layout
+"""
+struct KFCEvaluator 
+    KFC::FullCorrelator_KF{3}
+    omPSFs::Vector{Array{ComplexF64,3}}
+    remLegs::Matrix{Matrix{ComplexF64}}
+
+    function KFCEvaluator(KFC::FullCorrelator_KF{3})
+        np = length(KFC.Gps)
+        omPSFs = Vector{Array{ComplexF64,3}}(undef, 2*np)
+        remLegs = Matrix{Matrix{ComplexF64}}(undef, np,2)
+        for (p,Gp) in enumerate(KFC.Gps)
+            k = Gp.tucker.legs[1]
+            censz = size(Gp.tucker.center)
+            ompsf = k * reshape(Gp.tucker.center, censz[1], censz[2]*censz[3])
+            omPSFs[2*p-1] = reshape(ompsf, size(k,1), censz[2], censz[3])
+            omPSFs[2*p] = conj.(omPSFs[2*p-1])
+            # for more caching due to data layout
+            omPSFs[2*p-1] = permutedims(omPSFs[2*p-1], (2,3,1))
+            omPSFs[2*p] = permutedims(omPSFs[2*p], (2,3,1))
+            remLegs[p,1] = transpose(Gp.tucker.legs[2])
+            remLegs[p,2] = transpose(Gp.tucker.legs[3])
+        end
+        return new(KFC, omPSFs, remLegs)
+    end
+end
+
+function (fev::KFCEvaluator)(idx::Vararg{Int,3})
+    res = zeros(ComplexF64, 1, 2^4)
+    for (p,Gp) in enumerate(fev.KFC.Gps)
+        # rotate frequency
+        retarded = zeros(ComplexF64,4)
+        idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
+
+        # compute retarded
+        @views tmp13 = transpose(fev.remLegs[p,1][:,idx_int[2]]) * fev.omPSFs[2*p-1][:,:,idx_int[1]]
+        @views retarded[1] = tmp13 * fev.remLegs[p,2][:,idx_int[3]]
+        @views retarded[2] = transpose(fev.remLegs[p,1][:,idx_int[2]]) * fev.omPSFs[2*p][:,:,idx_int[1]] * fev.remLegs[p,2][:,idx_int[3]]
+        @views retarded[3] = only(conj.(tmp13) * fev.remLegs[p,2][:,idx_int[3]])
+        retarded[end] = conj(retarded[1])
+
+        # transform to Keldysh
+        res += transpose(retarded) * fev.KFC.GR_to_GK[:,:,p]
+    end
+    return vec(res)
+
+end
+
+"""
 Generic evaluation method
 """
 function (fev::FullCorrEvaluator_KF{D,T})(::Val{:nocut}, idx::Vararg{Int,D}) where {D,T}
