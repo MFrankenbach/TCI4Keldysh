@@ -1214,7 +1214,8 @@ Structure to evaluate Keldysh core vertex, i.e., wrap the required setup and cap
 on i'th component of transformed frequency w
 """
 struct ΓcoreEvaluator_KF{T}
-    GFevs::Vector{FullCorrEvaluator_KF{3,T}}
+    # GFevs::Vector{FullCorrEvaluator_KF{3,T}}
+    GFevs::Vector{KFCEvaluator}
     Ncorrs::Int # number of full correlators
     iK_tuple::NTuple{4,Int} # requested Keldysh idx
     X::Matrix{ComplexF64}
@@ -1233,7 +1234,8 @@ struct ΓcoreEvaluator_KF{T}
         
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
-        GFevs = [FullCorrEvaluator_KF(GFs[i]; cutoff=cutoff) for i in eachindex(GFs)]
+        # GFevs = [FullCorrEvaluator_KF(GFs[i]; cutoff=cutoff) for i in eachindex(GFs)]
+        GFevs = [KFCEvaluator(GFs[i]) for i in eachindex(GFs)]
         X = get_PauliX()
         iK_tuple = KF_idx(iK,3)
 
