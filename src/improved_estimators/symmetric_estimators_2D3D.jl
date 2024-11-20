@@ -199,7 +199,6 @@ function compute_Γfull_symmetric_estimator(
     ;
     T::Float64,
     flavor_idx::Int,
-    omsig::Vector{Float64},
     ωs_ext  ::NTuple{3,Vector{Float64}},
     channel::String,
     broadening_kwargs...
@@ -208,14 +207,15 @@ function compute_Γfull_symmetric_estimator(
     ωconvMat4pt = channel_trafo(channel)
 
     # self-energies
+    omsig = only(trafo_grids(ωs_ext[1:2], reshape([1,1],(1,2))))
     (ΣL, ΣR) = if formalism=="MF"
-            calc_Σ_MF_aIE(PSFpath, omsig; flavor_idx=flavor, T=T)
+            calc_Σ_MF_aIE(PSFpath, omsig; flavor_idx=flavor_idx, T=T)
         else
-            calc_Σ_KF_aIE(PSFpath, omsig; flavor_idx=flavor, T=T, broadening_kwargs...)
+            calc_Σ_KF_aIE(PSFpath, omsig; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
         end
 
     # Γcore
-    Γcore = compute_Γcore_symmetric_estimator(
+    Γfull = compute_Γcore_symmetric_estimator(
         formalism,
         PSFpath * "/4pt",
         ΣR;
@@ -233,32 +233,110 @@ function compute_Γfull_symmetric_estimator(
     end
 
     # add K2r, K2'r, r=a,t,p
-    K2s = []
     for ch in channels
-        # TODO compute ωs_ext_K2
-        changeMat = channel_change(ch, channel)[1:2,:]
-        # does NOT work for non-square matrices
-        ωs_extK2, ωconvOff, _ = _trafo_ω_args(ωs_ext, changeMat)
-        K2 = precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_extK2, channel=ch, prime=false, broadening_kwargs...)
-        push!(K2s, K2)
-    end
-
-    K2primes = []
-    for ch in channels
-        # TODO compute ωs_ext_K2prime
-        changeMat = channel_change(ch, channel)[[1,3],:]
-        K2prime = precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_extK2prime, channel=ch, prime=true, broadening_kwargs...)
-        push!(K2primes, K2prime)
+        for prime in [true, false]
+            fidx = prime ? 3 : 2
+            nonfidx = prime ? 2 : 3
+            if ch==channel
+                # compute K2, no frequency trafo needed
+                ωs_extK2 = (ωs_ext[1],ωs_ext[fidx])
+                K2 = precompute_K2r(PSFpath,
+                    flavor_idx,
+                    formalism; 
+                    ωs_ext=ωs_extK2,
+                    channel=ch,
+                    prime=prime,
+                    broadening_kwargs...)
+                # add K2
+                if formalism=="MF"
+                    for i in axes(Γfull,nonfidx)
+                        slice = ntuple(j -> j==nonfidx ? i : Colon(), 3)
+                        Γfull[slice...] .+= K2
+                    end
+                else
+                    for ik2 in ids_KF(3)
+                        for iK in equivalent_iK_K2(ik2, ch, prime)
+                            for i in axes(Γfull,nonfidx)
+                                slice = ntuple(j -> j==nonfidx ? i : Colon(), 3)
+                                Γfull[slice..., iK...] .+= K2[:,:,ik2...]
+                            end
+                        end
+                    end
+                end
+            else
+                # compute K2
+                changeMat = channel_change(ch, channel)[[1,fidx],:]
+                display(channel_change(ch,channel))
+                display(changeMat)
+                ωs_extK2, offset = trafo_grids_offset(ωs_ext, changeMat)
+                @show size.(ωs_extK2)
+                @show [(om[1],om[end]) for om in ωs_extK2]
+                K2 = precompute_K2r(PSFpath,
+                    flavor_idx,
+                    formalism;
+                    ωs_ext=ωs_extK2,
+                    channel=ch,
+                    prime=prime,
+                    broadening_kwargs...)
+                # add K2
+                K2strides = transpose(collect(strides(K2))[1:2])
+                if formalism=="MF"
+                    sv = StridedView(K2, size(Γfull), Tuple(K2strides * changeMat), K2strides*offset)
+                    Γfull .+= collect(sv)
+                else
+                    # take care of Keldysh components
+                    for ik in Iterators.product(fill([1,2], 3)...)
+                        sv = StridedView(K2[:,:,ik...], size(Γfull)[1:3], Tuple(K2strides * changeMat), K2strides*offset)
+                        for iK in equivalent_iK_K2(ik, ch, prime)
+                            Γfull[:,:,:,iK...] .+= collect(sv)
+                        end
+                    end
+                end
+            end
+        end
     end
 
     # add K1r, r=a,t,p
-    K1s = []
     for ch in channels
-        # TODO compute ωs_ext_K1
-        changeMat = reshape(channel_change(ch, channel)[1,:], 1,3)
-        K1 = precompute_K1r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext_K1, channel=ch, broadening_kwargs...)
-        push!(K1s, K1)
+        if ch==channel
+            # no trafo needed
+            K1 = precompute_K1r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext[1], channel=ch, broadening_kwargs...)
+            if formalism=="MF"
+                Γfull .+= reshape(K1, (length(K1),1,1))
+            else
+                for ik1 in ids_KF(2)
+                    for iK in equivalent_iK_K1(ik1, ch)
+                        Γfull[:,:,:,iK...] .+= reshape(K1[:,ik1...], (size(K1,1),1,1)) 
+                    end
+                end
+            end
+        else
+            changeMat = reshape(channel_change(ch, channel)[1,:], 1,3)
+            ωs_extK1, offset = trafo_grids_offset(ωs_ext, changeMat)
+            K1 = precompute_K1r(PSFpath, flavor_idx, formalism; ωs_ext=only(ωs_extK1), channel=ch, broadening_kwargs...)
+            if formalism=="MF"
+                sv = StridedView(K1, size(Γfull), Tuple([1] * changeMat), only(offset))
+                Γfull .+= collect(sv)
+            else
+                for ik1 in ids_KF(2)
+                    for iK in equivalent_iK_K1(ik1, ch)
+                        sv = StridedView(K1, size(Γfull)[1:3], Tuple([1] * changeMat), only(offset))
+                        Γfull[:,:,:,iK...] .+= collect(sv)
+                    end
+                end
+            end
+        end
     end
 
-    # add bare vertex Γ_0
+    # add bare vertex Γ_0 for updown flavor
+    gam0 = 0.5 * load_Adisc_0pt(PSFpath, "Q12")
+    if flavor_idx==2
+        for iK in ids_KF(4)
+            if isodd(sum(iK))
+                Γfull[:,:,:,iK...] .+= gam0
+            end
+        end
+    end
+    
+    return Γfull
 end

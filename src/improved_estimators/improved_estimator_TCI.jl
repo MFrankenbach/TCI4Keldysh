@@ -662,8 +662,7 @@ function precompute_K2r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ex
     sign = channel_K2_sign(channel, prime)
     if formalism=="MF"
 
-        Nfer = length(last(ωs_ext))
-        ωs_Σ = MF_grid(T, Nfer, true)
+        ωs_Σ = Σ_grid(ωs_ext)
         (ΣL, ΣR) = calc_Σ_MF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor_idx,T=T)
         printstyled("  Compute K2...\n"; color=:blue)
         K2 = compute_K2r_symmetric_estimator(
@@ -685,9 +684,10 @@ function precompute_K2r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ex
         broadening_kwargs = read_broadening_settings(basepath)
         @assert isodd(length(ωs_ext[1]))
         @assert iseven(length(ωs_ext[2]))
-        Nfer = length(ωs_ext[2])
-        ωmax = ωs_ext[1][end]
-        ωs_Σ = KF_grid_fer_(ωmax, 2*Nfer)
+        # Nfer = length(ωs_ext[2])
+        # ωmax = ωs_ext[1][end]
+        # ωs_Σ = KF_grid_fer_(ωmax, 2*Nfer)
+        ωs_Σ = Σ_grid(ωs_ext)
         (ΣL, ΣR) = calc_Σ_KF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor_idx,T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
         printstyled("  Compute K2...\n"; color=:blue)
         K2 = compute_K2r_symmetric_estimator(

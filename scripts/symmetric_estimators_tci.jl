@@ -322,14 +322,14 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     if haskey(qtt_data, "flavor_idx")
         flavor_idx = qtt_data["flavor_idx"]
     else
-        @warn "Assuming flavor_idx=1"
         flavor_idx = 1
+        @warn "Assuming flavor_idx=$flavor_idx"
     end
 
     Nhalf = 2^(R-1)
     Nhplot = 2^(Rplot-1)
     oneslice = Nhalf-Nhplot+1 : Nhalf+Nhplot
-    transfer_offset = 5
+    transfer_offset = 0
     plot_slice = (Nhalf+1+transfer_offset:Nhalf+1+transfer_offset, oneslice, oneslice)
     slice_id = findfirst(i -> length(plot_slice[i])==1, 1:3)
     ids = Base.OneTo.(length.(plot_slice))
@@ -357,6 +357,16 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
 
     # ==== SETUP DONE
 
+    # bit_pos = collect(1:3:3*R)
+    # bit_val = fill(0, length(bit_pos))
+    # QG.index_to_quantics_fused!(bit_val, (Nhalf+1+transfer_offset,))
+    # ttslice = TCI4Keldysh.saturate_bits(tci.sitetensors, bit_pos, bit_val)
+    # @show size.(ttslice)
+    # slice_fat_q = TCI4Keldysh.qtt_to_fattensor(ttslice)
+    # slice_fat = TCI4Keldysh.qinterleaved_fattensor_to_regular(slice_fat_q, R)
+    # @show size(slice)
+
+
     # tci values
     println("-- Rank of tt : $(TCI.rank(tci))")
     tcival = zeros(ComplexF64, length.(plot_slice))
@@ -369,7 +379,7 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
 
     # ref values
     centre_id = div(size(gamcore,1),2)+1
-    refval = gamcore[centre_id+transfer_offset, oneslice, oneslice]    
+    refval = reshape(gamcore[centre_id+transfer_offset, oneslice, oneslice], size(tcival)...)
     println("  Finished computation of vertex on slice")
 
     diff = refval .- tcival
@@ -1048,7 +1058,7 @@ function check_serialized_files()
     @show successcount
 end
 
-folder = "cluster_output_KCS"
+folder = "pwtcidata_KCS"
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 # plot_K12_ranks_MF(PSFpath)
@@ -1057,14 +1067,14 @@ PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
 # plot_vertex_ranks(collect(-7:-2), PSFpath; folder=folder, subfolder_str="shellpivot", show_worstcase=true, ramplot=true)
 
-# R = 8
-# beta = 2000
-# tol = 2
+R = 8
+beta = 2000
+tol = 3
 thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_shellpivot"
-# dirname = "gamcoreMF_tol$(tol)_beta$(beta)_updown"
+# thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_updown"
 qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
-# # check_interpolation(joinpath(thedirname, qttfile), R, PSFpath; folder="MF_KCS_shellpivot")
-triptych_vertex_data(joinpath(thedirname, qttfile), R, PSFpath; folder="cluster_output_KCS", store=true)
+# # check_interpolation(joinpath(thedirname, qttfile), R, PSFpath; folder=folder)
+triptych_vertex_data(joinpath(thedirname, qttfile), R, PSFpath; folder=folder, store=true)
 
 # VERTEX RANK PLOT
 # plot_vertex_ranks(collect(-5:-2), PSFpath; folder=folder, subfolder_str="shellpivot", ramplot=true)

@@ -691,6 +691,10 @@ function KF_idx(K::NTuple{N, Int}, D::Int) :: Int where {N}
     return LinearIndices(K_it)[c_idx]
 end
 
+function ids_KF(npt::Int)
+    return Iterators.product(fill([1,2],npt)...)
+end
+
 function get_PauliX()
     return [0.0 1.0; 1.0 0.0] .+ 0.0*im
 end
@@ -702,6 +706,71 @@ function MF_npoint_grid(T::Float64, Nhalf::Int, D::Int)
     ωbos = MF_grid(T, Nhalf, false)
     ωfer = MF_grid(T, Nhalf, true)
     return ntuple(i -> (i==1) ? ωbos : ωfer, D)
+end
+
+"""
+Determine equidistant grid such that trafo*ω for ω ∈ ωs_ext is always contained in grid.
+ωs_ext must be equidistant.
+"""
+function trafo_grids(ωs_ext::NTuple{D,Vector{Float64}}, trafo::Matrix{Int}) where {D}
+    @assert size(trafo,2)==D
+
+    # check grid spacing
+    spacings = Vector{Float64}(undef,D)
+    for (i,om) in enumerate(ωs_ext)
+        dom = diff(om)
+        @assert all(isapprox.(dom, dom[1]; atol=1.e-10)) "Grid must be equidistant"
+        spacings[i]=dom[1]
+    end
+    @assert all(isapprox.(spacings, spacings[1]; atol=1.e-12))
+
+    # determine grid bounds
+    vertices_ext = collect(Iterators.product(ntuple(i -> [ωs_ext[i][1], ωs_ext[i][end]], D)...)) 
+    vertices_new = [trafo * collect(v) for v in vertices_ext]
+    D2 = size(trafo,1)
+    gridmins = [minimum([v[d] for v in vertices_new]) for d in 1:D2]
+    gridmaxs = [maximum([v[d] for v in vertices_new]) for d in 1:D2]
+
+    # return new grids with same spacing as old ones
+    nsteps = [round(Int, (gridmaxs[i] - gridmins[i])/spacings[1]) + 1 for i in 1:D2]
+    ωs_new = ntuple(i -> collect(range(gridmins[i], gridmaxs[i]; length=nsteps[i])), D2)
+    return ωs_new
+end
+
+"""
+Determine index shift s such that for all idx:
+ωs_int[trafo * idx + s] = trafo * ωs_ext[idx] 
+"""
+function idx_trafo_offset(
+    ωs_ext::NTuple{D1,Vector{Float64}},
+    ωs_int::NTuple{D2,Vector{Float64}},
+    trafo::Matrix{Int}
+    )::Vector{Int} where {D1,D2}
+
+    @assert size(trafo)==(D2,D1)
+
+    idx = fill(1, D1)
+    trafoidx = trafo*idx
+    trafo_om = trafo*[ωs_ext[i][idx[i]] for i in 1:D1]
+    # find transformed index in internal grid
+    idx_int = [findfirst(om -> isapprox(trafo_om[i],om; atol=1.e-10), ωs_int[i]) for i in 1:D2]
+    # idx_int = trafo*idx + s
+    s = idx_int - trafoidx
+    return s
+end
+
+function trafo_grids_offset(ωs_ext::NTuple{D,Vector{Float64}}, trafo::Matrix{Int}) where {D}
+    ωs_int = trafo_grids(ωs_ext, trafo)
+    s = idx_trafo_offset(ωs_ext, ωs_int, trafo)
+    return (ωs_int, s)
+end
+
+"""
+Convenience wrapper to compute self-energy grid that contains
+all values Σ(ν+ω) for frequencies ν,ω
+"""
+function Σ_grid(ωs_ext::NTuple{2,Vector{Float64}})
+    return only(trafo_grids(ωs_ext, reshape([1,1],(1,2))))
 end
 
 """
@@ -1265,6 +1334,19 @@ function merged_legs_K2(channel::String, prime::Bool)
     end
 end
 
+function merged_legs_K1(channel::String)
+    if channel=="t"
+        return [(1,2), (3,4)]
+    elseif channel=="p"
+        return [(1,3), (2,4)]
+    elseif channel=="a"
+        return [(1,4), (2,3)]
+    else
+        error("Invalid channel $channel")
+    end
+end
+
+
 function oplabels_K2(channel::String, prime::Bool)
     (i,j) = merged_legs_K2(channel, prime)
     nonij = sort(setdiff(1:4, (i,j)))
@@ -1272,6 +1354,9 @@ function oplabels_K2(channel::String, prime::Bool)
     return ["Q$i$j", leg_labels[nonij[1]], leg_labels[nonij[2]]]
 end
 
+"""
+Which sign belongs to which K2 contribution (cf. Lihm et. al. Fig. 13)
+"""
 function channel_K2_sign(channel::String, prime::Bool)
     if channel=="a"
         return ifelse(prime, -1, 1)
@@ -1329,6 +1414,60 @@ External -> internal frequency conversion for 2pt functions
 function ωconvMat_K1()
     return reshape([1; -1], (2,1))
 end
+
+"""
+cf. eqs. (73, 111) Lihm et. al.
+"""
+function merge_iK(ik1::Int, ik2::Int)
+    return iseven(ik1+ik2) ? 1 : 2
+end
+
+function unfold_iK(ik::Int)
+    if ik==1
+        return [[1,1],[2,2]]
+    else
+        return [[1,2],[2,1]]
+    end
+end
+
+"""
+Get Keldysh 4-indices that coincide in ik2 component of K2
+* ik2: Keldysh idx of K2
+* merged_idx: which idx in ik2 should be unfolded into two indices
+"""
+function equivalent_iK_K2(ik2::NTuple{3,Int}, channel::String, prime::Bool; merged_idx::Int=1)
+    ikunfold = unfold_iK(ik2[merged_idx])
+    l1,l2 = merged_legs_K2(channel, prime)    
+    ret = []
+    for k in ikunfold
+        ret_act = zeros(4)
+        ret_act[l1] = k[1]
+        ret_act[l2] = k[2]
+        ret_act[ret_act.==0] .= ik2[[i!=merged_idx for i in 1:3]]
+        push!(ret, ret_act)
+    end
+    return ret
+end
+
+"""
+Get Keldysh 4-indices that coincide in ik1 component of K1
+* ik1: Keldysh idx of K1
+* merged_idx: which idx in ik1 should be unfolded into two indices
+"""
+function equivalent_iK_K1(ik1::NTuple{2,Int}, channel::String)
+    unfold1 = unfold_iK(ik1[1])
+    unfold2 = unfold_iK(ik1[2])
+    l1,l2 = merged_legs_K1(channel)    
+    ret = []
+    for (u1,u2) in Iterators.product(unfold1, unfold2)
+        ret_act = zeros(4)
+        ret_act[collect(l1)] .= u1
+        ret_act[collect(l2)] .= u2
+        push!(ret, ret_act)
+    end
+    return ret
+end
+
 
 # ==== JSON
 function logJSON(data::Any, filename::String, folder::String="tci_data"; verbose=true)

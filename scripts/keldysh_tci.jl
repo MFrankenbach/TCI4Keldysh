@@ -517,25 +517,27 @@ function GFfilename(mode::String,
 end
 
 
-function time_Γcore_KF(iK::Int, R=4, tolerance=1.e-6)
+function time_Γcore_KF(iK::Int, R=4, tolerance=1.e-3)
     channel = "a"
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(basepath, "PSF_nz=2_conn_zavg/")
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
-    ωmax = 1.0
+    ωmax = 0.318
     D = 3
-    γ, sigmak = beta2000_broadening(T)
+    γ, sigmak = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath; channel=channel)
     flavor_idx = 1
 
+    @show broadening_kwargs
+    @show (γ, only(sigmak))
     @time qtt = TCI4Keldysh.Γ_core_TCI_KF(
         PSFpath, R, iK, ωmax
         ; 
         sigmak=sigmak,
         γ=γ,
         T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved,
-        estep=20,
-        emin=1.e-6,
-        emax=1.e2
+        broadening_kwargs...
         )
 end
 

@@ -221,7 +221,25 @@ end
         @test iK_==iK
     end
 
+    function test_trafo_grids()
+        ωs_ext = (0.5 * [1,2,3], 0.5*[-1,0,1,2])
+        trafo = [1 -1; 0 1]
+        ωs_new = TCI4Keldysh.trafo_grids(ωs_ext, trafo)
+        @assert ωs_new == ([-0.5, 0.0, 0.5, 1.0, 1.5, 2.0], [-0.5, 0.0, 0.5, 1.0])
+    end
+
+    function test_idx_trafo_offset()
+        ωs_ext = (0.5 * [1,2,3], 0.5*[-1,0,1,2])
+        trafo = [1 -1; 0 1]
+        ωs_new = TCI4Keldysh.trafo_grids(ωs_ext, trafo)
+        # ωs_new == ([-0.5, 0.0, 0.5, 1.0, 1.5, 2.0], [-0.5, 0.0, 0.5, 1.0])
+        s = TCI4Keldysh.idx_trafo_offset(ωs_ext, ωs_new, trafo)
+        @assert s==[4,0]
+    end
+
 
     test_MF_grid()
     test_KF_idx()
+    test_trafo_grids()
+    test_idx_trafo_offset()
 end

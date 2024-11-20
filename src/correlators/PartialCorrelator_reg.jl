@@ -180,7 +180,7 @@ function _trafo_ω_args(ωs::NTuple{D,Vector{T}}, ωconvMat::AbstractMatrix{Int}
     function grids_are_fine(grids)
         tol = 1.e-10
         Δgrids = [diff(g) for g in grids]
-        is_equidistant_symmetric = [(grids[i][1] == -grids[i][end]) && (maximum(abs.(diff(Δgrids[i]))) < tol) for i in eachindex(ωs)]
+        is_equidistant_symmetric = [abs(grids[i][1] + grids[i][end])<1.e-12 && (maximum(abs.(diff(Δgrids[i]))) < tol) for i in eachindex(ωs)]
         all_spacings_identical = D > 1 ? maximum(abs.(diff([Δgrids[i][1] for i in eachindex(ωs)]))) < tol : true
         return all(is_equidistant_symmetric) && all_spacings_identical
     end
