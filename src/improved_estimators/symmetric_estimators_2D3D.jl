@@ -128,7 +128,10 @@ function compute_Γcore_symmetric_estimator(
 
     filelist = readdir(PSFpath)
 
-    for letts in letter_combinations#[2:end]
+    # avoid race condition
+    gamcore_lock = ReentrantLock()
+
+    Threads.@threads for letts in letter_combinations#[2:end]
         println("letts: ", letts)
         ops = [letts[i]*op_labels[i] for i in 1:4]
         if !any(parse_Ops_to_filename(ops) .== filelist)
@@ -171,7 +174,9 @@ function compute_Γcore_symmetric_estimator(
         end
         println("max dat 2 ", letts," : ", maxabs(Γcore_data_tmp))
 
-        Γcore_data += Γcore_data_tmp
+        lock(gamcore_lock) do
+            Γcore_data += Γcore_data_tmp
+        end
     end
 
     return Γcore_data
@@ -227,18 +232,19 @@ function compute_Γfull_symmetric_estimator(
         broadening_kwargs...
     )
 
-    channels = ["a","t","p"]
+    channels = ["a","t","pNRG"]
     if !(channel in channels)
         error("Channel $channels not supported")
     end
+
+    @show maximum(abs.(Γfull))
 
     # add K2r, K2'r, r=a,t,p
     for ch in channels
         for prime in [true, false]
             fidx = prime ? 3 : 2
             nonfidx = prime ? 2 : 3
-            if ch==channel
-                # compute K2, no frequency trafo needed
+            if ch==channel # compute K2, no frequency trafo needed
                 ωs_extK2 = (ωs_ext[1],ωs_ext[fidx])
                 K2 = precompute_K2r(PSFpath,
                     flavor_idx,
@@ -265,12 +271,8 @@ function compute_Γfull_symmetric_estimator(
                 end
             else
                 # compute K2
-                changeMat = channel_change(ch, channel)[[1,fidx],:]
-                display(channel_change(ch,channel))
-                display(changeMat)
+                changeMat = channel_change(channel, ch)[[1,fidx],:]
                 ωs_extK2, offset = trafo_grids_offset(ωs_ext, changeMat)
-                @show size.(ωs_extK2)
-                @show [(om[1],om[end]) for om in ωs_extK2]
                 K2 = precompute_K2r(PSFpath,
                     flavor_idx,
                     formalism;
@@ -281,12 +283,15 @@ function compute_Γfull_symmetric_estimator(
                 # add K2
                 K2strides = transpose(collect(strides(K2))[1:2])
                 if formalism=="MF"
-                    sv = StridedView(K2, size(Γfull), Tuple(K2strides * changeMat), K2strides*offset)
+                    off_stride = K2strides*offset + sum(K2strides*changeMat) - sum(K2strides)
+                    sv = StridedView(K2, size(Γfull), Tuple(K2strides * changeMat), off_stride)
+                    testsv = collect(sv)
                     Γfull .+= collect(sv)
                 else
                     # take care of Keldysh components
                     for ik in Iterators.product(fill([1,2], 3)...)
-                        sv = StridedView(K2[:,:,ik...], size(Γfull)[1:3], Tuple(K2strides * changeMat), K2strides*offset)
+                        off_stride = K2strides*offset + sum(K2strides*changeMat) - sum(K2strides)
+                        sv = StridedView(K2[:,:,ik...], size(Γfull)[1:3], Tuple(K2strides * changeMat), off_stride)
                         for iK in equivalent_iK_K2(ik, ch, prime)
                             Γfull[:,:,:,iK...] .+= collect(sv)
                         end
@@ -295,6 +300,8 @@ function compute_Γfull_symmetric_estimator(
             end
         end
     end
+
+    @show maximum(abs.(Γfull))
 
     # add K1r, r=a,t,p
     for ch in channels
@@ -311,16 +318,18 @@ function compute_Γfull_symmetric_estimator(
                 end
             end
         else
-            changeMat = reshape(channel_change(ch, channel)[1,:], 1,3)
+            changeMat = reshape(channel_change(channel, ch)[1,:], 1,3)
             ωs_extK1, offset = trafo_grids_offset(ωs_ext, changeMat)
             K1 = precompute_K1r(PSFpath, flavor_idx, formalism; ωs_ext=only(ωs_extK1), channel=ch, broadening_kwargs...)
             if formalism=="MF"
-                sv = StridedView(K1, size(Γfull), Tuple([1] * changeMat), only(offset))
+                off_stride = only(offset) + sum(changeMat) - 1
+                sv = StridedView(K1, size(Γfull), Tuple([1] * changeMat), off_stride)
                 Γfull .+= collect(sv)
             else
                 for ik1 in ids_KF(2)
                     for iK in equivalent_iK_K1(ik1, ch)
-                        sv = StridedView(K1, size(Γfull)[1:3], Tuple([1] * changeMat), only(offset))
+                        off_stride = only(offset) + sum(changeMat) - 1
+                        sv = StridedView(K1, size(Γfull)[1:3], Tuple([1] * changeMat), off_stride)
                         Γfull[:,:,:,iK...] .+= collect(sv)
                     end
                 end
@@ -328,12 +337,19 @@ function compute_Γfull_symmetric_estimator(
         end
     end
 
+    @show maximum(abs.(Γfull))
+
     # add bare vertex Γ_0 for updown flavor
-    gam0 = 0.5 * load_Adisc_0pt(PSFpath, "Q12")
+    gam0 = 2.0 * load_Adisc_0pt(PSFpath, "Q12")
     if flavor_idx==2
-        for iK in ids_KF(4)
-            if isodd(sum(iK))
-                Γfull[:,:,:,iK...] .+= gam0
+        if formalism=="MF"
+            @show gam0
+            Γfull .+= gam0
+        else
+            for iK in ids_KF(4)
+                if isodd(sum(iK))
+                    Γfull[:,:,:,iK...] .+= 0.5 * gam0
+                end
             end
         end
     end

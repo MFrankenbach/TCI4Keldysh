@@ -754,6 +754,7 @@ function idx_trafo_offset(
     trafo_om = trafo*[ωs_ext[i][idx[i]] for i in 1:D1]
     # find transformed index in internal grid
     idx_int = [findfirst(om -> isapprox(trafo_om[i],om; atol=1.e-10), ωs_int[i]) for i in 1:D2]
+    @assert all(.!isnothing.(idx_int)) "External and internal grids do not match"
     # idx_int = trafo*idx + s
     s = idx_int - trafoidx
     return s
@@ -1156,8 +1157,8 @@ end
 Where to find PSF data
 """
 function datadir()
-    return joinpath(dirname(Base.current_project()), "data")
-    # return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
+    #return joinpath(dirname(Base.current_project()), "data")
+    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
 end
 
 """
@@ -1234,7 +1235,8 @@ function channel_K1_sign(channel::String)
     return if channel=="t"
         1
     elseif channel in ["p", "pNRG"]
-        -1
+        # ζ=-1 in symmetric estimators
+        1
     elseif channel=="a"
         -1
     else
@@ -1359,9 +1361,9 @@ Which sign belongs to which K2 contribution (cf. Lihm et. al. Fig. 13)
 """
 function channel_K2_sign(channel::String, prime::Bool)
     if channel=="a"
-        return ifelse(prime, -1, 1)
+        return ifelse(prime, 1, -1)
     elseif channel in ["p", "pNRG"]
-        return ifelse(prime, -1, 1)
+        return ifelse(prime, 1, -1)
     elseif channel=="t"
         return 1
     else

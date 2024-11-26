@@ -654,7 +654,12 @@ function K2_TCI(
     return qtt
 end
 
-function precompute_K2r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ext::NTuple{2,Vector{Float64}}, channel="t", prime=false)
+function precompute_K2r(
+        PSFpath::String, flavor_idx::Int, formalism="MF";
+        ωs_ext::NTuple{2,Vector{Float64}},
+        channel="t",
+        prime=false,
+        )
     T = dir_to_T(PSFpath)
     ωconvMat = channel_trafo_K2(channel,prime)
     op_labels = Tuple(oplabels_K2(channel,prime))

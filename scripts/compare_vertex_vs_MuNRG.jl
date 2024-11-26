@@ -451,14 +451,13 @@ end
 Comparison to MuNRG
 K1 is independent of the fermionic frequencies in all channels.
 """
-function check_K1_MF(;channel="t")
+function check_K1_MF(;channel="t", flavor=1)
     basepath = "SIAM_u=0.50"
     # basepath = "SIAM_u=1.50"
     PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
     Vpath = joinpath(TCI4Keldysh.datadir(), basepath, "V_MF_" * TCI4Keldysh.channel_translate(channel))
     
     # load K1
-    flavor = 1
     K1 = nothing
     grid = nothing
     channel_id = if channel=="t"
@@ -493,6 +492,8 @@ function check_K1_MF(;channel="t")
     @assert isodd(length(ωs_ext)) "Grid is not bosonic"
     K1_test = TCI4Keldysh.precompute_K1r(PSFpath, flavor; channel=channel, ωs_ext=ωs_ext)
 
+    do_tci = false
+    if do_tci
     # TCI4Keldysh: TCI
     R = Int(floor(log2(length(ωs_ext))))
     T = TCI4Keldysh.dir_to_T(PSFpath)
@@ -510,6 +511,7 @@ function check_K1_MF(;channel="t")
     K1_tcivals_ = TCI4Keldysh.qtt_to_fattensor(K1_tci.tci.sitetensors)
     K1_tcivals = TCI4Keldysh.qinterleaved_fattensor_to_regular(K1_tcivals_, R)
     ωs_ext_TCI = TCI4Keldysh.MF_grid(T, 2^(R-1), false)[1:2^R]
+    end
 
     # plot
     p = TCI4Keldysh.default_plot()
@@ -520,6 +522,7 @@ function check_K1_MF(;channel="t")
     title!(p, "K1@$(channel)-channel: MuNRG vs Julia")
     savefig("K1_comparison.pdf")
 
+    if do_tci
     # plot TCI
     p = TCI4Keldysh.default_plot()
     iom = findfirst(w -> w==first(ωs_ext_TCI), ωs_ext)
@@ -533,6 +536,7 @@ function check_K1_MF(;channel="t")
     plot!(p, ωs_ext_TCI, imag.(K1_tcivals); label="Im, Julia@TCI", linestyle=:dot)
     title!(p, "K1@$(channel)-channel: TCI vs convenctional")
     savefig("K1_comparison_tci.pdf")
+    end
 
 
     # diff
@@ -1235,17 +1239,17 @@ function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
     savefig("diff.pdf")
 end
 
-function load_Γcore_KF(base_path::String = "SIAM_u=0.50"; channel="t", flavor_idx=1)
+function load_Γ_KF(base_path::String = "SIAM_u=0.50"; fullvertex=true, channel="t", flavor_idx=1)
     Vpath = joinpath(TCI4Keldysh.datadir(), base_path, "V_KF_" * TCI4Keldysh.channel_translate(channel))
 
     # Γcore data
-    core_file = "V_KF_U4.mat"
-    Γcore_ref = nothing
+    core_file = fullvertex ? "V_KF_sym.mat" : "V_KF_U4.mat"
+    Γ_ref = nothing
     matopen(joinpath(Vpath, core_file), "r") do f
         CFdat = read(f, "CFdat")
-        Γcore_ref = CFdat["Ggrid"][flavor_idx]
+        Γ_ref = CFdat["Ggrid"][flavor_idx]
     end
-    return Γcore_ref
+    return Γ_ref
 end
 
 function precomp_compr_filename(iK::Int, tolerance::Float64)
@@ -1256,7 +1260,13 @@ function compression_slice()
     return 100-63:100+64
 end
 
-function compress_precomputed_V_KF(Γcore_ref::Array{ComplexF64,7}, iK::Int, channel="t"; store=false, tcikwargs...)
+function compress_precomputed_V_KF(channel::String, iK::Int, flavor_idx::Int=1; fullvertex=false, qtcikwargs...)
+    basepath = "SIAM_u=0.50/"
+    gamcore = load_Γ_KF(basepath; fullvertex=fullvertex, channel=channel, flavor_idx=flavor_idx)
+    return compress_precomputed_V_KF(gamcore, iK, channel; qtcikwargs...)
+end
+
+function compress_precomputed_V_KF(Γcore_ref::Array{ComplexF64,7}, iK::Int, channel="t"; store=false, qtcikwargs...)
 
     iK_tuple = TCI4Keldysh.KF_idx(iK, 3)
     Γcore_ref = permutedims(Γcore_ref, (1,2,3, 4,5,6,7))
@@ -1265,11 +1275,11 @@ function compress_precomputed_V_KF(Γcore_ref::Array{ComplexF64,7}, iK::Int, cha
     # to_tci = TCI4Keldysh.zeropad_array(Γcore_ref[:,:,:,iK_tuple...])
     @show size(Γcore_ref)
 
-    qtt, _, _ = quanticscrossinterpolate(to_tci; tcikwargs...)
+    qtt, _, _ = quanticscrossinterpolate(to_tci; qtcikwargs...)
 
     println("Compression done")
 
-    tolerance = Dict(tcikwargs)[:tolerance]
+    tolerance = Dict(qtcikwargs)[:tolerance]
     if store
         # qtt_fat = zeros(ComplexF64, size(to_tci))
         # Threads.@threads for ic in CartesianIndices(to_tci)
@@ -1285,6 +1295,32 @@ function compress_precomputed_V_KF(Γcore_ref::Array{ComplexF64,7}, iK::Int, cha
             fid["diff"] = qtt_fat .- to_tci
         end
     end
+
+    @show TCI4Keldysh.rank(qtt)
+    return TCI.linkdims(qtt.tci)
+end
+
+function compress_precomputed_V_MF(channel::String, flavor_idx::Int=1; fullvertex=false, qtcikwargs...)
+    basepath = "SIAM_u=0.50/"
+    Vpath = joinpath(TCI4Keldysh.datadir(), basepath, "V_MF_" * TCI4Keldysh.channel_translate(channel))
+    
+    # load core vertex
+    Γcore = nothing
+    gamname = fullvertex ? "V_MF_sym.mat" : "V_MF_U4.mat"
+    matopen(joinpath(Vpath, gamname)) do f
+        CFdat = read(f, "CFdat")
+        Γcore = CFdat["Ggrid"][flavor_idx]
+    end
+
+    return compress_precomputed_V_MF(Γcore; qtcikwargs...)
+end
+
+function compress_precomputed_V_MF(Γcore_ref::Array{ComplexF64,3}; qtcikwargs...)
+    R7slice = compression_slice()
+    to_tci = Γcore_ref[R7slice,R7slice,R7slice]
+    @show size(to_tci)
+
+    qtt, _, _ = quanticscrossinterpolate(to_tci; qtcikwargs...)
 
     @show TCI4Keldysh.rank(qtt)
     return TCI.linkdims(qtt.tci)
@@ -1351,7 +1387,7 @@ function compress_precomputed_V_KF_tolsweep(iK::Int, channel="t", tcikwargs...)
         error("You should not provide a tolerance here")
     end
     d = Dict{Int, Vector{Int}}()
-    Γcore_ref = load_Γcore_KF(;channel=channel)
+    Γcore_ref = load_Γ_KF(;channel=channel)
     for tol in reverse(10.0 .^ (-2:-6))
         ld = compress_precomputed_V_KF(Γcore_ref, iK, channel; tolerance=tol, tcikwargs...)
         d[round(Int, log10(tol))] = ld
@@ -1401,6 +1437,16 @@ function plot_precomputed_V_KF_ranks_all(R::Int=7)
     savefig(p, joinpath(precompressed_datadir(), "V_KF_ranks.pdf"))
 end
 
-# for iK in 8:8
-#     compress_precomputed_V_KF_tolsweep(iK)
+# for channel in ["t","a","pNRG"]
+#     printstyled("\n-- CHANNEL $channel\n"; color=:blue)
+#     for tol in 10.0 .^ [-2,-3,-4,-5,-6,-7]
+#         compress_precomputed_V_MF(channel; unfoldingscheme=:interleaved, tolerance=tol)
+#     end
 # end
+
+# iK_ranks = []
+# for iK in 1:15
+#     iK_bds = compress_precomputed_V_KF("p", iK; fullvertex=true, tolerance=1.e-3)
+#     push!(iK_ranks, maximum(iK_bds))
+# end
+# println("Ranks for different Keldysh components: $iK_ranks")

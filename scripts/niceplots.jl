@@ -653,7 +653,7 @@ function plot_K12_ranks_KF(PSFpath, ωmax::Float64;channel="t", flavor_idx=1)
             qtt2 = TCI4Keldysh.K2_TCI_precomputed(
                 PSFpath, R;
                 channel=channel,
-                prime=prime,
+                prime=false,
                 formalism="KF",
                 flavor_idx=flavor_idx,
                 T=T,

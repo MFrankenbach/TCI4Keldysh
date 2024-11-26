@@ -92,7 +92,7 @@ function plot_4pt_KeldyshCorrelator(γfac=30, sigmak_=0.1)
     savefig("KFC1D.png")
 end
 
-function time_V_KF(R=4; ωmax::Float64=0.3183098861837907, channel="t", flavor=1)
+function time_V_KF(R=4; ωmax::Float64=0.3183098861837907, channel="t", flavor=1, store=false)
     
     base_path = "SIAM_u=0.50"
     joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
@@ -122,6 +122,9 @@ function time_V_KF(R=4; ωmax::Float64=0.3183098861837907, channel="t", flavor=1
         sigmak=sigmakref, γ=γref,
         broadening_kwargs...
     )
+    end
+    if store
+        h5write("V_KF_time_R=$(R)_nthreads=$(Threads.nthreads()).h5", "V_KF", refval)
     end
     println("==== TIME FOR R=$R: $t sec ====\n")
     return t
@@ -568,8 +571,8 @@ end
 
 function test_Γcore_KF(iK::Int, channel::String="a")
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
-    R = 6
-    tolerance = 1.e-4
+    R = 4
+    tolerance = 1.e-2
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
     ωmax = 1.0
@@ -1187,6 +1190,8 @@ end
 
 # plot_kernel_singvals(10; ωmax=0.3183098861837907)
 
+#println("==== COMPILE")
+#_ = time_V_KF(3)
 # times = []
 # for R in 3:7
 #     t = time_V_KF(R)

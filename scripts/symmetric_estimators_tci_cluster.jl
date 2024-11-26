@@ -318,13 +318,20 @@ function main(args)
     elseif run_nr==17
         PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg")
         time_Γcore_sweep(Rs, PSFpath, "R"; folder=folder, tolerance=1.e-7, flavor_idx=flavor_idx)
+    elseif run_nr>=10^5
+    # sweep R/tol jobs: first digit: PSFpath, second digit: -log10(tolerance), last 4 digits: RminRmax
+    # {PSFpath}{tol}{Rmin}{Rmax}
+        run_nr2 = div(run_nr,100)
+        (PSFpath, Rmin, tolerance) = parse_run_nr(run_nr2)
+        Rmax = run_nr - 100*run_nr2
+        time_Γcore_sweep(Rmin:Rmax, PSFpath, "R"; flavor_idx=flavor_idx, folder=folder, tolerance=tolerance, serialize_tts=true, batched_eval=true)
     elseif run_nr>=10^4
         # for more global pivots
         nsearchglobalpivot = div(run_nr, 10^4)  
         (PSFpath, R, tolerance) = parse_run_nr(run_nr)
         time_Γcore_sweep(R:R, PSFpath, "R"; flavor_idx=flavor_idx, folder=folder, tolerance=tolerance, serialize_tts=true, batched_eval=true, nsearchglobalpivot=nsearchglobalpivot, maxnglobalpivot=nsearchglobalpivot)
-    # single R/tol jobs: first digit: PSFpath, second digit: -log10(tolerance), last 2 digits: R
     elseif run_nr>=1000
+    # single R/tol jobs: first digit: PSFpath, second digit: -log10(tolerance), last 2 digits: R
         (PSFpath, R, tolerance) = parse_run_nr(run_nr)
         time_Γcore_sweep(R:R, PSFpath, "R"; flavor_idx=flavor_idx, folder=folder, tolerance=tolerance, serialize_tts=true, batched_eval=true)
     else

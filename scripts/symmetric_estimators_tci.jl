@@ -6,6 +6,7 @@ using HDF5
 using LinearAlgebra
 using LaTeXStrings
 using JSON
+using QuanticsTCI
 import QuanticsGrids as QG
 import TensorCrossInterpolation as TCI
 
@@ -129,10 +130,10 @@ function plot_K1_ranks_MF(PSFpath;channel="t", flavor_idx=1)
 end
 
 function plot_K1_ranks_KF(PSFpath;channel="t", flavor_idx=1)
-    tols = reverse(collect(10.0 .^ (-4:1:-2)))
-    Rs = 5:15
+    tols = reverse(collect(10.0 .^ (-6:1:-2)))
+    Rs = 8:2:16
     T = TCI4Keldysh.dir_to_T(PSFpath)
-    iK = (2,2)
+    iK = (1,2)
     ranks = zeros(Int, length(Rs), length(tols))
     for (it,tol) in enumerate(tols)
         for (iR,R) in enumerate(Rs)
@@ -159,6 +160,34 @@ function plot_K1_ranks_KF(PSFpath;channel="t", flavor_idx=1)
     savefig("K1_ranks_KF.pdf")
 end
 
+"""
+Convolve with Gaussian
+"""
+function smoothen_gauss(xs::Vector{Float64}, ys::Vector{T}, sig::Float64) where {T<:Number}
+    # sqrt(1/2πσ)exp(-x^2/2σ)
+    # fourier: sqrt(2π*σ)exp(-σ*x^2/2)
+
+    ny = length(ys)
+    gauss(x::Float64) = 1/sqrt(2π*sig)*exp(-x^2/(2*sig))
+    gaussval = gauss.(xs)
+    dx = xs[2]-xs[1]
+    ws = Int(ceil(5*sqrt(sig)/dx))
+    midx = div(length(xs),2)+1
+    res = zeros(T, ny)
+    for i in eachindex(res)
+        imin = max(1, i-ws)
+        mincut = max(0, 1-(i-ws))
+        imax = min(ny, i+ws)
+        maxcut = max(0, (i+ws)-ny)
+        # @show (midx-ws+mincut : midx+ws-maxcut, imin : imax)
+        gvec = gaussval[midx-ws+mincut : midx+ws-maxcut]
+        yvec = ys[imin : imax]
+        @views res[i] = dot(gvec, yvec) * dx
+    end
+    return res
+
+end
+
 # here one can see the broadening: the function has edges for R=16
 function plot_K1_zoomed()
     basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/")
@@ -166,15 +195,35 @@ function plot_K1_zoomed()
     channel = "t"
     flavor_idx = 1
     ωmax = 0.3183098861837907
-    R = 16
+    R = 12
     ωs_ext = TCI4Keldysh.KF_grid_bos(ωmax, R)
     (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath)
     broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath)
     K1 = TCI4Keldysh.precompute_K1r(PSFpath, flavor_idx, "KF"; ωs_ext=ωs_ext, channel=channel, γ=γ, sigmak=sigmak, broadening_kwargs...)
+    ik = (2,2)
+    xs = collect(range(-ωmax, ωmax, size(K1,1)))
+    K1_smooth = smoothen_gauss(xs, K1[:,ik...], 1.e-8)
+
+    do_qtci = true
+    if do_qtci
+        printstyled("\n QTCI...\n"; color=:blue)
+        tolerance = 1.e-8
+        qtt,_,_ = quanticscrossinterpolate(K1[1:2^R,ik...]; tolerance=tolerance)
+        qtt_smooth,_,_ = quanticscrossinterpolate(K1_smooth[1:2^R]; tolerance=tolerance)
+        @show TCI.rank(qtt.tci)
+        @show TCI.rank(qtt_smooth.tci)
+    end
+    
+    K1ik = K1[:,ik...]
+    K1max = maximum(abs.(K1ik))
+    err_smooth = maximum(abs.(K1ik .- K1_smooth)) / K1max
+    err_smooth_mid = maximum(abs.(K1ik[2^(R-2):2^(R-2)+2^(R-1)] .- K1_smooth[2^(R-2):2^(R-2)+2^(R-1)])) / K1max
+    println("==== Error by smoothening: $err_smooth $err_smooth_mid")
     # plot small window
-    slice = 2^(R-1)-10:2^(R-1)+10
-    # slice = 1:2^R
-    plot(ωs_ext[slice], abs.(K1[:,2,2])[slice])
+    # slice = 2^(R-1)+1-10:2^(R-1)+10
+    slice = 1:2^R
+    plot(ωs_ext[slice], abs.(K1ik)[slice]/K1max; label="original")
+    plot!(ωs_ext[slice], abs.(K1_smooth[:])[slice]/K1max; label="smooth")
     savefig("K1zoomed.pdf")
 end
 
@@ -324,6 +373,7 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     else
         flavor_idx = 1
         @warn "Assuming flavor_idx=$flavor_idx"
+        @warn "Assuming flavor_idx=$flavor_idx"
     end
 
     Nhalf = 2^(R-1)
@@ -383,8 +433,11 @@ function triptych_vertex_data(qttfile::String, Rplot::Int, PSFpath; folder="pwtc
     println("  Finished computation of vertex on slice")
 
     diff = refval .- tcival
+    # diff = dropdims(diff; dims=slice_id)
+    @show [p for p in collect(plot_slice)]
+    slice_str = rstrip(reduce(*, [ifelse(length(p)==1, "$(p[1]-Nhalf-1),", "$(length(p)),") for p in collect(plot_slice)]), 'r')
     if store
-        h5file = "vertex_MF_slice_beta=$(beta)_slices=$(length.(plot_slice))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
+        h5file = "vertex_MF_slice_beta=$(beta)_slices=($(slice_str))_tol=$(TCI4Keldysh.tolstr(tolerance)).h5"
         h5write(joinpath(folder, h5file), "reference", refval)
         h5write(joinpath(folder, h5file), "qttdata", tcival)
         h5write(joinpath(folder, h5file), "diff", diff)
@@ -1063,10 +1116,13 @@ folder = "pwtcidata_KCS"
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 # plot_K12_ranks_MF(PSFpath)
 
-# precompute_V_MF_slice(9, false)
-
 # plot_vertex_ranks(collect(-7:-2), PSFpath; folder=folder, subfolder_str="shellpivot", show_worstcase=true, ramplot=true)
 
+R = 5
+beta = 2000
+tol = 2
+# thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_shellpivot"
+thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_updown"
 R = 8
 beta = 2000
 tol = 3
@@ -1074,7 +1130,7 @@ thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_nz4_aIE_shellpivot"
 # thedirname = "gamcoreMF_tol$(tol)_beta$(beta)_updown"
 qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt.serialized"
 # # check_interpolation(joinpath(thedirname, qttfile), R, PSFpath; folder=folder)
-triptych_vertex_data(joinpath(thedirname, qttfile), R, PSFpath; folder=folder, store=true)
+# triptych_vertex_data(joinpath(thedirname, qttfile), R, PSFpath; folder=folder, store=true)
 
 # VERTEX RANK PLOT
 # plot_vertex_ranks(collect(-5:-2), PSFpath; folder=folder, subfolder_str="shellpivot", ramplot=true)
@@ -1087,3 +1143,6 @@ triptych_vertex_data(joinpath(thedirname, qttfile), R, PSFpath; folder=folder, s
 # file1 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_tol5_beta200_nz4_aIE_shellpivot/gammacore_timing_R_min=5_max=12_tol=-5_beta=200.0.json")
 # file2 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_tol5_beta200_nz4_aIE_shellpivot_1012/gammacore_timing_R_min=10_max=12_tol=-5_beta=200.0.json")
 # merge_jsondata(file1, file2)
+
+# plot_K1_zoomed()
+plot_K1_ranks_KF(PSFpath)
