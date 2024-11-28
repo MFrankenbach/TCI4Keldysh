@@ -289,6 +289,41 @@ function time_FullCorrelator(;R::Int=5, tolerance::Float64=1.e-6)
     return t
 end
 
+function time_MFEvaluator(R::Int, do_test::Bool=false; tolerance::Float64=1.e-3)
+    PSFpath = "SIAM_u=0.50/PSF_nz=4_conn_zavg/"
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    beta = 1.0/T
+    flavor_idx = 1
+    channel = "p"
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, channel=channel)[flavor_idx]
+
+    # new evaluator
+    GFev_new = TCI4Keldysh.MFCEvaluator(GF)
+    # normal evaluator
+    GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, channel=channel)[flavor_idx]
+    GFev = TCI4Keldysh.FullCorrEvaluator_MF(deepcopy(GF), true; cutoff=1.e-2*tolerance)
+
+    # test
+    if do_test && R<=5
+        # reference
+        GFval = TCI4Keldysh.precompute_all_values(GF)
+        maxdiff = 0.0
+        @show size(GFval)
+        for i in CartesianIndices(GFval)
+            maxdiff = max(maxdiff, abs(GFval[i] - GFev_new(Tuple(i)...)))
+        end
+        # not completely exact because of anomalous evaluators
+        @assert maxdiff <1.e-9
+    end
+
+    # benchmark
+    println("FullCorrEvaluator_MF:")
+    @btime $GFev(rand(1:2^$R, 3)...)
+    println("MFCEvaluator:")
+    @btime $GFev_new(rand(1:2^$R, 3)...)
+end
+
+
 function time_FullCorrelator_batch(;R::Int=5, tolerance::Float64=1.e-8, beta::Float64=10.0)
     GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta)
     t = @elapsed begin
@@ -832,7 +867,7 @@ qttfile = joinpath(dirname, "timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=
 
 # check_interpolation(qttfile, R, PSFpath; folder="pwtcidata")
 #plot_FullCorrelator_ranks(collect(-5:-2), PSFpath; folder=folder, subdir_str="shellpivot")
-plot_FullCorrelator_ranks_both(collect(-5:-2); folder=folder, subdir_str="shellpivot")
+# plot_FullCorrelator_ranks_both(collect(-5:-2); folder=folder, subdir_str="shellpivot")
 
 # TRYPTICH
 # triptych_corr_data(qttfile, R, PSFpath; folder=folder, store=true)

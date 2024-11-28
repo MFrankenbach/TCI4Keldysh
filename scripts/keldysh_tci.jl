@@ -337,6 +337,123 @@ function kernel_svd_ranks()
     end
 end
 
+"""
+See whether the memory footprint of a KFC Evaluator could be reduced by interpolating
+∑_ϵ1 k(ω1,ϵ1)A(ϵ1,ϵ2,ϵ3) along ω1
+"""
+function KFC_Evaluator_interpolation()
+    # create correlator
+    npt = 4
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(basepath, "PSF_nz=4_conn_zavg/4pt")
+    D = npt-1
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    ωmax = 0.318
+    ωmin = -ωmax
+    R = 11
+    ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+    ωconvMat = if npt==4
+            TCI4Keldysh.channel_trafo("t")
+        elseif npt==3
+            TCI4Keldysh.channel_trafo_K2("t", false)
+        else
+            TCI4Keldysh.ωconvMat_K1()
+        end
+    γ, sigmak = TCI4Keldysh.read_broadening_params(basepath)
+    KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, estep=20, name="Kentucky fried chicken")
+    KFev = TCI4Keldysh.KFCEvaluator(KFC)
+
+    perm_idx = 1
+    omPSF = KFev.omPSFs[perm_idx,1]
+    Nom = size(omPSF,3)
+
+    # # interpolate from equidistant sub-grid
+    # for r in [R-2]
+    #     # assume equidistant grid for linear interpolation
+    #     step = div(Nom, 2^r)
+    #     # interp_points = 1:step:Nom
+    #     test_points = div(step,2):step:Nom-1
+    #     maxerr = 0.0
+    #     maxabserr = 0.0
+    #     for wt in test_points
+    #         exact = omPSF[:,:,wt]
+    #         low = div(wt,step)*step + 1
+    #         up = min(Nom, low + step)
+    #         # @show (wt,up,low)
+    #         upmlow = up-low
+    #         interp = (up-wt)/upmlow * omPSF[:,:,low] + (wt-low)/upmlow * omPSF[:,:,up]
+    #         ex_magnitude = maximum(abs.(exact))
+    #         err = maximum(abs.(exact .- interp)) / ex_magnitude
+    #         maxerr = max(err, maxerr)
+    #         maxabserr = max(err * ex_magnitude, maxabserr)
+    #     end
+    #     printstyled("==== For $Nom frequencies interpolated with $(div(Nom,step)) points: maxerr=$maxerr, maxabserr=$maxabserr\n"; color=:blue)
+    # end
+
+    # eps_id = Tuple(argmax(abs.(omPSF[:,:,div(Nom,2)])))
+    # interp_points = 1:div(Nom,2^(R-2)):Nom
+    # plot(collect(axes(omPSF,3)), real.(omPSF[eps_id...,:]); color=:black, linewidth=2)
+    # plot!(interp_points, real.(omPSF[eps_id...,interp_points]); color=:red, linewidth=2, linestyle=:dot)
+    # savefig("foo.pdf")
+
+    # see what we can discard
+    lin_interp_errs = Float64[]
+    lin_interp_abserrs = Float64[]
+    ninterp = 3
+    for i in 1+ninterp:2:size(omPSF,3)-ninterp
+        exact = omPSF[:,:,i]
+        low = omPSF[:,:,i-ninterp]
+        up = omPSF[:,:,i+ninterp]
+        interp = 0.5 * (low .+ up)
+        err = maximum(abs.(exact .- interp))
+        push!(lin_interp_abserrs, err)
+        push!(lin_interp_errs, err / maximum(abs.(exact)))
+    end
+    plot(lin_interp_errs; linewidth=2, yscale=:log10, label="rel err")
+    plot!(lin_interp_abserrs; color=:red, linestyle=:dot, linewidth=2, yscale=:log10, label="abs err")
+    savefig("foo.pdf")
+end
+
+"""
+Check out memory requirement of KFCEvaluator
+"""
+function KFC_Evaluator_memory()
+    # create correlator
+    npt = 4
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(basepath, "PSF_nz=4_conn_zavg/4pt")
+    D = npt-1
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    ωmax = 0.318
+    ωmin = -ωmax
+    for R in 3:12
+        ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+        ωconvMat = if npt==4
+                TCI4Keldysh.channel_trafo("t")
+            elseif npt==3
+                TCI4Keldysh.channel_trafo_K2("t", false)
+            else
+                TCI4Keldysh.ωconvMat_K1()
+            end
+        γ, sigmak = TCI4Keldysh.read_broadening_params(basepath)
+        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, estep=20, name="Kentucky fried chicken")
+        KFev = TCI4Keldysh.KFCEvaluator(KFC)
+        println("\n---- Memory for KFCEvaluator, R=$R:")
+        KFCmem = Base.summarysize(KFev.KFC)
+        omPSFmem = Base.summarysize(KFev.omPSFs)
+        remLegmem = Base.summarysize(KFev.remLegs)
+        println(" FullCorrelator_KF: $(KFCmem / 10^6) MB")
+        println(" k*PSF: $(omPSFmem / 10^6) MB")
+        println(" remLegs: $(remLegmem / 10^6) MB")
+        println("")
+    end
+end
+
+
 function test_KFCEvaluator()
     # create correlator
     npt = 4
@@ -539,7 +656,12 @@ function time_Γcore_KF(iK::Int, R=4, tolerance=1.e-3)
         ; 
         sigmak=sigmak,
         γ=γ,
-        T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx, tolerance=tolerance, unfoldingscheme=:interleaved,
+        T=T,
+        ωconvMat=ωconvMat,
+        flavor_idx=flavor_idx,
+        tolerance=tolerance,
+        unfoldingscheme=:interleaved,
+        verbosity=2,
         broadening_kwargs...
         )
 end

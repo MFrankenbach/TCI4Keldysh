@@ -998,7 +998,7 @@ function Γ_core_TCI_KF(
 
     sev = SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
 
-    kwargs_dict = Dict(tcikwargs)
+    kwargs_dict = Dict{Symbol,Any}(tcikwargs)
     tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
     gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
@@ -1036,14 +1036,30 @@ function Γ_core_TCI_KF(
             println("Loaded TCI with rank $(TCI.rank(tci))")
         end
 
+        # set tci kwargs related to global pivots
+        if !haskey(kwargs_dict, :maxnglobalpivot)
+            kwargs_dict[:maxnglobalpivot]=10
+        end
+        if !haskey(kwargs_dict, :nsearchglobalpivot)
+            kwargs_dict[:nsearchglobalpivot]=100
+        end
+        if !haskey(kwargs_dict, :tolmarginglobalsearch)
+            kwargs_dict[:tolmarginglobalsearch]=3.0
+        end
+
         maxiter = haskey(kwargs_dict, :maxiter) ? kwargs_dict[:maxiter] : 20
         # save result every ncheckpoint sweeps if dump_path is given
         ncheckpoint = isnothing(dump_path) ? maxiter : 3  
         converged = false
+        if !isnothing(dump_path)
+            kwargs_dict[:maxiter] = ncheckpoint
+        end
+
+        # run
         t = @elapsed begin
             for icheckpoint in 1:Int(ceil(maxiter/ncheckpoint))
-                ranks, errors = TCI.optimize!(tci, gbev; maxiter=ncheckpoint, tcikwargs...)
-                println("  After <=$(icheckpoint*ncheckpoint) sweeps: ranks=$ranks, errors=$errors")
+                ranks, errors = TCI.optimize!(tci, gbev; kwargs_dict...)
+                println("  After $((icheckpoint-1)*ncheckpoint + length(ranks)) sweeps: ranks=$ranks, errors=$errors")
                 if _tciconverged(ranks, errors, tolerance, 3)
                     converged = true
                     println(" ==== CONVERGED")
@@ -1107,7 +1123,8 @@ To evaluate Matsubara core vertex, wrapping the required setup and relevant data
 on i'th component of transformed frequency w
 """
 struct ΓcoreEvaluator_MF{T}
-    GFevs::Vector{FullCorrEvaluator_MF{T,3,2}}
+    # GFevs::Vector{FullCorrEvaluator_MF{T,3,2}}
+    GFevs::Vector{MFCEvaluator}
     Ncorrs::Int # number of full correlators
     is_incoming::NTuple{4,Bool}
     letter_combinations::Vector{String}
@@ -1121,9 +1138,11 @@ struct ΓcoreEvaluator_MF{T}
         ;
         cutoff::Float64=1.e-20)
         
+        @warn "Keyword :cutoff is obsolete"
+
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
-        GFevs = [FullCorrEvaluator_MF(GFs[i], true; cutoff=cutoff) for i in eachindex(GFs)]
+        GFevs = [MFCEvaluator(GFs[i]) for i in eachindex(GFs)]
 
         return new{T}(GFevs,length(GFs), is_incoming, letter_combinations, sev)
     end

@@ -189,8 +189,68 @@ end
         @test maximum(abs.(refval[1:2^R, ntuple(_->Colon(), D-1)...] .- val)) <= 1.e-10
     end
 
+    function test_MFEvaluator()
+        R = 3
+        PSFpath = "SIAM_u=0.50/PSF_nz=4_conn_zavg/"
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+        beta = 1.0/T
+        flavor_idx = 1
+        channel = "p"
+        GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, channel=channel)[flavor_idx]
+
+        # new evaluator
+        GFev_new = TCI4Keldysh.MFCEvaluator(GF)
+        # normal evaluator
+        GF = TCI4Keldysh.dummy_correlator(4, R; beta=beta, channel=channel)[flavor_idx]
+
+        # reference
+        GFval = TCI4Keldysh.precompute_all_values(GF)
+        maxdiff = 0.0
+        for i in CartesianIndices(GFval)
+            maxdiff = max(maxdiff, abs(GFval[i] - GFev_new(Tuple(i)...)))
+        end
+        # not completely exact because of anomalous evaluators
+        @test maxdiff < 1.e-9
+    end
+
+
+    function test_KFCEvaluator()
+        # create correlator
+        npt = 4
+        basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+        PSFpath = joinpath(basepath, "PSF_nz=2_conn_zavg/4pt")
+        D = npt-1
+        Ops = TCI4Keldysh.dummy_operators(npt)
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+
+        ωmax = 0.318
+        ωmin = -ωmax
+        R = 3
+        ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+        ωconvMat = if npt==4
+                TCI4Keldysh.channel_trafo("t")
+            elseif npt==3
+                TCI4Keldysh.channel_trafo_K2("t", false)
+            else
+                TCI4Keldysh.ωconvMat_K1()
+            end
+        γ, sigmak = TCI4Keldysh.read_broadening_params(basepath)
+        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ)
+
+        KFev_new = TCI4Keldysh.KFCEvaluator(KFC)
+
+        refval = TCI4Keldysh.precompute_all_values(KFC)
+        refsz = size(refval)
+        refval = reshape(refval, refsz[1:3]..., 2^4)
+        for w in Iterators.product(fill(1:2^R,3)...)
+            @test maximum(abs.(refval[w...,:] .- KFev_new(w...))) <= 1.e-10
+        end
+    end
+
     test_FullCorrelator_evaluate(2)
     test_FullCorrelator_evaluate(3)
     test_FullCorrelator_evaluate(4)
-end
 
+    test_MFEvaluator()
+    test_KFCEvaluator()
+end

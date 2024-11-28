@@ -937,7 +937,7 @@ function test_Gamma_core_TCI_MF(; freq_conv="a", R=4, beta=50.0, tolerance=1.e-5
 
     # compute
     TCI4Keldysh.@TIME Γcore = TCI4Keldysh.Γ_core_TCI_MF(
-        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=spin, tolerance=tolerance, unfoldingscheme=:interleaved, verbosity=2
+        PSFpath, R; T=T, ωconvMat=ωconvMat, flavor_idx=spin, unfoldingscheme=:interleaved, tolerance=tolerance, verbosity=2
         ) "Γcore @ TCI"
     @show TCI4Keldysh.rank(Γcore)
 
@@ -980,14 +980,14 @@ function test_Gamma_core_TCI_MF(; freq_conv="a", R=4, beta=50.0, tolerance=1.e-5
 
     scfun = x -> log10(abs(x))
     heatmap(scfun.(qttval[slice[1:2]...]); clim=(logmaxref + logtol - 1, logmaxref + 2))
-    savefig("gammacore.png")
+    savefig("gammacore.pdf")
 
     heatmap(scfun.(refval)[slice...]; clim=(logmaxref + logtol - 1, logmaxref + 2))
-    savefig("gammacore_ref.png")
+    savefig("gammacore_ref.pdf")
 
     diff = abs.(refval[slice...] .- qttval[slice[1:2]...]) ./ maxref
     heatmap(log10.(diff))
-    savefig("diff.png")
+    savefig("diff.pdf")
 end
 
 """
@@ -1145,4 +1145,4 @@ qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt
 # merge_jsondata(file1, file2)
 
 # plot_K1_zoomed()
-plot_K1_ranks_KF(PSFpath)
+# plot_K1_ranks_KF(PSFpath)

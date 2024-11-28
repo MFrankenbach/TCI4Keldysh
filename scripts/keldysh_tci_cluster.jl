@@ -548,6 +548,8 @@ end
 
 function time_Γcore_KF_sweep(
     param_range, PSFpath, iK::Int, γ::Float64, sigmak::Float64, mode="R";
+    channel="t",
+    flavor_idx=1,
     folder="pwtcidata",
     tolerance=1.e-8,
     serialize_tts=false,
@@ -556,7 +558,6 @@ function time_Γcore_KF_sweep(
     broadening_kwargs...
     )
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
-    channel = "t"
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = 1.0/beta
     times = []
@@ -566,7 +567,6 @@ function time_Γcore_KF_sweep(
     # box size used in MuNRG for beta=2000 Keldysh vertex
     ωmax = 0.3183098861837907
     ωmin = -ωmax
-    flavor_idx = 1
     if mode=="R"
         Rs = param_range
         # prepare output
@@ -583,6 +583,7 @@ function time_Γcore_KF_sweep(
         d["beta"] = beta
         d["ommin"] = ωmin
         d["ommax"] = ωmax
+        d["channel"] = channel
         d["iK"] = iK
         d["job_id"] = ENV["SLURM_JOB_ID"]
         d["PSFpath"] = PSFpath
@@ -1042,9 +1043,18 @@ function Γcore_jobs(args)
             else
                 "pwtcidata"
             end
-    localargs = ["local", "checkpoint", "resume"]
-    dump_path = (length(args)>2 && args[3] in localargs) ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
-    resume_path = (length(args)>2 && args[3] == "resume") ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    # localargs = ["local", "checkpoint", "resume"]
+    # dump_path = (length(args)>2 && args[3] in localargs) ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    # resume_path = (length(args)>2 && args[3] == "resume") ? joinpath(TCI4Keldysh.pdatadir(),folder) : nothing
+    dump_path = nothing
+    resume_path = nothing
+    
+    # fourth argument: flavor_idx
+    flavor_idx = if length(args)>3
+            parse(Int, args[4])
+        else
+            1
+        end
 
     nz = 4
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=$(nz)_conn_zavg/")
@@ -1056,7 +1066,7 @@ function Γcore_jobs(args)
         # no dump, normal TCI convergence criterion
         dump_path = nothing
         (PSFpath, base_path, iK, tolerance, Rmin, Rmax) = parse_run_nr_Rrange(run_nr)
-        channel = "t"
+        channel = "p"
         (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
         broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
         if !haskey(broadening_kwargs, :estep)
@@ -1064,6 +1074,8 @@ function Γcore_jobs(args)
         end
         time_Γcore_KF_sweep(
             Rmin:Rmax, PSFpath, iK, γ, only(sigmak);
+            channel=channel,
+            flavor_idx=flavor_idx,
             folder=folder,
             dump_path=dump_path,
             resume_path=resume_path,
@@ -1075,7 +1087,7 @@ function Γcore_jobs(args)
     # format: run_nr{PSFpath_id}{iK}{logtol}{R}
     elseif run_nr>=10^5
         (PSFpath, base_path, iK, tolerance, R) = parse_run_nr(run_nr)
-        channel = "t"
+        channel = "p"
         (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
         broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
         if !haskey(broadening_kwargs, :estep)
@@ -1083,6 +1095,8 @@ function Γcore_jobs(args)
         end
         time_Γcore_KF_sweep(
             R:R, PSFpath, iK, γ, only(sigmak);
+            channel=channel,
+            flavor_idx=flavor_idx,
             folder=folder,
             dump_path=dump_path,
             resume_path=resume_path,
@@ -1125,7 +1139,17 @@ function FullCorrelator_jobs(args)
         if !haskey(broadening_kwargs, :estep)
             broadening_kwargs[:estep] = 500
         end
-        time_FullCorrelator_sweep(iK, γ, only(sigmak); PSFpath=PSFpath, folder=folder, dump_path=dump_path, resume_path=resume_path, Rs=Rmin:Rmax, channel=channel, tolerance=tolerance, serialize_tts=true, broadening_kwargs...)
+        time_FullCorrelator_sweep(iK, γ, only(sigmak);
+            PSFpath=PSFpath,
+            folder=folder,
+            dump_path=dump_path,
+            resume_path=resume_path,
+            Rs=Rmin:Rmax,
+            channel=channel,
+            tolerance=tolerance,
+            serialize_tts=true,
+            broadening_kwargs...
+            )
 
     # format: run_nr{PSFpath_id}{iK}{logtol}{R}
     elseif run_nr >= 10^5

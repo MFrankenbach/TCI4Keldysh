@@ -271,6 +271,70 @@ function (fev::FullCorrEvaluator_MF{T,D,N})(w::Vararg{Int,D}) where {T,D,N}
 end
 
 """
+Contract one frequency into PSF.
+* MFC: Matsubara Correlator
+* omPSFs: ∑_ϵ1 k^R(ω,ϵ1)*Acont(ϵ1,ϵ2,ϵ3) for each partial correlator
+* remLegs: p×2 matrix of remaining tucker legs (kernels) to be contracted into omPSFs
+copied here to improve memory layout
+"""
+struct MFCEvaluator
+    GF::FullCorrelator_MF{3}
+    omPSFs::Vector{Array{ComplexF64,3}}
+    remLegs::Matrix{Matrix{ComplexF64}}
+    anevs::Vector{AnomalousEvaluator{ComplexF64,3,2}}
+    ano_terms_required::Vector{Bool}
+    anoid_to_Gpid::Vector{Int}
+
+    function MFCEvaluator(GF::FullCorrelator_MF{3})
+        @assert all(intact.(GF.Gps)) "Received altered correlator!"
+        np = length(GF.Gps)
+        omPSFs = Vector{Array{ComplexF64,3}}(undef, np)
+        remLegs = Matrix{Matrix{ComplexF64}}(undef, np,2)
+        for (p,Gp) in enumerate(GF.Gps)
+            k = Gp.tucker.legs[1]
+            censz = size(Gp.tucker.center)
+            ompsf = k * reshape(Gp.tucker.center, censz[1], censz[2]*censz[3])
+            omPSFs[p] = reshape(ompsf, size(k,1), censz[2], censz[3])
+            # for more caching due to data layout
+            omPSFs[p] = permutedims(omPSFs[p], (2,3,1))
+            remLegs[p,1] = transpose(Gp.tucker.legs[2])
+            remLegs[p,2] = transpose(Gp.tucker.legs[3])
+        end
+
+        # deal with anomalous term
+        ano_terms_required = ano_term_required.(GF.Gps)
+        ano_ids = [i for i in eachindex(GF.Gps) if ano_term_required(GF.Gps[i])]
+        # create anomalous term evaluators
+        anevs = Vector{AnomalousEvaluator{ComplexF64,3,2}}(undef, length(ano_ids))
+        for i in eachindex(ano_ids)
+            anevs[i] = AnomalousEvaluator(GF.Gps[ano_ids[i]])
+        end
+        anoid_to_Gpid = zeros(Int, length(GF.Gps))
+        for i in eachindex(ano_ids)
+            anoid_to_Gpid[ano_ids[i]] = i
+        end
+
+        return new(GF, omPSFs, remLegs, anevs, ano_terms_required, anoid_to_Gpid)
+    end
+end
+
+function (fev::MFCEvaluator)(idx::Vararg{Int,3})
+    res = zero(ComplexF64)
+    for (p,Gp) in enumerate(fev.GF.Gps)
+        # rotate frequency
+        idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
+        # regular term
+        res += transpose(fev.remLegs[p,1][:,idx_int[2]]) * fev.omPSFs[p][:,:,idx_int[1]] * fev.remLegs[p,2][:,idx_int[3]]
+        # anomalous term
+        if fev.ano_terms_required[p]
+            anev_act = fev.anevs[fev.anoid_to_Gpid[p]]
+            res += anev_act(idx...)
+        end
+    end
+    return res
+end
+
+"""
 Try to evaluate FullCorrelator_MF batchwise.
 Should be compressed with crossinterpolate2, not quanticscrossinterpolate.
 NOT YET IMPLEMENTED (not clear whether batch evaluation makes sense here)
