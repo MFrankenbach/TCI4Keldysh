@@ -1168,7 +1168,7 @@ function ΓcoreEvaluator_MF(
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
-    cutoff::Float64
+    cutoff::Float64=1.e-20
     )
     # make frequency grid
     D = size(ωconvMat, 2)
@@ -1229,6 +1229,147 @@ function eval_LR(gev::ΓcoreEvaluator_MF{T}, w::Vararg{Int,3}) where {T}
         end
     end
     return sum(addvals)
+end
+
+"""
+Evaluate full vertex pointwise.
+* K1s/K2s: Precomputed asymptotic classes, stored densely
+* K1/2changeMats/offsets: transformation matrices and index offsets for reading
+K1 and K2 from foreign channels
+"""
+struct ΓEvaluator_MF
+    core::ΓcoreEvaluator_MF{ComplexF64}
+    channel::String
+    foreign_channels::Tuple{String,String}
+    K2s::NTuple{3, Matrix{ComplexF64}}
+    K2offsets::NTuple{2, Vector{Int}}
+    K2changeMats::NTuple{2, Matrix{Int}}
+    K2primeoffsets::NTuple{2, Vector{Int}}
+    K2primechangeMats::NTuple{2, Matrix{Int}}
+    K1s::NTuple{3, Vector{ComplexF64}}
+    K1offsets::NTuple{2, Vector{Int}}
+    K1changeMats::NTuple{2, Matrix{Int}}
+    Γbare::Float64
+
+    function ΓEvaluator_MF(
+        PSFpath::String,
+        R::Int
+        ;
+        T::Float64,
+        flavor_idx::Int,
+        channel::String,
+        foreign_channels::Tuple{String,String}
+    )
+        ωconvMat = channel_trafo(channel)
+        core = ΓcoreEvaluator_MF(PSFpath, R; T=T, flavor_idx=flavor_idx, ωconvMat=ωconvMat)
+        ωs_ext = core.GFevs[1].GF.ωs_ext
+
+        # precompute K2s
+        K2s = Vector{Matrix{ComplexF64}}(undef,3)
+        K2offsets = Vector{Int}[]
+        K2changeMats = Matrix{Int}[]
+        K2primeoffsets = Vector{Int}[]
+        K2primechangeMats = Matrix{Int}[]
+        for (ich, ch) in enumerate([channel, foreign_channels...])
+            # compute offsets on common frequency grid for K2 and K2prime
+            changeMat = channel_change(channel, ch)[[1,2],:]
+            omK2, _ = trafo_grids_offset(ωs_ext, changeMat)
+            changeMatprime = channel_change(channel, ch)[[1,3],:]
+            omK2p, _ = trafo_grids_offset(ωs_ext, changeMatprime)
+                # merge grids
+            ωs_extK2 = ntuple(
+                i -> ifelse(length(omK2[i])>=length(omK2p[i]), omK2[i], omK2p[i]),
+                2
+                )
+            offset = idx_trafo_offset(ωs_ext, ωs_extK2, changeMat)
+            offsetprime = idx_trafo_offset(ωs_ext, ωs_extK2, changeMatprime)
+            
+            K2 = precompute_K2r(PSFpath,
+                flavor_idx,
+                "MF"; 
+                ωs_ext=ωs_extK2,
+                channel=ch,
+                prime=false
+                )
+            K2s[ich] = K2
+            if ch!=channel
+                push!(K2offsets, offset)
+                push!(K2changeMats, changeMat)
+                push!(K2primeoffsets, offsetprime)
+                push!(K2primechangeMats, changeMatprime)
+            end
+        end
+
+        # precompute K1s
+        K1s = Vector{Vector{ComplexF64}}(undef,3)
+        K1offsets = Vector{Int}[]
+        K1changeMats = Matrix{Int}[]
+        for (ich, ch) in enumerate([channel, foreign_channels...])
+            changeMat = reshape(channel_change(channel, ch)[1,:], 1,3)
+            ωs_extK1, offset = trafo_grids_offset(ωs_ext, changeMat)
+            K1 = precompute_K1r(PSFpath,
+            flavor_idx,
+            "MF";
+            ωs_ext=only(ωs_extK1),
+            channel=ch
+            )
+            K1s[ich] = K1
+            if ch!=channel
+                push!(K1offsets, offset)
+                push!(K1changeMats, changeMat)
+            end
+        end
+
+        # bare interaction
+        Γbare = flavor_idx==2 ? 2.0 * load_Adisc_0pt(PSFpath, "Q12") : 0.0
+
+        return new(
+            core,
+            channel,
+            foreign_channels,
+            Tuple(K2s),
+            Tuple(K2offsets),
+            Tuple(K2changeMats),
+            Tuple(K2primeoffsets),
+            Tuple(K2primechangeMats),
+            Tuple(K1s),
+            Tuple(K1offsets),
+            Tuple(K1changeMats),
+            Γbare
+            )
+    end
+end
+
+"""
+Evaluate full vertex on point
+"""
+function (gev::ΓEvaluator_MF)(w::Vararg{Int,3})
+    # core vertex
+    ret = eval_LR(gev.core, w...)
+
+    # add K2
+        # same channel
+    ret += gev.K2s[1][w[1],w[2]]
+        # foreign channel
+    for i in [1,2]
+        ret += gev.K2s[i+1][(gev.K2changeMats[i] * SA[w...] + gev.K2offsets[i])...]
+    end
+
+    # add K2prime
+        # same channel
+    ret += gev.K2s[1][w[1],w[3]]
+        # foreign channel
+    for i in [1,2]
+        ret += gev.K2s[i+1][(gev.K2primechangeMats[i] * SA[w...] + gev.K2primeoffsets[i])...]
+    end
+
+    # add K1
+    ret += gev.K1s[1][w[1]]
+    for i in [1,2]
+        ret += gev.K1s[i+1][only(gev.K1changeMats[i] * SA[w...] + gev.K1offsets[i])]
+    end
+    
+    return ret + gev.Γbare
 end
 
 

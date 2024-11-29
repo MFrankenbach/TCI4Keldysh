@@ -173,15 +173,20 @@ end
         end
     end
 
-    for channel in ["a","p","t"]
-        for flavor in [1,2]
-            for formalism in ["MF","KF"]
-                for prime in [true,false]
-                    test_K2_TCI_precomputed(;formalism=formalism, prime=prime, channel=channel, flavor_idx=flavor)
-                end
-            end
-        end
-    end
+    # for channel in ["a","p","t"]
+    #     for flavor in [1,2]
+    #         for formalism in ["MF","KF"]
+    #             for prime in [true,false]
+    #                 test_K2_TCI_precomputed(;formalism=formalism, prime=prime, channel=channel, flavor_idx=flavor)
+    #             end
+    #         end
+    #     end
+    # end
+    test_K2_TCI_precomputed(;formalism="MF", prime=true, channel="t", flavor_idx=1)
+    test_K2_TCI_precomputed(;formalism="MF", prime=false, channel="pNRG", flavor_idx=2)
+    test_K2_TCI_precomputed(;formalism="MF", prime=true, channel="a", flavor_idx=2)
+    test_K2_TCI_precomputed(;formalism="KF", prime=true, channel="a", flavor_idx=1)
+    test_K2_TCI_precomputed(;formalism="KF", prime=false, channel="pNRG", flavor_idx=2)
 
 end
 

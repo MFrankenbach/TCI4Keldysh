@@ -1,6 +1,48 @@
 using Plots
 using MAT
 using LinearAlgebra
+using BenchmarkTools
+
+function test_ΓEvaluator_MF(;do_benchmark=false, do_test=true)
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(basepath, "PSF_nz=4_conn_zavg/")
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    flavor_idx = 1
+    channel = "a"
+    foreign_channels = ("t","p")
+    R = 3
+
+    gev = TCI4Keldysh.ΓEvaluator_MF(PSFpath, R;
+        T=T,
+        flavor_idx=flavor_idx,
+        channel=channel,
+        foreign_channels=foreign_channels
+        )
+
+    if do_benchmark
+        @btime $gev(1,1,1)
+        @btime $gev.core(1,1,1)
+    end
+
+    # test
+    if do_test
+        Γfull = TCI4Keldysh.compute_Γfull_symmetric_estimator(
+            "MF",
+            PSFpath;
+            T=T,
+            ωs_ext=gev.core.GFevs[1].GF.ωs_ext,
+            flavor_idx=flavor_idx,
+            channel=channel
+        )
+
+        Γtest = zeros(ComplexF64, size(Γfull))
+        Threads.@threads for id in CartesianIndices(Γfull)
+            Γtest[id] = gev(Tuple(id)...)
+        end
+
+        @assert maximum(abs.(Γtest .- Γfull)) < 1.e-14
+    end
+end
 
 function test_compute_Γfull_symmetric_estimator(
     formalism = "MF"
@@ -10,7 +52,7 @@ function test_compute_Γfull_symmetric_estimator(
     T = TCI4Keldysh.dir_to_T(PSFpath)
     flavor_idx = 1
     channel = "t"
-    R = 7
+    R = 4
     Nhalf = 2^(R-1)
     ωs_ext = TCI4Keldysh.MF_npoint_grid(T, Nhalf, 3)
 
@@ -22,6 +64,9 @@ function test_compute_Γfull_symmetric_estimator(
         flavor_idx=flavor_idx,
         channel=channel
     )
+
+    @show any(isnan.(Γfull))
+    @show maximum(abs.(Γfull))
 
     slice = (5,:,:)
     heatmap(log10.(abs.(Γfull[slice...])))
@@ -135,4 +180,4 @@ function check_V_KFfull(iK::Int, channel="t")
     printstyled("Maximum deviation Julia vs. MuNRG: $(maximum(diff))\n"; color=:blue)
 end
 
-check_V_MFfull("a", 1)
+# check_V_MFfull("a", 1)
