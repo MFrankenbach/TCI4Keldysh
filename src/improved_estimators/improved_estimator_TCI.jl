@@ -1047,7 +1047,7 @@ function Γ_core_TCI_KF(
             kwargs_dict[:tolmarginglobalsearch]=3.0
         end
 
-        maxiter = haskey(kwargs_dict, :maxiter) ? kwargs_dict[:maxiter] : 20
+        maxiter = haskey(kwargs_dict, :maxiter) ? kwargs_dict[:maxiter] : 100
         # save result every ncheckpoint sweeps if dump_path is given
         ncheckpoint = isnothing(dump_path) ? maxiter : 3  
         converged = false
@@ -1452,9 +1452,54 @@ function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
     return sum(addvals)
 end
 
-abstract type ΓcoreBatchEvaluator{T} <: TCI.BatchEvaluator{T} end
+abstract type CachedBatchEvaluator{T} <: TCI.BatchEvaluator{T} end
 
-struct ΓcoreBatchEvaluator_MF{T} <: ΓcoreBatchEvaluator{T}
+struct ΓBatchEvaluator_MF <: CachedBatchEvaluator{ComplexF64}
+    grid::QuanticsGrids.InherentDiscreteGrid{3}
+    qf::TCI.CachedFunction{ComplexF64}
+    localdims::Vector{Int}
+    gev::ΓEvaluator_MF
+
+    function ΓBatchEvaluator_MF(
+        gev::ΓEvaluator_MF
+    )
+        # set up grid
+        GFs = [gev.core.GFevs[i].GF for i in eachindex(gev.core.GFevs)]
+        D = 3
+        R = grid_R(GFs[1])
+        @assert all(R .== grid_R.(GFs[2:end])) "Full correlator objects have different grid sizes"
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        # cached function
+        qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+        qf = TCI.CachedFunction{ComplexF64}(qf_, localdims)
+
+        return new(grid, qf, localdims, gev)
+    end
+end
+
+function ΓBatchEvaluator_MF(
+    PSFpath::String,
+    R::Int
+    ;
+    T::Float64,
+    flavor_idx::Int,
+    channel::String,
+    foreign_channels::Tuple{String,String}
+)
+    gev = ΓEvaluator_MF(
+        PSFpath,
+        R;
+        T=T,
+        flavor_idx=flavor_idx,
+        channel=channel,
+        foreign_channels=foreign_channels
+    )
+    return ΓBatchEvaluator_MF(gev)
+end
+
+struct ΓcoreBatchEvaluator_MF{T} <: CachedBatchEvaluator{T}
     grid::QuanticsGrids.InherentDiscreteGrid{3}
     qf::TCI.CachedFunction{T}
     localdims::Vector{Int}
@@ -1507,7 +1552,7 @@ end
 """
 To evaluate Keldysh core vertex in parallelized fashion (more than 16 threads).
 """
-struct ΓcoreBatchEvaluator_KF{T} <: ΓcoreBatchEvaluator{T}
+struct ΓcoreBatchEvaluator_KF{T} <: CachedBatchEvaluator{T}
     # discrete grid because we only need to address frequency indices, not actual frequencies
     grid::QuanticsGrids.InherentDiscreteGrid{3}
     qf::TCI.CachedFunction{T}
@@ -1555,7 +1600,7 @@ end
 """
 Evaluation on single Quantics index.
 """
-function (gbev::ΓcoreBatchEvaluator{T})(v::Vector{Int}) where {T}
+function (gbev::CachedBatchEvaluator{T})(v::Vector{Int}) where {T}
     # return gbev.qf(v)
     return gbev.qf.f(v)
 end
@@ -1578,7 +1623,7 @@ end
 """
 Batch evaluation of core vertex
 """
-function (gbev::ΓcoreBatchEvaluator{T})(
+function (gbev::CachedBatchEvaluator{T})(
     leftindexsset::Vector{Vector{Int}}, rightindexsset::Vector{Vector{Int}}, ::Val{M}
     ) where {T,M}
     nleft = length(first(leftindexsset))

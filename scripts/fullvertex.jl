@@ -2,8 +2,9 @@ using Plots
 using MAT
 using LinearAlgebra
 using BenchmarkTools
+import QuanticsGrids as QG 
 
-function test_ΓEvaluator_MF(;do_benchmark=false, do_test=true)
+function test_ΓEvaluator_MF(;do_benchmark=false, do_test=true, test_batcheval=false)
     basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
     PSFpath = joinpath(basepath, "PSF_nz=4_conn_zavg/")
     T = TCI4Keldysh.dir_to_T(PSFpath)
@@ -36,11 +37,23 @@ function test_ΓEvaluator_MF(;do_benchmark=false, do_test=true)
         )
 
         Γtest = zeros(ComplexF64, size(Γfull))
+        Γbatchtest = zeros(ComplexF64, size(Γfull))
         Threads.@threads for id in CartesianIndices(Γfull)
             Γtest[id] = gev(Tuple(id)...)
         end
 
         @assert maximum(abs.(Γtest .- Γfull)) < 1.e-14
+
+        if test_batcheval
+            gbev = TCI4Keldysh.ΓBatchEvaluator_MF(gev)
+            Γbatchtest = zeros(ComplexF64, size(Γfull))
+            grid = gbev.grid
+            Threads.@threads for id in CartesianIndices(Γfull)
+                Γbatchtest[id] = gbev(QG.origcoord_to_quantics(grid,vec(id)))
+            end
+
+            @assert maximum(abs.(Γbatchtest .- Γfull)) < 1.e-14
+        end
     end
 end
 
