@@ -2,7 +2,39 @@ using Plots
 using MAT
 using LinearAlgebra
 using BenchmarkTools
+using Serialization
+using QuanticsTCI
+import TensorCrossInterpolation as TCI
 import QuanticsGrids as QG 
+
+function Γfull_TCI_MF()
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(basepath, "PSF_nz=4_conn_zavg/")
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    flavor_idx = 2
+    channel = "p"
+    foreign_channels = ("a","t")
+    R = 5
+
+    gev = TCI4Keldysh.ΓEvaluator_MF(PSFpath, R;
+        T=T,
+        flavor_idx=flavor_idx,
+        channel=channel,
+        foreign_channels=foreign_channels
+        )
+
+    qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(_->2^R, 3); tolerance=1.e-2)
+    @show TCI4Keldysh.rank(qtt)
+
+    gbev = TCI4Keldysh.ΓBatchEvaluator_MF(gev)
+    tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims; tolerance=1.e-2)
+    @show TCI.rank(tt)
+
+end
+
+function check_fullvertex_qtt(qttpath::String)
+    (tci, grid) = deserialize(qttpath)
+end
 
 function test_ΓEvaluator_MF(;do_benchmark=false, do_test=true, test_batcheval=false)
     basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
@@ -45,14 +77,21 @@ function test_ΓEvaluator_MF(;do_benchmark=false, do_test=true, test_batcheval=f
         @assert maximum(abs.(Γtest .- Γfull)) < 1.e-14
 
         if test_batcheval
+
             gbev = TCI4Keldysh.ΓBatchEvaluator_MF(gev)
-            Γbatchtest = zeros(ComplexF64, size(Γfull))
+
+            @show gev(1,1,1)
+            @show QG.origcoord_to_quantics(gbev.grid, (1,1,1))
+            @show gbev(QG.origcoord_to_quantics(gbev.grid, (1,1,1)))
+
+            batchslice = (1:2^R,:,:)
+            Γbatchtest = zeros(ComplexF64, size(Γfull[batchslice...]))
             grid = gbev.grid
-            Threads.@threads for id in CartesianIndices(Γfull)
-                Γbatchtest[id] = gbev(QG.origcoord_to_quantics(grid,vec(id)))
+            Threads.@threads for id in CartesianIndices(Γfull[batchslice...])
+                Γbatchtest[id] = gbev(QG.origcoord_to_quantics(grid, Tuple(id)))
             end
 
-            @assert maximum(abs.(Γbatchtest .- Γfull)) < 1.e-14
+            @assert maximum(abs.(Γbatchtest .- Γfull[batchslice...])) < 1.e-14
         end
     end
 end

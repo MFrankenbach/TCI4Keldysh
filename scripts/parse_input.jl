@@ -160,7 +160,7 @@ function matsubarafull(
                     foreign_channels=Tuple(foreign_channels)
                 )
                 # TODO: initial pivots
-                tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims; tcikwargs...)
+                tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims; tolerance, tcikwargs...)
                 qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
             end
         push!(times, t)
