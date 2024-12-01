@@ -3,8 +3,16 @@ using Serialization
 using QuanticsTCI
 import TensorCrossInterpolation as TCI
 
+"""
+Determine whether a value to an input key should remain uppercase
+"""
+function is_uppercase_key(kw::AbstractString)
+    list = ["psfpath"]
+    return (lowercase(kw) in list)
+end
+
 # UTILITIES
-function parse_input(input_file::String)
+function parse_input(input_file::AbstractString)
     d = Dict{String, Any}()
     open(input_file) do f    
         lines = readlines(f)
@@ -19,7 +27,11 @@ function parse_input(input_file::String)
                 continue
             end
             pts = convert.(String, split(strip(line)))
-            pts = lowercase.(pts)
+            if !is_uppercase_key(pts[1])
+                pts = lowercase.(pts)
+            else
+                pts[1] = lowercase(pts[1])
+            end
             kw = pts[1]
             d[kw] = if length(pts)==2
                     only(pts[2:end])
@@ -35,7 +47,7 @@ function get_default(key::String)
     default_values = Dict(
         "channel" => "p",
         "flavor_idx" => 1,
-        "Rrange" => "0512",
+        "rrange" => "0512",
         "local" => "true"
     )
     if haskey(default_values, key) 
@@ -91,6 +103,8 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
 
     if jobtype=="matsubarafull"
         matsubarafull(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, kwargs...)
+    elseif jobtype=="matsubaracore"
+        matsubaracore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, kwargs...)
     else
         error("Invalid jobtype $jobtype")
     end
@@ -120,6 +134,93 @@ function serialize_tt(tci, grid, outname::String, folder::String)
     R = grid.R
     fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
     serialize(fname_tt, (tci, grid))
+end
+
+# ==== JOBTYPES
+function matsubaracore(
+    outname::String,
+    d::Dict,
+    ;
+    Rs,
+    PSFpath,
+    tolerance,
+    folder,
+    flavor_idx,
+    channel,
+    cache_center=0,
+    use_ΣaIE=true,
+    batched_eval=true,
+    serialize_tts=true,
+    kwargs...
+    )
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    times = []
+    qttranks = []
+    qttbonddims = []
+    svd_kernel = true
+    @show svd_kernel
+    @show batched_eval
+
+    # prepare output
+    tcikwargs = filter_tcikwargs(Dict(kwargs))
+    d["tcikwargs"] = tcikwargs
+    d["times"] = times
+    d["ranks"] = qttranks
+    d["bonddims"] = qttbonddims
+    d["svd_kernel"] = svd_kernel
+    d["cache_center"] = cache_center
+    d["use_Sigma_aIE"] = use_ΣaIE
+    d["tcikwargs"] = Dict(tcikwargs)
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    for R in Rs
+        t = @elapsed begin
+            qtt = if batched_eval
+                TCI4Keldysh.Γ_core_TCI_MF_batched(
+                PSFpath,
+                R;
+                T=T,
+                ωconvMat=ωconvMat,
+                flavor_idx=flavor_idx,
+                use_ΣaIE=use_ΣaIE,
+                tolerance=tolerance,
+                verbosity=2,
+                cache_center=cache_center,
+                tcikwargs...
+                )
+            else
+                TCI4Keldysh.Γ_core_TCI_MF(
+                PSFpath,
+                R;
+                T=T,
+                ωconvMat=ωconvMat,
+                flavor_idx=flavor_idx,
+                tolerance=tolerance,
+                unfoldingscheme=:interleaved,
+                verbosity=2,
+                cache_center=cache_center,
+                tcikwargs...
+                )
+            end
+        end 
+        push!(times, t)
+        push!(qttranks, TCI4Keldysh.rank(qtt))
+        push!(qttbonddims, TCI.linkdims(qtt.tci))
+        TCI4Keldysh.updateJSON(outname, "times", times, folder)
+        TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+        TCI4Keldysh.updateJSON(outname, "bonddims", qttbonddims, folder)
+
+        if serialize_tts
+            # can't just serialize qtt because may contain anonymous functoins
+            serialize_tt(qtt.tci, qtt.grid, outname, folder)
+        end
+
+        println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+        TCI4Keldysh.report_mem(true)
+        flush(stdout)
+        flush(stderr)
+    end
 end
     
 function matsubarafull(
@@ -181,6 +282,7 @@ function matsubarafull(
         flush(stderr)
     end
 end
+# ==== JOBTYPES END
 
 """
 Parse input file of the form:
@@ -245,7 +347,7 @@ function main(args)
         channel=channel,
         tolerance=tolerance,
     )
-
+    println("==== ELVIS HAS LEFT THE BUILDING")
 end
 
 main(ARGS)
