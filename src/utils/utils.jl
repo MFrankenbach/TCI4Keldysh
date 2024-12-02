@@ -78,6 +78,138 @@ function quadtrapz(xs::Vector, ys::Vector)
 end
 
 """
+Insert vals after elements with indices ids into vec
+"""
+function insert_vec!(vec::Vector{T}, ids::Vector{Int}, vals::Vector{T}) where {T}
+    @assert length(ids)==length(vals)
+    ishift = 1
+    for i in eachindex(ids)
+        insert!(vec, ids[i]+1, vals[i])
+        ishift += 1
+    end
+end
+
+
+"""
+for a function `i::Int -> f(i)::Array{T,D}` with a given range of indices,
+find interpolation points such that the f(i) is linearly interpolated by neighbouring
+points to a given accuracy
+* p: norm exponent for the error measure
+"""
+function lin_interp_array(f, idomain::Vector{Int}, ipos=1:length(idomain); p::Float64=Inf, abstol::Float64=1.e-8)
+    (interp_ids, interp_val) = lin_interp_array_init(f, idomain, ipos; p=p, abstol=abstol)
+    return lin_interp_array!(interp_ids, interp_val, f, idomain, ipos; p=p, abstol=abstol)
+end
+
+"""
+Check whether `interp_val` interpolates function `f` on domain `idomain`.
+If not, insert all values needed to get that.
+"""
+function lin_interp_array!(interp_ids::Vector{Int}, interp_val, f, idomain::Vector{Int}, ipos=1:length(idomain); p::Float64=Inf, abstol::Float64=1.e-8)
+
+    # make sure end points are in interpolation points
+    npt = length(idomain)
+    if !(1 in interp_ids)
+        insert!(interp_ids, 1, 1)
+        insert!(interp_val, 1, f(idomain[1]))
+    end
+    if !(npt in interp_ids)
+        insert!(interp_ids, length(interp_ids)+1, npt)
+        insert!(interp_val, length(interp_ids)+1, f(idomain[npt]))
+    end
+
+    to_insert = Int[]
+    to_insert_mat = []
+    for il in 1:length(interp_ids)-1
+        for j in interp_ids[il]+1:interp_ids[il+1]-1
+            mat = f(idomain[j])
+            dd = ipos[interp_ids[il+1]] - ipos[interp_ids[il]] 
+            a1 = (ipos[interp_ids[il+1]] - ipos[j]) / dd
+            a0 = (ipos[j] - ipos[interp_ids[il]]) / dd
+            interp_mat = a0*interp_val[il+1] + a1*interp_val[il]
+            if norm(mat .- interp_mat, p) > abstol
+                push!(to_insert, j)
+                push!(to_insert_mat, mat)
+            end
+        end
+    end
+
+    interp_ids_ret = vcat(interp_ids, to_insert)
+    interp_val_ret = vcat(interp_val, to_insert_mat)
+    perm = sortperm(interp_ids_ret)
+    permute!(interp_ids_ret, perm)
+    permute!(interp_val_ret, perm)
+
+    return (interp_ids_ret, interp_val_ret)
+end
+
+"""
+for a function `i::Int -> f(i)::Array{T,D}` with a given range of indices,
+find initial guess for interpolation points such that the f(i) is linearly interpolated by neighbouring
+points to a given accuracy
+* p: norm exponent for the error measure
+"""
+function lin_interp_array_init(f, idomain::Vector{Int}, ipos=1:length(idomain); p::Float64=Inf, abstol::Float64=1.e-8)
+    npt = length(idomain)
+    @assert length(ipos)==npt
+
+    perm = sortperm(idomain)
+    idomain = idomain[perm]
+    ipos = ipos[perm]
+
+    interp_ids = [1, npt]    
+    interp_val = f.(idomain[interp_ids])
+    while true
+        ids = [div(interp_ids[i]+interp_ids[i+1],2) for i in 1:length(interp_ids)-1]
+        new_ids = []
+        new_ids_left = []
+        new_ids_right = []
+        new_ids_idx = []
+        for i in eachindex(ids)
+            if !(ids[i] in interp_ids)
+                push!(new_ids_idx, i)
+                push!(new_ids, ids[i])
+                push!(new_ids_left, interp_ids[i])
+                push!(new_ids_right, interp_ids[i+1])
+            end
+        end
+
+        if isempty(new_ids_idx)
+            break
+        end
+
+        # check interpolation on new points
+        lenbefore = length(interp_ids)
+        to_insert = Int[]
+        to_insert_mat = []
+        for i in eachindex(new_ids)
+            mat = f(idomain[new_ids[i]])
+            dd = ipos[new_ids_right[i]] - ipos[new_ids_left[i]] 
+            a1 = (ipos[new_ids[i]] - ipos[new_ids_left[i]]) / dd
+            a0 = (ipos[new_ids_right[i]] - ipos[new_ids[i]]) / dd
+            interp_mat = a0 * interp_val[new_ids_idx[i]] + a1 * interp_val[new_ids_idx[i]+1]
+            err = norm(mat .- interp_mat, p)
+            if err > abstol
+                push!(to_insert, i)
+                push!(to_insert_mat, mat)
+            # else
+            #     printstyled("err: $(norm(mat .- interp_mat, p)), interp=$(a0)*$(interp_val[new_ids_idx[i]]) + $(a1)*$(interp_val[new_ids_idx[i]+1])\n"; color=:red)
+            end
+        end
+        ishift = 1
+        for i in eachindex(to_insert)
+            insert!(interp_ids, new_ids_idx[to_insert[i]]+ishift, new_ids[to_insert[i]])
+            insert!(interp_val, new_ids_idx[to_insert[i]]+ishift, to_insert_mat[i])
+            ishift += 1
+        end
+        if lenbefore == length(interp_ids)
+            break
+        end
+    end
+    return (interp_ids, interp_val)
+end
+
+"""
 Make the discrete spectral data ("Adisc") of a partial spectral function
 compact, by removing the rows, columns, or slices of "Adisc" that contain
 zeros only.

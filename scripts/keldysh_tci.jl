@@ -453,6 +453,36 @@ function KFC_Evaluator_memory()
     end
 end
 
+using Interpolations
+function test_lin_interp_array()
+
+    # scalar function
+    f(i::Int) = [0.01/(1 + i^2/1000) 0.02; 0.01/(1 + abs(i)/1000) 0.02*i/(3.0 + i^2)]
+
+    idomain =  collect(-100:100)
+    abstol = 1.e-4
+    p = Inf
+    (interp_ids, interp_val) = TCI4Keldysh.lin_interp_array(f, idomain; p=p, abstol=abstol)
+
+    @show interp_ids
+
+    do_plot = true
+    if do_plot
+        plot(idomain, norm.(f.(idomain)))
+        plot!(idomain[interp_ids], norm.(f.(idomain[interp_ids])); linestyle=:dot)
+        savefig("foo.pdf")
+    end
+
+    # test
+    nf = length(f(idomain[1]))
+    for id in 1:nf
+        flin = linear_interpolation(idomain[interp_ids], [iv[id] for iv in interp_val])
+        flinval = flin.(idomain)
+        fval = [f(ii)[id] for ii in idomain]
+        @assert norm(fval .- flinval, p) <= abstol
+    end
+end
+
 
 function test_KFCEvaluator()
     # create correlator

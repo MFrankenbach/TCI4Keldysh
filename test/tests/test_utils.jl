@@ -1,4 +1,5 @@
 using SpecialFunctions
+using Interpolations
 
 @testset "Hilbert transform" begin
     
@@ -242,4 +243,27 @@ end
     test_KF_idx()
     test_trafo_grids()
     test_idx_trafo_offset()
+end
+
+@testset "Numerical utils" begin
+    function test_lin_interp_array()
+
+        f(i::Int) = [0.01/(1 + i^2/1000) 0.02; 0.01/(1 + abs(i)/1000) 0.02*i/(3.0 + i^2)]
+
+        idomain =  collect(-100:100)
+        abstol = 1.e-4
+        p = Inf
+        (interp_ids, interp_val) = TCI4Keldysh.lin_interp_array(f, idomain; p=p, abstol=abstol)
+
+        # test
+        nf = length(f(idomain[1]))
+        for id in 1:nf
+            flin = linear_interpolation(idomain[interp_ids], [iv[id] for iv in interp_val])
+            flinval = flin.(idomain)
+            fval = [f(ii)[id] for ii in idomain]
+            @test norm(fval .- flinval, p) <= abstol
+        end
+    end
+
+    test_lin_interp_array()
 end
