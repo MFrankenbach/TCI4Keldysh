@@ -1,6 +1,7 @@
 using TCI4Keldysh
 using Serialization
 using QuanticsTCI
+using QuanticsGrids
 import TensorCrossInterpolation as TCI
 
 """
@@ -12,6 +13,10 @@ function is_uppercase_key(kw::AbstractString)
 end
 
 # UTILITIES
+function maybeparse(T::Type, val)
+    return isa(val,T) ? val : parse(T, val)
+end
+
 function parse_input(input_file::AbstractString)
     d = Dict{String, Any}()
     open(input_file) do f    
@@ -81,18 +86,17 @@ function json_filename(jobtype::String, xmin, xmax, tolerance::Float64, beta::Fl
     return joinpath(TCI4Keldysh.pdatadir(), folder ,"$(jobtype)_R_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta")
 end
 
-function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, folder, kwargs...)
+function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, folder, flavor_idx, channel, kwargs...)
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
-    outname = json_filename("matsubarafull", first(Rs), last(Rs), tolerance, beta; folder=folder)
+    outname = json_filename(jobtype, first(Rs), last(Rs), tolerance, beta; folder=folder)
 
     # prepare output with general info
     d = Dict()
     d["Rs"] = Rs
     d["beta"] = beta
-    kwargs_dict = Dict(kwargs)
-    d["flavor_idx"] = kwargs_dict[:flavor_idx]
+    d["flavor_idx"] = flavor_idx
     d["PSFpath"] = PSFpath
-    d["channel"] = kwargs_dict[:channel]
+    d["channel"] = channel
     d["tolerance"] = tolerance
     d["numthreads"] = Threads.threadpoolsize()
     d["job_id"] = if haskey(ENV, "SLURM_JOB_ID")
@@ -102,9 +106,11 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
                 end
 
     if jobtype=="matsubarafull"
-        matsubarafull(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, kwargs...)
+        matsubarafull(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="matsubaracore"
-        matsubaracore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, kwargs...)
+        matsubaracore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="keldyshcore"
+        keldyshcore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     else
         error("Invalid jobtype $jobtype")
     end
@@ -113,15 +119,29 @@ end
 function filter_tcikwargs(kwargs_dict::Dict)
     tcikwargs = Dict{Symbol, Any}()
     if haskey(kwargs_dict, :maxnglobalpivot)
-        tcikwargs[:maxnglobalpivot]=kwargs_dict[:maxnglobalpivot]
+        tcikwargs[:maxnglobalpivot]=maybeparse(Int, kwargs_dict[:maxnglobalpivot])
     end
     if haskey(kwargs_dict, :nsearchglobalpivot)
-        tcikwargs[:nsearchglobalpivot]=kwargs_dict[:nsearchglobalpivot]
+        tcikwargs[:nsearchglobalpivot]=maybeparse(Int, kwargs_dict[:nsearchglobalpivot])
     end
     if haskey(kwargs_dict, :tolmarginglobalsearch)
-        tcikwargs[:tolmarginglobalsearch]=kwargs_dict[:tolmarginglobalsearch]
+        tcikwargs[:tolmarginglobalsearch]=maybeparse(Float64, kwargs_dict[:tolmarginglobalsearch])
     end
     return tcikwargs
+end
+
+"""
+Filter broadening_kwargs for those that are actually used by ΓcoreEvaluator_KF
+"""
+function filter_broadening_kwargs(;broadening_kwargs...)
+    ret = Dict(broadening_kwargs)
+    KEYLIST = [:estep, :emin, :emax]
+    for key in keys(ret)
+        if !(key in KEYLIST)
+            delete!(key, ret)
+        end
+    end
+    return ret
 end
 
 function serialize_tt(qtt, outname::String, folder::String)
@@ -138,7 +158,7 @@ end
 
 # ==== JOBTYPES
 function matsubaracore(
-    outname::String,
+    outname::AbstractString,
     d::Dict,
     ;
     Rs,
@@ -260,9 +280,26 @@ function matsubarafull(
                     flavor_idx=flavor_idx,
                     foreign_channels=Tuple(foreign_channels)
                 )
-                # TODO: initial pivots
-                tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims; tolerance, tcikwargs...)
+
+                # collect initial pivots
+                initpivots_ω = TCI4Keldysh.initpivots_Γcore([gbev.gev.core.GFevs[i].GF for i in eachindex(gbev.gev.core.GFevs)])
+                initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
+
+                tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tolerance, tcikwargs...)
                 qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
+
+                do_check_interpolation = true
+                if do_check_interpolation
+                    Nhalf = 2^(R-1)
+                    gridmin = max(1, Nhalf-2^5)
+                    gridmax = min(2^R, Nhalf+2^5)
+                    grid1D = gridmin:2:gridmax
+                    grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+                    qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
+                    maxerr = TCI4Keldysh.check_interpolation(qtt.tci, gbev, qgrid)
+                    println(" Maximum interpolation error: $maxerr (tol=$tolerance)")
+                end
+
             end
         push!(times, t)
         push!(qttranks, TCI4Keldysh.rank(qtt))
@@ -282,6 +319,107 @@ function matsubarafull(
         flush(stderr)
     end
 end
+
+function keldyshcore(
+    outname::AbstractString,
+    d::Dict;
+    ik,
+    Rs,
+    PSFpath, 
+    tolerance,
+    folder,
+    flavor_idx::Int,
+    channel::String,
+    ommax = 0.3183098861837907,
+    # ωmin = -0.3183098861837907,
+    npivot=5,
+    pivot_steps=[div(2^R, maybeparse(Int,npivot) - 1) for R in Rs],
+    serialize_tts=true,
+    dump_path=nothing,
+    resume_path=nothing,
+    kwargs...
+    )
+
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    T = 1.0/beta
+    times = []
+    qttranks = []
+    bonddims = []
+    svd_kernel = true
+
+    ik = maybeparse(Int, ik)
+    npivot = maybeparse(Int, npivot)
+    ommax = maybeparse(Float64, ommax)
+    if !isa(pivot_steps, Vector{Int})
+        pivot_steps = [maybeparse(Int, ps) for ps in pivot_steps]
+    end
+
+    # get broadening parameters
+    base_path = dirname(rstrip(PSFpath, '/'))
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
+    if !haskey(broadening_kwargs, :estep)
+        broadening_kwargs[:estep] = 50
+    end
+
+    # prepare output
+    d["times"] = times
+    d["ranks"] = qttranks
+    d["bonddims"] = bonddims
+    d["svd_kernel"] = svd_kernel
+    d["numthreads"] = Threads.threadpoolsize()
+    d["sigmak"] = sigmak 
+    d["gamma"] = γ 
+    # d["ommin"] = ωmin
+    d["ommax"] = ommax
+    d["iK"] = ik
+    broadening_kwargs = filter_broadening_kwargs(;broadening_kwargs...)
+    d["broadening_kwargs"] = broadening_kwargs
+    tcikwargs = filter_tcikwargs(Dict(kwargs))
+    d["tcikwargs"] = tcikwargs 
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    for (ir, R) in enumerate(Rs)
+        t = @elapsed begin
+            qtt = TCI4Keldysh.Γ_core_TCI_KF(
+                PSFpath, R, ik, ommax
+                ; 
+                sigmak=sigmak,
+                γ=γ,
+                T=T,
+                ωconvMat=ωconvMat,
+                flavor_idx=flavor_idx,
+                dump_path=dump_path,
+                resume_path=resume_path,
+                tolerance=tolerance,
+                verbosity=2,
+                unfoldingscheme=:interleaved,
+                estep=broadening_kwargs[:estep],
+                emin=broadening_kwargs[:emin],
+                emax=broadening_kwargs[:emax],
+                npivot=npivot,
+                pivot_step=pivot_steps[ir],
+                tcikwargs...
+                )
+        end 
+        push!(times, t)
+        push!(qttranks, TCI4Keldysh.rank(qtt))
+        push!(bonddims, TCI.linkdims(qtt.tci))
+        TCI4Keldysh.updateJSON(outname, "times", times, folder)
+        TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+        TCI4Keldysh.updateJSON(outname, "bonddims", bonddims, folder)
+
+        if serialize_tts            
+            serialize_tt(qtt.tci, qtt.grid, outname, folder)
+        end
+
+        println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+        flush(stdout)
+        flush(stderr)
+    end
+end
+
 # ==== JOBTYPES END
 
 """
@@ -289,7 +427,9 @@ Parse input file of the form:
 
 ```
 TCI4Keldysh BEGIN
-<keyword> <value>
+<keyword1> <value>
+<keyword2> <value>
+<etc...>
 TCI4Keldysh END
 ```
 
@@ -302,6 +442,11 @@ Input arguments:
 * PSFpath_id::Int
 * Rrange, format RminRmax, 4 digits
 * local::Bool
+
+To WATCH OUT for:
+- All input arguments will first be read in as strings. They must be parsed to the correct type.
+- All keywords will be converted to lowercase. So will the corresponding arguments, unless listed in
+`is_uppercase_key`
 """
 function main(args)
     inp_file = args[1]    
@@ -339,6 +484,16 @@ function main(args)
 
     # dispatch on jobtype
     jobtype = read_arg(inp_args, "jobtype")
+    # avoid double keyword arguments...
+    explicit_args = [:jobtype, :psfpath, :folder, :rrange, :flavor_idx, :channel, :tolerance]
+    kwargs_dict = Dict{Symbol,Any}()
+    for (k,v) in pairs(inp_args)
+        if Symbol(k) in explicit_args
+            continue
+        else
+            kwargs_dict[Symbol(k)] = v
+        end
+    end
     run_job(jobtype;
         PSFpath=PSFpath,
         Rs=Rmin:Rmax,
@@ -346,6 +501,7 @@ function main(args)
         flavor_idx=flavor_idx,
         channel=channel,
         tolerance=tolerance,
+        kwargs_dict...
     )
     println("==== ELVIS HAS LEFT THE BUILDING")
 end

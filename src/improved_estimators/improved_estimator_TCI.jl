@@ -302,6 +302,26 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     end
 end
 
+"""
+Determine initial pivots as a sub-grid of a frequency grid of given size
+"""
+function initpivots_general(gridsize::NTuple{D,Int}, npivot::Int, pivot_step::Int; verbose=false) where {D}
+    # grid centre
+    centre_ids = ntuple(i -> ifelse(isodd(gridsize[i]), div(gridsize[i],2)+1, div(gridsize[i],2)), D)
+    pivot_block = [[centre_ids[i] + pivot_step * (s - div(npivot,2)-1) for s in 1:npivot] for i in 1:D]
+    initpivots = []
+    for p in Iterators.product(pivot_block...)
+        pv = collect(Tuple(p))
+        push!(initpivots, [clamp(pv[i], 1, gridsize[i]) for i in 1:D])
+    end
+    if verbose
+        printstyled("==== Using $(length(initpivots)) initial pivots:\n"; color=:blue)
+        display(initpivots)
+        printstyled("====\n"; color=:blue)
+    end
+    return initpivots
+end
+
 function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullCorrelator_KF{D}}}) where {D}
 
     pivots = Vector{Int}[]
@@ -927,6 +947,8 @@ Compute Keldysh core vertex for single Keldysh component
 * do_check_interpolation: Check interpolation on small grid at the end, report error
 * dump_path: set to save intermediate results every couple of sweeps
 * resume_path: set to resume calculation based on intermediate results
+* npivot: We have npivot^3 initial pivots
+* pivot_step: Pivots are on a npivot^3 equidistant grid with this step size, centered around the frequency grid centre
 """
 function Γ_core_TCI_KF(
     PSFpath::String,
@@ -946,6 +968,8 @@ function Γ_core_TCI_KF(
     resume_path=nothing,
     batched=true,
     do_check_interpolation=true,
+    npivot::Int=5,
+    pivot_step::Int=div(2^R, npivot-1),
     unfoldingscheme=:interleaved,
     tcikwargs...
     )
@@ -1003,7 +1027,9 @@ function Γ_core_TCI_KF(
     cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
     gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
 
-    initpivots_ω = initpivots_Γcore([gev.GFevs[i].KFC for i in eachindex(gev.GFevs)])
+    # determine initial pivots
+    tcigridsize = ntuple(i -> 2 ^ TCI4Keldysh.grid_R(length(ωs_ext[i])),D)
+    initpivots_ω = initpivots_general(tcigridsize, npivot, pivot_step; verbose=true)
     GC.gc(true)
 
     if batched
@@ -1036,7 +1062,7 @@ function Γ_core_TCI_KF(
             println("Loaded TCI with rank $(TCI.rank(tci))")
         end
 
-        # set tci kwargs related to global pivots
+        # set tci kwargs related to global pivots, if not already specified
         if !haskey(kwargs_dict, :maxnglobalpivot)
             kwargs_dict[:maxnglobalpivot]=10
         end
