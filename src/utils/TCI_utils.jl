@@ -395,21 +395,14 @@ function saturate_bits(
             res[bp+1] = reshape(right_mat, size(right_mat,1), d, div(size(right_mat,2),d))
         else
             # rightmost block
-            left = res[bp-1]
-            d = size(left,2)
-            left_mat = reshape(left, size(left,1)*d, size(left,3))
-            # this is a vector
-            left_mat = left_mat * res[bp][:,bit_val[ibp],1]
-            res[bp-1] = reshape(left_mat, size(left_mat,1), d, 1)
-            # take care if bp-1 is in bit_pos
             j = findlast(i -> !(i in bit_pos), 1:length(tt))
             if isnothing(j)
                 error("cannot contract all bits with this function")
             end
             resj = res[j]
             d = size(resj,2)
-            res[j] = reshape(resj, size(resj,1)*d, size(resj,3)) * res[bp-1][:,:,1]
-            res[j] = reshape(res[j], div(size(res[j],1),d), d, 1)
+            tmpj = reshape(resj, size(resj,1)*d, size(resj,3)) * res[bp][:,bit_val[ibp],1]
+            res[j] = reshape(tmpj, div(size(tmpj, 1), d), d, 1)
         end
     end
     not_bit_pos = filter(i -> !(i in bit_pos), 1:length(tt))

@@ -684,6 +684,13 @@ function precompute_all_values_KF(
     strides_internal = [stride(data_unrotated, i) for i in 1:D]'
     strides4rot = ((strides_internal * Gp.ωconvMat)...,)
     offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
+    # println("")
+    # @show length.(Gp.ωs_ext)
+    # @show strides_internal
+    # @show Gp.ωconvMat
+    # @show strides4rot
+    # @show strides(data_unrotated)[D+1]
+    # @show offset4rot
     sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)..., D+1), (strides4rot..., strides(data_unrotated)[D+1]), offset4rot)
     res = Array{ComplexF64,D+1}(sv[[Colon() for _ in 1:D+1]...])
 

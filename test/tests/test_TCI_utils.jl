@@ -125,7 +125,33 @@ using ITensors
         @test isapprox(scalar(tr*t2), 3.0; atol=1.e-10) 
     end
 
+    function test_saturate_bits()
+        localdims = [2,3,2,2,3]
+        fat = zeros(Float64, Tuple(localdims))
+        for id in Iterators.product(Base.OneTo.(localdims)...)
+            fat[id...] = sum(Tuple(id))
+        end
+        maxfat = maximum(abs.(fat))
+        fat_sat12 = fat[2,1,:,:,:]
+        fat_sat25 = fat[:,1,2,:,2]
+        fat_sat245 = fat[:,1,:,2,1]
+
+        tci, _, _ = TCI.crossinterpolate2(eltype(fat), i -> fat[i...], localdims; tolerance=1.e-8)
+
+        tt12 = TCI4Keldysh.saturate_bits(tci.sitetensors, [1,2], [2,1])
+        tt12fat = TCI4Keldysh.qtt_to_fattensor(tt12)
+        tt25 = TCI4Keldysh.saturate_bits(tci.sitetensors, [2,3,5], [1,2,2])
+        tt25fat = TCI4Keldysh.qtt_to_fattensor(tt25)
+        tt245 = TCI4Keldysh.saturate_bits(tci.sitetensors, [2,4,5], [1,2,1])
+        tt245fat = TCI4Keldysh.qtt_to_fattensor(tt245)
+
+        @test maximum(abs.(fat_sat12 .- tt12fat))/maxfat < 2 * 1.e-8
+        @test maximum(abs.(fat_sat25 .- tt25fat))/maxfat < 2 * 1.e-8
+        @test maximum(abs.(fat_sat245 .- tt245fat))/maxfat < 2 * 1.e-8
+    end
+
     test_eval_mps()
     test_delta_tensor()
     test_delta_tensor_end()
+    test_saturate_bits()
 end

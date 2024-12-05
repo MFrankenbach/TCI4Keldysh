@@ -98,6 +98,7 @@ points to a given accuracy
 """
 function lin_interp_array(f, idomain::Vector{Int}, ipos=1:length(idomain); p::Float64=Inf, abstol::Float64=1.e-8)
     (interp_ids, interp_val) = lin_interp_array_init(f, idomain, ipos; p=p, abstol=abstol)
+    println("No. of points in initial guess: $(length(interp_ids))")
     return lin_interp_array!(interp_ids, interp_val, f, idomain, ipos; p=p, abstol=abstol)
 end
 
@@ -1289,8 +1290,8 @@ end
 Where to find PSF data
 """
 function datadir()
-    #return joinpath(dirname(Base.current_project()), "data")
-    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
+    return joinpath(dirname(Base.current_project()), "data")
+    # return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
 end
 
 """
@@ -1302,6 +1303,14 @@ end
 
 function jld2_to_dictkey(jldfile::AbstractString)
     return reduce(*, split(jldfile, '.')[1:end-1])
+end
+
+function to_kwarg_dict(d::Dict{String,Any})::Dict{Symbol,Any}
+    dret = Dict{Symbol,Any}()
+    for (k,v) in pairs(d)
+        dret[Symbol(k)] = v
+    end
+    return dret
 end
 
 """

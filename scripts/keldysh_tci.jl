@@ -453,36 +453,50 @@ function KFC_Evaluator_memory()
     end
 end
 
-using Interpolations
-function test_lin_interp_array()
+"""
+How much can we linearly interpolate in omPSFs: ∑_ϵ1 k^R(ω,ϵ1)*Acont(ϵ1,ϵ2,ϵ3)?
+"""
+function check_omPSF_sparsity(R::Int=4, tolerance=1.e-4)
+    # create correlator
+    npt = 4
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(basepath, "PSF_nz=2_conn_zavg/4pt")
+    D = npt-1
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
 
-    # scalar function
-    f(i::Int) = [0.01/(1 + i^2/1000) 0.02; 0.01/(1 + abs(i)/1000) 0.02*i/(3.0 + i^2)]
+    ωmax = 0.318
+    ωmin = -ωmax
+    ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+    ωconvMat = if npt==4
+            TCI4Keldysh.channel_trafo("t")
+        elseif npt==3
+            TCI4Keldysh.channel_trafo_K2("t", false)
+        else
+            TCI4Keldysh.ωconvMat_K1()
+        end
+    γ, sigmak = TCI4Keldysh.read_broadening_params(basepath)
+    KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
 
-    idomain =  collect(-100:100)
-    abstol = 1.e-4
-    p = Inf
-    (interp_ids, interp_val) = TCI4Keldysh.lin_interp_array(f, idomain; p=p, abstol=abstol)
-
-    @show interp_ids
-
-    do_plot = true
-    if do_plot
-        plot(idomain, norm.(f.(idomain)))
-        plot!(idomain[interp_ids], norm.(f.(idomain[interp_ids])); linestyle=:dot)
-        savefig("foo.pdf")
+    perm_idx = 1
+    Gp = KFC.Gps[perm_idx]
+    censz = size(Gp.tucker.center)
+    cenmat = reshape(Gp.tucker.center, censz[1], censz[2]*censz[3])
+    k = Gp.tucker.legs[1]
+    idomain = collect(axes(k,1))
+    function f(i::Int)
+        return transpose(k[i,:]) * cenmat 
     end
 
-    # test
-    nf = length(f(idomain[1]))
-    for id in 1:nf
-        flin = linear_interpolation(idomain[interp_ids], [iv[id] for iv in interp_val])
-        flinval = flin.(idomain)
-        fval = [f(ii)[id] for ii in idomain]
-        @assert norm(fval .- flinval, p) <= abstol
-    end
+    # estimate order of magnitude
+    fmax = maximum(abs.(f(2^R-1)))
+    abstol = tolerance*fmax
+    @time (pts, _) = TCI4Keldysh.lin_interp_array(f, idomain; abstol=abstol)
+    @show (2^R, length(pts))
+
+    # scatter(idomain[pts], ones(length(pts)))
+    # savefig("foo.pdf")
 end
-
 
 function test_KFCEvaluator()
     # create correlator
@@ -547,28 +561,36 @@ function time_pointwise_eval()
         return TCI4Keldysh.evaluate(KFC, idx...; iK=iK)        
     end
 
-    tolerance = 1.e-4
-    KFev = TCI4Keldysh.FullCorrEvaluator_KF(KFC; cutoff=tolerance*1.e-2, tucker_cutoff=tolerance*0.1)
+    # tolerance = 1.e-4
+    # KFev = TCI4Keldysh.FullCorrEvaluator_KF(KFC; cutoff=tolerance*1.e-2, tucker_cutoff=tolerance*0.1)
 
     KFev_new = TCI4Keldysh.KFCEvaluator(KFC)
 
     println("KFCEvaluator:")
     @btime $KFev_new(rand(1:2^$R, 3)...)
-    println("FullCorrEvaluator_KF:")
-    @btime $KFev(rand(1:2^$R, 3)...)
+    println("KFCEvaluator@BLAS:")
+    @btime $TCI4Keldysh.evalKFC_BLAS($KFev_new, rand(1:2^$R, 3)...)
+    # println("FullCorrEvaluator_KF:")
+    # @btime $KFev(rand(1:2^$R, 3)...)
     println("Naive contraction:")
     @btime $KFC_(rand(1:2^$R, 3)...)
 
     # profile
-    Profile.clear()
-    Profile.@profile begin
-        dummy = zero(ComplexF64)
-        for _ in 1:10^4
-            dummy += KFev_new(rand(1:2^R, 3)...)[iK]
+    do_profile = true
+    if do_profile
+        Profile.clear()
+        Profile.@profile begin
+            dummy = zero(ComplexF64)
+            for _ in 1:10^4
+                # dummy += KFev_new(rand(1:2^R, 3)...)[iK]
+                dummy += KFev_new(rand(1:2^R, 3)...)[iK]
+            end
+            println(dummy)
         end
-        println(dummy)
+        statprofilehtml()
     end
-    statprofilehtml()
+
+    return KFev_new
 end
 
 function time_compress_FullCorrelator_KF(iK::Int; R=4, tolerance=1.e-3)

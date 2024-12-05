@@ -669,6 +669,9 @@ struct FullCorrelator_KF{D}
                 end
                 # write new one
                 h5write(fname, "Acont$i", Adata)
+                for d in 1:D
+                    h5write(fname, "omcont$i$d", A.ωs_legs[d])
+                end
             end
 
             # plot single peak
@@ -895,6 +898,33 @@ struct KFCEvaluator
         end
         return new(KFC, omPSFs, remLegs)
     end
+end
+
+"""
+NOT faster standard call...
+"""
+function evalKFC_BLAS(fev::KFCEvaluator, idx::Vararg{Int,3})
+    res = zeros(ComplexF64, 1, 2^4)
+    for (p,Gp) in enumerate(fev.KFC.Gps)
+        # rotate frequency
+        retarded = zeros(ComplexF64,4)
+        idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
+
+        # compute retarded
+        # @views tmp13 = transpose(fev.remLegs[p,1][:,idx_int[2]]) * fev.omPSFs[2*p-1][:,:,idx_int[1]]
+        tmp13 = BLAS.gemv('T', one(ComplexF64), view(fev.omPSFs[2*p-1], :,:,idx_int[1]), view(fev.remLegs[p,1], :,idx_int[2]))
+        retarded[1] = BLAS.dotu(tmp13, view(fev.remLegs[p,2], :,idx_int[3]))
+        retarded[2] = BLAS.dotu(
+                        view(fev.remLegs[p,1], :,idx_int[2]),
+                        gemv('N', one(ComplexF64), view(fev.omPSFs[2*p], :,:,idx_int[1]), view(fev.remLegs[p,2], :,idx_int[3]))
+                        )
+        retarded[3] = BLAS.dotc(tmp13, view(fev.remLegs[p,2], :,idx_int[3]))
+        retarded[end] = conj(retarded[1])
+
+        # transform to Keldysh
+        res += transpose(retarded) * fev.KFC.GR_to_GK[:,:,p]
+    end
+    return vec(res)
 end
 
 function (fev::KFCEvaluator)(idx::Vararg{Int,3})
