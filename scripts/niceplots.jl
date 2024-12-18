@@ -28,11 +28,12 @@ function find_Γcore_file(tolerance::Float64, beta::Float64; folder="pwtcidata",
         folder_content = readdir(folder)
         subdirs = [f for f in folder_content if isdir(joinpath(folder, f))]
         function _folder_relevant(f)
-            return occursin(subdir_str,f) && occursin("beta$(round(Int,beta))_",f) && occursin("gamcore",f) && occursin("tol$(-round(Int,log10(tolerance)))",f)
+            return occursin(subdir_str,f) && occursin("beta$(round(Int,beta))",f) && occursin("gamcore",f) && occursin("tol$(-round(Int,log10(tolerance)))",f)
         end
+        @show subdirs
         subdirs = filter(_folder_relevant, subdirs)
+        @show subdirs
         files = [only(filter(f -> endswith(f,".json") && !occursin("original", f), readdir(joinpath(folder,sd)))) for sd in subdirs]
-        # @show files
         files = [joinpath(subdirs[i], files[i]) for i in eachindex(subdirs)]
     else
         function _file_relevant(f)
@@ -340,6 +341,15 @@ function plot_vertex_ranks_both(tol_range; folder="pwtcidata", subdir_str=nothin
         fig,
         lgd
     )
+end
+
+function plot_beta_vs_rank(betas_V_MF, ranks_V_MF)
+    set_rcParams()
+    fig, axs = subplots(figsize=(PLOT_COLUMN_INCH, PLOT_PAGE_INCH*9/16))
+    # matsubara vertex
+    axs.plot(betas_V_MF, ranks_V_MF)
+    axs.set_xlabel(L"\beta")
+    axs.set_ylabel(L"rank")
 end
 
 
@@ -922,7 +932,7 @@ end
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
-folder="MF_KCS_rankdata"
+folder="MF_pch_rankdata"
 
 h5file1 = "vertex_MF_slice_beta=2000.0_slices=(0,256,256,)_tol=-2_upup.h5"
 h5file2 = "vertex_MF_slice_beta=2000.0_slices=(5,256,256,)_tol=-3_upup.h5"
@@ -931,11 +941,11 @@ h5filecorr = "corrMF_slice_beta=2000.0_slices=(1, 256, 256)_tol=-4.h5"
 # triptych_vertex_plot([h5file1, h5file2, h5file3]; folder=folder)
 # triptych_corr_plot([h5filecorr]; folder=folder)
 
-# plot_vertex_ranks_both(10.0 .^ collect(-5:-2); folder=folder, subdir_str="shellpivot")
+# plot_vertex_ranks_both(10.0 .^ collect(-5:-2); folder=folder, subdir_str="pch")
 # plot_FullCorrelator_ranks_both(10.0 .^ collect(-5:-2); folder=folder, subdir_str="shellpivot")
 
 # tol_vs_rank(10, 10.0 .^ collect(-6:-2); folder=folder, subdir_str="shellpivot")
 
 # plot_K12_ranks_MF(PSFpath)
 
-plot_kernel_singvals_KF(10; ωmax=0.3183098861837907)
+# plot_kernel_singvals_KF(10; ωmax=0.3183098861837907)

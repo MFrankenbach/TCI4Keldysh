@@ -3,6 +3,7 @@ using Test
 using TCI4Keldysh
 using HDF5
 using QuanticsTCI
+import TensorCrossInterpolation as TCI
 
 # define some utility fcs for testing:
 include("utils4tests.jl")

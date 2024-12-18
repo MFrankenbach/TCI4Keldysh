@@ -1111,7 +1111,7 @@ function check_serialized_files()
     @show successcount
 end
 
-folder = "pwtcidata_KCS"
+folder = "MF_pch_rankdata"
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 # plot_K12_ranks_MF(PSFpath)
@@ -1139,10 +1139,16 @@ qttfile = "gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0_R=$(R)_qtt
 # h5file = "vertex_MF_slice_beta=$(beta).0_slices=(1, 128, 128)_tol=-$tol.h5"
 # triptych_vertex_plot(h5file, qttfile; folder=joinpath(folder,thedirname))
 
-# MERGE JSON FILES
-# file1 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_tol5_beta200_nz4_aIE_shellpivot/gammacore_timing_R_min=5_max=12_tol=-5_beta=200.0.json")
-# file2 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_tol5_beta200_nz4_aIE_shellpivot_1012/gammacore_timing_R_min=10_max=12_tol=-5_beta=200.0.json")
-# merge_jsondata(file1, file2)
+# # MERGE JSON FILES
+# for tol in [2,3,4,5]
+#     for beta in [200,2000]
+#         file1 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_pch_tol$(tol)_beta$(beta)/gammacore_timing_R_min=5_max=12_tol=-$(tol)_beta=$(beta).0.json")
+#         file2 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_pch_tol$(tol)_beta$(beta)_R11/gammacore_timing_R_min=11_max=12_tol=-$(tol)_beta=$(beta).0.json")
+#         file3 = joinpath(TCI4Keldysh.pdatadir(), folder, "gamcoreMF_pch_tol$(tol)_beta$(beta)_R12/gammacore_timing_R_min=12_max=12_tol=-$(tol)_beta=$(beta).0.json")
+#         merge_jsondata(file1, file2)
+#         merge_jsondata(file1, file3)
+#     end
+# end
 
 # plot_K1_zoomed()
 # plot_K1_ranks_KF(PSFpath)

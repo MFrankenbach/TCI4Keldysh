@@ -785,7 +785,12 @@ function lowerbound(G::FullCorrelator_KF{D}) where {D}
     return maximum(absmax.(vals))
 end
 
-
+"""
+Represents an object that can evaluate a full Keldysh correlator.
+It is constructed as with signature (G::FullCorrelator_KF{D}; kwargs...)
+and should implement a call method on a frequency index idx::Vararg{Int,D}.
+"""
+abstract type AbstractCorrEvaluator_KF{D,T} end
 
 """
 To evaluate FullCorrelator_KF on all Keldysh components and a given frequency point.
@@ -809,7 +814,7 @@ SV^A -- CEN -- SV^R
          SV^A
 which are then written to tucker_centers
 """
-struct FullCorrEvaluator_KF{D,T}
+struct FullCorrEvaluator_KF{D,T} <: AbstractCorrEvaluator_KF{D,T}
     KFC::FullCorrelator_KF{D}
     iso_kernels::Matrix{Matrix{T}}
     tucker_centers::Vector{Vector{Array{T,D}}}
@@ -875,12 +880,13 @@ Contract one frequency into PSF.
 * remLegs: p×2 matrix of remaining tucker legs (kernels) to be contracted into omPSFs
 copied here to improve memory layout
 """
-struct KFCEvaluator 
+struct KFCEvaluator <: AbstractCorrEvaluator_KF{3,ComplexF64}
     KFC::FullCorrelator_KF{3}
     omPSFs::Vector{Array{ComplexF64,3}}
     remLegs::Matrix{Matrix{ComplexF64}}
 
-    function KFCEvaluator(KFC::FullCorrelator_KF{3})
+    # kwargs for compatibility with AbstractCorrEvaluator_KF
+    function KFCEvaluator(KFC::FullCorrelator_KF{3}; kwargs...)
         np = length(KFC.Gps)
         omPSFs = Vector{Array{ComplexF64,3}}(undef, 2*np)
         remLegs = Matrix{Matrix{ComplexF64}}(undef, np,2)

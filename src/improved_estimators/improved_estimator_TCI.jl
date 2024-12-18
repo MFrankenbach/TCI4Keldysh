@@ -309,7 +309,7 @@ function initpivots_general(gridsize::NTuple{D,Int}, npivot::Int, pivot_step::In
     # grid centre
     centre_ids = ntuple(i -> ifelse(isodd(gridsize[i]), div(gridsize[i],2)+1, div(gridsize[i],2)), D)
     pivot_block = [[centre_ids[i] + pivot_step * (s - div(npivot,2)-1) for s in 1:npivot] for i in 1:D]
-    initpivots = []
+    initpivots = Vector{Vector{Int}}()
     for p in Iterators.product(pivot_block...)
         pv = collect(Tuple(p))
         push!(initpivots, [clamp(pv[i], 1, gridsize[i]) for i in 1:D])
@@ -1420,9 +1420,9 @@ struct ΓcoreEvaluator_KF{T}
         sev,
         is_incoming::NTuple{4,Bool},
         letter_combinations::Vector{String}
-        ;
-        cutoff::Float64=1.e-20)
-        
+        # KEV_=MultipoleKFCEvaluator{3}
+        ; kwargs...)
+
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
         # GFevs = [FullCorrEvaluator_KF(GFs[i]; cutoff=cutoff) for i in eachindex(GFs)]

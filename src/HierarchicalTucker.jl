@@ -1,0 +1,318 @@
+#=
+Implement a tucker decomposition
+G(ω,ν,ν')=∑_ϵ k(ω,ϵ1)k(ν,ϵ2)k(ν',ϵ3) center(ϵ)
+that performs blockwise SVD compression of kernel slices
+k[slice,:] and contracts SV into the corresponding part of the
+center. This can be used to achieve a balance between memory and
+single point evaluation cost.
+It can be viewed (kind of) as a multipole expansion of the kernels.
+
+In principle, one could also partition the range of ϵ's, but this
+did not look promising.
+=#
+
+function nested_intervals(min::Int, max::Int, nlevel::Int)
+    levels = [[min:max]]
+    if max<=min error("Invalid boundaries") end
+    if nlevel > log2(max-min) error("Too many levels requested") end
+    for _ in 1:nlevel-1
+        level_act = UnitRange{Int}[]
+        level_last = levels[end]
+        for l in level_last
+            left = first(l)
+            right = last(l)
+            mid = div(right+left, 2)
+            push!(level_act, left:mid)
+            push!(level_act, mid+1:right)
+        end
+        push!(levels, level_act)
+    end
+    return levels
+end
+
+"""
+Divide rows in groups and SVD corresponding horizontal slices
+of matrix individually
+"""
+function multipole_matrix(mat::Matrix{T}, intervals::Vector{UnitRange{Int}}; cutoff::Float64=1.e-8) where {T<:Number}
+    @assert sum(length.(intervals))==size(mat,1) "intervals do not partition the matrix"
+    n_interval = length(intervals)
+    Us = Vector{Matrix{T}}(undef, n_interval)
+    SVs = Vector{Matrix{T}}(undef, n_interval)
+    for (ii,int) in enumerate(intervals)
+        U,S,V = svd(mat[int,:])
+        Scut = findfirst(s -> s/S[1]<=cutoff, S)
+        if isnothing(Scut)
+            Us[ii] = U
+            SVs[ii] = diagm(S)*V'
+        else
+            Us[ii] = U[:,1:Scut]
+            SVs[ii] = diagm(S[1:Scut])*adjoint(V[:,1:Scut])
+        end
+    end
+    return (Us, SVs)
+end
+
+"""
+Divide rows in 2^nlevel groups and SVD corresponding horizontal slices
+of matrix individually
+"""
+function multipole_matrix(mat::Matrix{T}, nlevel::Int; cutoff::Float64=1.e-8) where {T<:Number}
+    intervals = nested_intervals(1, size(mat,1), nlevel)[end]
+    return multipole_matrix(mat, intervals; cutoff=cutoff)
+end
+
+function contract_blocks(mats::NTuple{D,Vector{Matrix{T}}}, center::Array{S,D}) where {D,T<:Number,S<:Number}
+    # array of blocks
+    nmats = length.(mats)
+    ret = Array{Array{promote_type(S,T), D}, D}(undef, Tuple(nmats))
+    blockranges = Base.OneTo.(nmats)
+    for d in 1:D
+        @assert all([size(m,2)==size(center,d) for m in mats[d]])
+    end
+    for ic in Iterators.product(blockranges...)
+        # relevant matrices
+        ms = [mats[d][ic[d]] for d in 1:D]
+        # contract with center
+        ret[Tuple(ic)...] = contract_1D_Kernels_w_Adisc_mp(ms, center)
+    end
+    return ret
+end
+
+function prepare_hierarchical_tucker(
+    kernels::NTuple{D,Matrix{T}},
+    center::Array{S,D},
+    nlevel::Int;
+    cutoff=1.e-8
+    ) where {D,T<:Number,S<:Number}
+    
+    USVs = [multipole_matrix(kernels[d], nlevel; cutoff=cutoff) for d in 1:D]
+    center_new = contract_blocks(ntuple(i -> USVs[i][2],D), center)
+    return (ntuple(i->USVs[i][1],D), center_new)
+end
+
+const Legs{D,T}=NTuple{D,Vector{Matrix{T}}} where {D,T}
+
+"""
+* ids_cumulated: at which indices the different kernel matrices
+start in each direction (minus 1)
+"""
+struct HierarchicalTucker{D,T}
+    center::Array{Array{T,D}}
+    kernels::Legs{D,T}
+    ids_cumulated::NTuple{D,Vector{Int}}
+
+    function HierarchicalTucker(center::Array{Array{T,D}}, kernels::Legs{D,T}) where {D,T}
+        ids_cumulated = ntuple(
+            i -> pushfirst!(cumsum(size.(kernels[i], 1)), 0),
+            D
+        )        
+
+        return new{D,T}(center, kernels, ids_cumulated)
+    end
+end
+
+function HierarchicalTucker(
+    center::Array{T,D},
+    kernels::NTuple{D,Matrix{S}},
+    nlevel::Int
+    ;
+    cutoff::Float64=1.e-8
+    ) where {D,T,S}
+    
+    Us, center_new = prepare_hierarchical_tucker(
+                        kernels, center, nlevel; cutoff=cutoff
+                        )
+    return HierarchicalTucker(center_new, Us)
+end
+
+function (ht::HierarchicalTucker{D,T})(idx::Vararg{Int,D}) where {D,T}
+    matrix_ids = [findlast(id -> id<idx[d], ht.ids_cumulated[d]) for d in 1:D]    
+    idx_new = [idx[d] - ht.ids_cumulated[d][matrix_ids[d]] for d in 1:D]
+    # @show ht.ids_cumulated
+    # @show idx
+    # @show matrix_ids
+    # @show idx_new
+    legs_idx = [ht.kernels[d][matrix_ids[d]][idx_new[d],:] for d in 1:D]
+    return eval_tucker(ht.center[matrix_ids...], legs_idx) 
+end
+
+function precompute_all_values(ht::HierarchicalTucker{D,T}) where {D,T}
+    ret = zeros(T, ntuple(d -> sum(size.(ht.kernels[d], 1)),D))
+    for ic in CartesianIndices(ht.center)
+        k_act = [ht.kernels[d][ic[d]] for d in 1:D]
+        window = [ht.ids_cumulated[d][ic[d]]+1:ht.ids_cumulated[d][ic[d]+1] for d in 1:D]
+        ret[window...] .= contract_1D_Kernels_w_Adisc_mp(k_act, ht.center[ic])
+    end
+    return ret
+end
+
+"""
+Evaluate full Keldysh correlator with partial correlators represented as HierarchicalTucker
+decompositions
+* Gps: Dx(D+1)! matrix for three hierarchical tucker decompositions for each partial correlator
+"""
+struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
+    Gps::Matrix{HierarchicalTucker{D,ComplexF64}}
+    ωconvOffs::Vector{SVector{D,Int}}
+    ωconvMats::Vector{SMatrix{D,D,Int}}
+    GR_to_GK::Array{Float64,3}
+
+    function MultipoleKFCEvaluator(GF::FullCorrelator_KF{D}; nlevel::Int=4, cutoff::Float64=1.e-8) where {D}
+        nGps = length(GF.Gps)
+        Gps_ = Matrix{HierarchicalTucker{D,ComplexF64}}(undef, D, nGps)
+        ωconvOffs = Vector{SVector{D,Int}}(undef, nGps)
+        ωconvMats = Vector{SMatrix{D,D,Int}}(undef, nGps)
+        for (ip,Gp) in enumerate(GF.Gps)
+            println(" Processing partial correlator no. $ip/$nGps")
+            for id in 1:D
+                kernels_act = ntuple(
+                    i -> ifelse(i>=id, Gp.tucker.legs[i], conj.(Gp.tucker.legs[i])),
+                    D
+                    )
+                Gps_[id, ip] = HierarchicalTucker(
+                    Gp.tucker.center, kernels_act, nlevel; cutoff=cutoff
+                    )
+            end
+            ωconvOffs[ip] = Gp.ωconvOff
+            ωconvMats[ip] = Gp.ωconvMat
+        end
+        return new{D}(Gps_, ωconvOffs, ωconvMats, GF.GR_to_GK)
+    end
+end
+
+function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) where {D}
+    ret = zeros(ComplexF64, 1, 2^(D+1))
+    for ip in axes(ev.Gps,2)    
+        retarded = zeros(ComplexF64, D+1)
+        idx_int = ev.ωconvMats[ip] * SA[idx...] + ev.ωconvOffs[ip]
+        for id in 1:D
+            retarded[id] = ev.Gps[id,ip](idx_int...)
+        end
+        retarded[end] = conj(retarded[1])
+        # transform to Keldysh
+        ret += transpose(retarded) * ev.GR_to_GK[:,:,ip]
+    end
+    return vec(ret)
+end
+
+function truncatable_matrix(sz::Tuple{Int,Int})
+    URV = randn(Float64,sz)
+    U,_,V = svd(URV)
+    S = 2.0 .^ (0:-1:-minimum(sz)+1)
+    return U*diagm(S)*V'
+end
+
+using BenchmarkTools
+"""
+Test against KFCEvaluator for R=10.
+"""
+function test_MultipoleKFCEvaluator_largeR()
+
+    npt = 4
+    D = npt-1
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt")
+    channel = "p"
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    ommax = 0.5
+    R = 8
+    G = TCI4Keldysh.FullCorrelator_KF(
+        PSFpath,
+        Ops;
+        T=TCI4Keldysh.dir_to_T(PSFpath),
+        ωconvMat=ωconvMat,
+        ωs_ext=TCI4Keldysh.KF_grid(ommax, R, D),
+        flavor_idx=1,
+        γ=γ,
+        sigmak=sigmak,
+        emax=max(20.0, 3*ommax),
+        emin=2.5*1.e-5,
+        estep=50
+    )
+
+    Gev = MultipoleKFCEvaluator(G; nlevel=3, cutoff=1.e-6)
+    Gref = KFCEvaluator(G)
+    printstyled("== Test\n"; color=:blue)
+    for _ in 1:1000
+        idx = rand(1:2^R, 3)
+        gval = Gev(idx...)
+        refval = Gref(idx...)
+        if maximum(abs.(gval .- refval)) / norm(gval) > 1.e-4
+            @show norm(gval .- refval) / norm(gval)
+            @warn "Large error from SVD truncations"
+        end
+    end
+    printstyled("== Memory\n"; color=:blue)
+    @show Base.summarysize(Gref)/1.e9
+    @show Base.summarysize(Gev)/1.e9
+    printstyled("== Benchmark\n"; color=:blue)
+    @btime $Gev(rand(1:2^$R,3)...)
+    @btime $Gref(rand(1:2^$R,3)...)
+end
+
+function test_MultipoleKFCEvaluator()
+
+    npt = 4
+    D = npt-1
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt")
+    channel = "p"
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    ommax = 0.5
+    R = 4
+    G = TCI4Keldysh.FullCorrelator_KF(
+        PSFpath,
+        Ops;
+        T=TCI4Keldysh.dir_to_T(PSFpath),
+        ωconvMat=ωconvMat,
+        ωs_ext=TCI4Keldysh.KF_grid(ommax, R, D),
+        flavor_idx=1,
+        γ=γ,
+        sigmak=sigmak,
+        emax=max(20.0, 3*ommax),
+        emin=2.5*1.e-5,
+        estep=50
+    )
+
+    Gref = TCI4Keldysh.precompute_all_values(G)
+    Gev = MultipoleKFCEvaluator(G; nlevel=2, cutoff=1.e-8)
+    maxref = maximum(abs.(Gref))
+    for idx in Iterators.product(fill(1:2^R,D)...)
+        gval = reshape(Gev(idx...), ntuple(_->2,D+1))
+        refval = Gref[idx...,:,:,:,:]
+        @assert maximum(abs.(gval .- refval)) / maxref < 1.e-8
+    end
+end
+
+function test_hierarchical_tucker()
+    center = randn(20,25,21)
+    N_oms = (50,30,40)
+    kernels = ntuple(i -> truncatable_matrix((N_oms[i],size(center,i))), ndims(center))
+
+    cutoff = 1.e-5
+    ht = TCI4Keldysh.HierarchicalTucker(center, kernels, 4; cutoff=cutoff)
+
+    ref = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(kernels, center)
+
+    for _ in 1:100
+        test_id = ntuple(i -> rand(1:N_oms[i]), 3)
+        @assert abs(ht(test_id...) - ref[test_id...]) / ref[test_id...] <= cutoff * 1.e3
+    end
+
+    # test precompute_all_values
+    ht_dense = TCI4Keldysh.precompute_all_values(ht)
+    @assert maximum(abs.(ht_dense .- ref)) / maximum(abs.(ref)) < cutoff * 1.e3
+end
+
+function test_multipole_matrix()
+    A = truncatable_matrix((50,30))
+    A *= 1.e5
+    Us, SVs = TCI4Keldysh.multipole_matrix(A, 1; cutoff=1.e-8)
+    Anew = vcat([Us[i] * SVs[i] for i in eachindex(Us)]...) 
+    @assert norm(A - Anew)/norm(A) < 1.e-8
+end

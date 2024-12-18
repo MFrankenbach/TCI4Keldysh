@@ -143,6 +143,78 @@ end
     test_tucker_eval(4)
 end
 
+@testset "Hierarchical Tucker decomposition" begin
+
+    function test_multipole_matrix()
+        A = TCI4Keldysh.truncatable_matrix((50,30))
+        A *= 1.e5
+        Us, SVs = TCI4Keldysh.multipole_matrix(A, 1; cutoff=1.e-8)
+        Anew = vcat([Us[i] * SVs[i] for i in eachindex(Us)]...) 
+        @test norm(A - Anew)/norm(A) < 1.e-8
+    end
+
+    function test_hierarchical_tucker()
+        center = randn(20,25,21)
+        N_oms = (50,30,40)
+        kernels = ntuple(i -> TCI4Keldysh.truncatable_matrix((N_oms[i],size(center,i))), ndims(center))
+
+        cutoff = 1.e-5
+        ht = TCI4Keldysh.HierarchicalTucker(center, kernels, 4; cutoff=cutoff)
+
+        ref = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(kernels, center)
+
+        for _ in 1:100
+            test_id = ntuple(i -> rand(1:N_oms[i]), 3)
+            @assert abs(ht(test_id...) - ref[test_id...]) / ref[test_id...] <= cutoff * 1.e3
+        end
+
+        # test precompute_all_values
+        ht_dense = TCI4Keldysh.precompute_all_values(ht)
+        @test maximum(abs.(ht_dense .- ref)) / maximum(abs.(ref)) < cutoff * 1.e3
+    end
+
+    function test_MultipoleKFCEvaluator()
+
+        npt = 4
+        D = npt-1
+        basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt")
+        channel = "p"
+        Ops = TCI4Keldysh.dummy_operators(npt)
+        (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+        ωconvMat = TCI4Keldysh.channel_trafo(channel)
+        ommax = 0.5
+        R = 4
+        G = TCI4Keldysh.FullCorrelator_KF(
+            PSFpath,
+            Ops;
+            T=TCI4Keldysh.dir_to_T(PSFpath),
+            ωconvMat=ωconvMat,
+            ωs_ext=TCI4Keldysh.KF_grid(ommax, R, D),
+            flavor_idx=1,
+            γ=γ,
+            sigmak=sigmak,
+            emax=max(20.0, 3*ommax),
+            emin=2.5*1.e-5,
+            estep=50
+        )
+
+        Gref = TCI4Keldysh.precompute_all_values(G)
+        Gev = TCI4Keldysh.MultipoleKFCEvaluator(G; nlevel=2, cutoff=1.e-8)
+        maxref = maximum(abs.(Gref))
+        for idx in Iterators.product(fill(1:2^R,D)...)
+            gval = reshape(Gev(idx...), ntuple(_->2,D+1))
+            refval = Gref[idx...,:,:,:,:]
+            @test maximum(abs.(gval .- refval)) / maxref < 1.e-8
+        end
+    end
+
+    test_multipole_matrix()
+    test_hierarchical_tucker()
+    test_MultipoleKFCEvaluator()
+
+end
+
 @testset "Convert Tucker decomposition to QTT" begin
 
  
