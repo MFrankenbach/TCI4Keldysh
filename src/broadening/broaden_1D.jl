@@ -1,3 +1,6 @@
+# determines accuracy of broadening; can be lowered for unit tests
+_ESTEP_DEFAULT() = 200
+
 """
     getAcont(ωdisc::Vector{Float64}, Adisc::Matrix{Float64}, sigmak::Vector{Float64}, γ::Float64; kwargs...)
 
@@ -87,7 +90,7 @@ function getAcont(
     ; 
     emin    ::Float64   = 1e-12,
     emax    ::Float64   = 1e4,  
-    estep   ::Int       = 200,  
+    estep   ::Int       = _ESTEP_DEFAULT(),  
     isw0    ::Bool      = false,
     ωcont   ::Vector{Float64}   = zeros(0),   
     alphaz  ::Float64   = 1.,   

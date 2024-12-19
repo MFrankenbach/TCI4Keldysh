@@ -877,6 +877,10 @@ function grid_R(GF::FullCorrelator_MF{D}) :: Int where {D}
     return R
 end
 
+grid_R(Kev::KFCEvaluator) = grid_R(Kev.KFC)
+grid_R(Kev::FullCorrEvaluator_KF) = grid_R(Kev.KFC)
+grid_R(Kev::MultipoleKFCEvaluator) = grid_R(length(Kev.ωs_ext[1]))
+
 """
 Determine number of bits needed for quantics representation of GF.
 GF is required to have 2^R fermionic or 2^R+1 bosonic frequencies in each direction for each partial correlator.

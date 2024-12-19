@@ -937,7 +937,6 @@ function tcigammacore_filename()
     return "tcigammacoreKF.jld2"
 end
 
-
 """
 Compute Keldysh core vertex for single Keldysh component
 
@@ -959,7 +958,7 @@ function Γ_core_TCI_KF(
     γ::Float64,
     emin::Float64=1.e-12,
     emax::Float64=1.e4,
-    estep::Int=200,
+    estep::Int=_ESTEP_DEFAULT(),
     # cache_center::Int=0, # maybe later: cache central values
     ωconvMat::Matrix{Int},
     T::Float64,
@@ -971,6 +970,8 @@ function Γ_core_TCI_KF(
     npivot::Int=5,
     pivot_step::Int=div(2^R, npivot-1),
     unfoldingscheme=:interleaved,
+    KEV::Type=KFCEvaluator,
+    coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6),
     tcikwargs...
     )
 
@@ -1024,9 +1025,7 @@ function Γ_core_TCI_KF(
 
     kwargs_dict = Dict{Symbol,Any}(tcikwargs)
     tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
-    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
-    gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
-
+    gev = ΓcoreEvaluator_KF(GFs, iK, sev, KEV; coreEvaluator_kwargs...)
     # determine initial pivots
     tcigridsize = ntuple(i -> 2 ^ TCI4Keldysh.grid_R(length(ωs_ext[i])),D)
     initpivots_ω = initpivots_general(tcigridsize, npivot, pivot_step; verbose=true)
@@ -1404,9 +1403,9 @@ Structure to evaluate Keldysh core vertex, i.e., wrap the required setup and cap
 * sev: callable object with signature sev(i::Int, is_incoming::Bool, w::Vararg{Int,D}) to evaluate self-energy
 on i'th component of transformed frequency w
 """
-struct ΓcoreEvaluator_KF{T}
+struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
     # GFevs::Vector{FullCorrEvaluator_KF{3,T}}
-    GFevs::Vector{KFCEvaluator}
+    GFevs::Vector{KEV}
     Ncorrs::Int # number of full correlators
     iK_tuple::NTuple{4,Int} # requested Keldysh idx
     X::Matrix{ComplexF64}
@@ -1419,18 +1418,18 @@ struct ΓcoreEvaluator_KF{T}
         iK::Int,
         sev,
         is_incoming::NTuple{4,Bool},
-        letter_combinations::Vector{String}
-        # KEV_=MultipoleKFCEvaluator{3}
+        letter_combinations::Vector{String},
+        KEV_::Type=KFCEvaluator
         ; kwargs...)
 
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
         # GFevs = [FullCorrEvaluator_KF(GFs[i]; cutoff=cutoff) for i in eachindex(GFs)]
-        GFevs = [KFCEvaluator(GFs[i]) for i in eachindex(GFs)]
+        GFevs = [KEV_(GFs[i]; kwargs...) for i in eachindex(GFs)]
         X = get_PauliX()
         iK_tuple = KF_idx(iK,3)
 
-        return new{T}(GFevs,length(GFs), iK_tuple, X, is_incoming, letter_combinations, sev)
+        return new{T,KEV_}(GFevs,length(GFs), iK_tuple, X, is_incoming, letter_combinations, sev)
     end
 end
 
@@ -1438,14 +1437,14 @@ function ΓcoreEvaluator_KF(
     GFs::Vector{FullCorrelator_KF{3}},
     iK::Int,
     sev,
-    ;
-    cutoff::Float64=1.e-20)
+    KEV_::Type=KFCEvaluator;
+    kwargs...)
 
     is_incoming = (false, true, false, true)
     letters = ["F", "Q"]
     letter_combinations = kron(kron(letters, letters), kron(letters, letters))
 
-    return ΓcoreEvaluator_KF(GFs, iK, sev, is_incoming, letter_combinations; cutoff=cutoff)
+    return ΓcoreEvaluator_KF(GFs, iK, sev, is_incoming, letter_combinations, KEV_; kwargs...)
 end
 
 """
@@ -1606,9 +1605,9 @@ struct ΓcoreBatchEvaluator_KF{T} <: CachedBatchEvaluator{T}
     function ΓcoreBatchEvaluator_KF(gev::ΓcoreEvaluator_KF{T}; cache::Dict{K,T}=Dict{UInt128,T}()) where {T,K<:Union{UInt32,UInt64,UInt128,BigInt}}
         # set up grid
         D = 3
-        R = grid_R(gev.GFevs[1].KFC)
+        R = grid_R(gev.GFevs[1])
         for i in eachindex(gev.GFevs)
-            @assert R == grid_R(gev.GFevs[i].KFC) "Full correlator objects have different grid sizes"
+            @assert R == grid_R(gev.GFevs[i]) "Full correlator objects have different grid sizes"
         end
         grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
         localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)

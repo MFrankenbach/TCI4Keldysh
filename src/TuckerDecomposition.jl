@@ -257,6 +257,16 @@ function eval_tucker(center::Array{T,D}, legs_idx::Vector{Vector{T}})  ::T where
     return res[1]
 end
 
+function eval_tucker(center::Array{T,D}, legs_idx::NTuple{D,AbstractVector{T}})  ::T where {T,D}
+    res = center
+    sz = size(res)
+    for i in 1:D
+        j = D - i + 1
+        res = reshape(res, (prod(sz[1:j-1]), sz[j])) * legs_idx[j]
+    end
+    return res[1]
+end
+
 """
 Pointwise eval. of a tucker decomposition by direct summation.
 Tried linear indexing for tucker center, yields no improvement.
@@ -302,6 +312,7 @@ function eval_tucker(tucker_cut::Int, center::Array{T,3}, legs::Vector{Matrix{T}
 end
 
 
+# TODO: Unnecessary because of generic method
 """
 * legs: corresponds to legs[i][idx[i],:] in other eval_tucker function
 """
@@ -324,6 +335,27 @@ function eval_tucker(center::Array{T,3}, legs::Vector{Vector{T}}) :: T where {T}
     return ret
 end
 
+"""
+* legs: corresponds to legs[i][idx[i],:] in other eval_tucker function
+"""
+function eval_tucker(center::Array{T,3}, legs::NTuple{3,AbstractVector{T}}) :: T where {T}
+    ret = zero(T)    
+
+    n1, n2, n3 = size(center)
+    @TUCKER_FASTMATH @inbounds for k in 1:n3
+        ret3 = zero(T)
+        for j in 1:n2
+            ret2 = zero(T)
+            for i in 1:n1
+                ret2 += legs[1][i] * center[i, j, k]
+            end
+            ret3 += ret2 * legs[2][j]
+        end
+        ret += ret3 * legs[3][k]
+    end
+
+    return ret
+end
 
 #= 
 const CPP_LIB ::String = "/Users/M.Frankenbach/tci4keldysh/build/tucker_eval.so"

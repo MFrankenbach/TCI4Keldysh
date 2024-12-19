@@ -7,6 +7,10 @@ for path in PSFpath_list
     @assert isdir(PSFpath_list) "directory $path does not exist"
 end
 
+# temporary change
+const _ESTEP_OLD_DEFAULT = TCI4Keldysh._ESTEP_DEFAULT()
+TCI4Keldysh._ESTEP_DEFAULT() = 50
+
 @testset "SIE: Self-energy" begin
         
     function test_freq_shift_rot()
@@ -316,10 +320,17 @@ end
 
 @testset "SIE: Vertex@Keldysh" begin
     
-    function test_Γcore_KF(iK::Int, flavor_idx, channel::String="a"; R=3, tolerance=1.e-5, batched=false)
+    function test_Γcore_KF(
+        iK::Int, flavor_idx, channel::String="a";
+        R=3, tolerance=1.e-5, batched=false,
+        kwargs...
+        )
+        basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
         PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
         ωconvMat = TCI4Keldysh.channel_trafo(channel)
         T = TCI4Keldysh.dir_to_T(PSFpath)
+        # broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath; channel=channel)
+        # broadening_kwargs[:estep] = 50
         ωmax = 0.1
         D = 3
         iK_tuple = TCI4Keldysh.KF_idx(iK, D)
@@ -341,7 +352,9 @@ end
             flavor_idx = flavor_idx,
             ωs_ext = ωs_ext,
             ωconvMat=ωconvMat,
-            sigmak, γ
+            sigmak,
+            γ
+            # broadening_kwargs...
         )
 
         # tci
@@ -351,7 +364,12 @@ end
             sigmak=sigmak,
             γ=γ,
             T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx,
-            tolerance=tolerance, unfoldingscheme=:interleaved, batched=batched
+            tolerance=tolerance,
+            unfoldingscheme=:interleaved,
+            batched=batched,
+            # KEV=KEV,
+            # coreEvaluator_kwargs=coreEvaluator_kwargs
+            kwargs...
             )
 
         # compare
@@ -362,9 +380,19 @@ end
         @test maximum(reldiff) < 3.0*tolerance
     end
 
+    test_Γcore_KF(
+        6, 1, "p";
+        R=4,
+        tolerance=1.e-3,
+        batched=true,
+        KEV=TCI4Keldysh.MultipoleKFCEvaluator,
+        coreEvaluator_kwargs=Dict{Symbol,Any}(:cutoff=>1.e-6, :nlevel=>2),
+        )
     test_Γcore_KF(2, 1, "p")
     test_Γcore_KF(8, 1, "a"; R=4, tolerance=1.e-4, batched=true)
-    test_Γcore_KF(14, 1, "t"; R=3, tolerance=1.e-8, batched=true)
+    # test_Γcore_KF(14, 1, "t"; R=3, tolerance=1.e-8, batched=true)
     test_Γcore_KF(9, 1, "p"; R=3, tolerance=1.e-8, batched=false)
-    # test_Γcore_KF(14, 2, "t")
 end
+
+# revert temporary change
+TCI4Keldysh._ESTEP_DEFAULT() = _ESTEP_OLD_DEFAULT

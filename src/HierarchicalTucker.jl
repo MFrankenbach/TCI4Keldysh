@@ -95,7 +95,10 @@ const Legs{D,T}=NTuple{D,Vector{Matrix{T}}} where {D,T}
 
 """
 * ids_cumulated: at which indices the different kernel matrices
-start in each direction (minus 1)
+start in each direction (minus 1), i.e., [0, length(FirstMatrix), ...]
+total length: number of kernels + 1
+* kernels: have external frequency index as column index
+because reading columns is faster
 """
 struct HierarchicalTucker{D,T}
     center::Array{Array{T,D}}
@@ -104,7 +107,7 @@ struct HierarchicalTucker{D,T}
 
     function HierarchicalTucker(center::Array{Array{T,D}}, kernels::Legs{D,T}) where {D,T}
         ids_cumulated = ntuple(
-            i -> pushfirst!(cumsum(size.(kernels[i], 1)), 0),
+            i -> pushfirst!(cumsum(size.(kernels[i], 2)), 0),
             D
         )        
 
@@ -123,24 +126,20 @@ function HierarchicalTucker(
     Us, center_new = prepare_hierarchical_tucker(
                         kernels, center, nlevel; cutoff=cutoff
                         )
-    return HierarchicalTucker(center_new, Us)
+    return HierarchicalTucker(center_new, ntuple(i -> Matrix.(transpose.(Us[i])), D))
 end
 
 function (ht::HierarchicalTucker{D,T})(idx::Vararg{Int,D}) where {D,T}
-    matrix_ids = [findlast(id -> id<idx[d], ht.ids_cumulated[d]) for d in 1:D]    
-    idx_new = [idx[d] - ht.ids_cumulated[d][matrix_ids[d]] for d in 1:D]
-    # @show ht.ids_cumulated
-    # @show idx
-    # @show matrix_ids
-    # @show idx_new
-    legs_idx = [ht.kernels[d][matrix_ids[d]][idx_new[d],:] for d in 1:D]
+    matrix_ids = ntuple(d -> findlast(id -> id<idx[d], ht.ids_cumulated[d]), D)
+    idx_new = ntuple(d -> idx[d] - ht.ids_cumulated[d][matrix_ids[d]], D)
+    legs_idx = ntuple(d -> view(ht.kernels[d][matrix_ids[d]], :, idx_new[d]), D)
     return eval_tucker(ht.center[matrix_ids...], legs_idx) 
 end
 
 function precompute_all_values(ht::HierarchicalTucker{D,T}) where {D,T}
-    ret = zeros(T, ntuple(d -> sum(size.(ht.kernels[d], 1)),D))
+    ret = zeros(T, ntuple(d -> sum(size.(ht.kernels[d], 2)),D))
     for ic in CartesianIndices(ht.center)
-        k_act = [ht.kernels[d][ic[d]] for d in 1:D]
+        k_act = [transpose(ht.kernels[d][ic[d]]) for d in 1:D]
         window = [ht.ids_cumulated[d][ic[d]]+1:ht.ids_cumulated[d][ic[d]+1] for d in 1:D]
         ret[window...] .= contract_1D_Kernels_w_Adisc_mp(k_act, ht.center[ic])
     end
@@ -156,6 +155,7 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
     Gps::Matrix{HierarchicalTucker{D,ComplexF64}}
     ωconvOffs::Vector{SVector{D,Int}}
     ωconvMats::Vector{SMatrix{D,D,Int}}
+    ωs_ext::NTuple{D,Vector{Float64}}
     GR_to_GK::Array{Float64,3}
 
     function MultipoleKFCEvaluator(GF::FullCorrelator_KF{D}; nlevel::Int=4, cutoff::Float64=1.e-8) where {D}
@@ -177,7 +177,7 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
             ωconvOffs[ip] = Gp.ωconvOff
             ωconvMats[ip] = Gp.ωconvMat
         end
-        return new{D}(Gps_, ωconvOffs, ωconvMats, GF.GR_to_GK)
+        return new{D}(Gps_, ωconvOffs, ωconvMats, GF.ωs_ext, GF.GR_to_GK)
     end
 end
 

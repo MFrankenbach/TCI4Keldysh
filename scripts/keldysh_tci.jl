@@ -699,6 +699,7 @@ function time_Γcore_KF(iK::Int, R=4, tolerance=1.e-3)
     D = 3
     γ, sigmak = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
     broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath; channel=channel)
+    broadening_kwargs[:estep]=50
     flavor_idx = 1
 
     @show broadening_kwargs
@@ -714,6 +715,8 @@ function time_Γcore_KF(iK::Int, R=4, tolerance=1.e-3)
         tolerance=tolerance,
         unfoldingscheme=:interleaved,
         verbosity=2,
+        KEV=TCI4Keldysh.MultipoleKFCEvaluator,
+        coreEvaluator_kwargs=Dict{Symbol,Any}(:cutoff=>1.e-6, :nlevel=>2),
         broadening_kwargs...
         )
 end

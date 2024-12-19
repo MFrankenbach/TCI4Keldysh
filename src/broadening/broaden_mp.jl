@@ -52,7 +52,7 @@ end
 Logarithmic grid with estep points
 """
 # function Acont_grid(ωdisc::VectorArray{Float64}, sigmak::Vector{Float64}, γ::Float64)
-function get_Acont_grid(;estep=200, emin=1.e-12, emax=1.e4)
+function get_Acont_grid(;estep=_ESTEP_DEFAULT(), emin=1.e-12, emax=1.e4)
     # lemin = floor(log10(emin))
     # lemax = ceil(log10(emax))
     # xs = LinRange(lemin, lemax, estep)

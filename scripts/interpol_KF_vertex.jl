@@ -184,18 +184,18 @@ function hierarchical_Gp(;R=5, ommax=0.5, do_profile=false)
     @show size(center)
     @show size.(kernels)
     # ht represents ONE partial correlator
-    @time ht = TCI4Keldysh.HierarchicalTucker(center, Tuple(kernels), 4; cutoff=1.e-8)
+    @time ht = TCI4Keldysh.HierarchicalTucker(center, Tuple(kernels), 4; cutoff=1.e-6)
     # Keldysh evaluator with one leg contracted
-    @time KFC = TCI4Keldysh.KFCEvaluator(G)
-    printstyled("\n==  Memory\n"; color=:blue)
-    @show Base.summarysize(ht) * 3*24 / 1.e9
-    @show Base.summarysize(KFC) / 1.e9
+    # @time KFC = TCI4Keldysh.KFCEvaluator(G)
+    # printstyled("\n==  Memory\n"; color=:blue)
+    # @show Base.summarysize(ht) * 3*24 / 1.e9
+    # @show Base.summarysize(KFC) / 1.e9
     printstyled("\n==  Benchmark\n"; color=:blue)
-    @btime $KFC(rand(1:2^$R,3)...)
+    # @btime $KFC(rand(1:2^$R,3)...)
     @btime $ht(rand(1:2^$R,3)...)
 
     # check accuracy
-    if R<=8
+    if R<=7
         printstyled("\n==  Accuracy\n"; color=:blue)
         ref = TCI4Keldysh.contract_1D_Kernels_w_Adisc_mp(kernels, center)
         ht_dense = TCI4Keldysh.precompute_all_values(ht)
@@ -221,7 +221,7 @@ function hierarchical_Gp(;R=5, ommax=0.5, do_profile=false)
         Profile.clear()
         @profile begin
             x = 0.0
-            for _ in 1:10^6
+            for _ in 1:10^7
                 x += ht(rand(1:2^R,3)...)
             end
             println(x)
