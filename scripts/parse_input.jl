@@ -2,19 +2,42 @@ using TCI4Keldysh
 using Serialization
 using QuanticsTCI
 using QuanticsGrids
+using HDF5
 import TensorCrossInterpolation as TCI
 
 """
 Determine whether a value to an input key should remain uppercase
 """
 function is_uppercase_key(kw::AbstractString)
-    list = ["psfpath"]
+    list = ["psfpath", "kev", "coreevaluator_kwargs"]
     return (lowercase(kw) in list)
 end
 
 # UTILITIES
 function maybeparse(T::Type, val)
     return isa(val,T) ? val : parse(T, val)
+end
+
+function _to_type(s::Symbol)
+    return TCI4Keldysh.eval(s)
+end
+
+_to_type(s::String)=_to_type(Symbol(s))
+
+"""
+parse dictionary:
+key type value key type value
+"""
+function parse_to_dict(ls::AbstractVector{String})
+    @assert mod(length(ls),3)==0 "Invalid dictionary specification"
+    ret = Dict{Symbol,Any}()
+    for i in 1:div(length(ls),3)
+        key = Symbol(ls[3*(i-1)+1])
+        T = _to_type(ls[3*(i-1)+2])
+        val = maybeparse(T, ls[3*i])
+        ret[key]=val
+    end
+    return ret
 end
 
 function parse_input(input_file::AbstractString)
@@ -111,6 +134,13 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
         matsubaracore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="keldyshcore"
         keldyshcore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="conv_keldyshcore"
+        keldyshcore_conv(outname; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    # Correlator jobs
+    elseif jobtype=="corrkeldysh"
+        corrkeldysh(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="corrmatsubara"
+        corrmatsubara(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     else
         error("Invalid jobtype $jobtype")
     end
@@ -127,11 +157,24 @@ function filter_tcikwargs(kwargs_dict::Dict)
     if haskey(kwargs_dict, :tolmarginglobalsearch)
         tcikwargs[:tolmarginglobalsearch]=maybeparse(Float64, kwargs_dict[:tolmarginglobalsearch])
     end
+    if haskey(kwargs_dict, :pivotsearch)
+        tcikwargs[:pivotsearch]=Symbol(kwargs_dict[:pivotsearch])
+    end
     return tcikwargs
 end
 
+function override_dict!(src::Dict, dst::Dict)
+    for (key,val) in pairs(dst)
+        if haskey(src, key)
+            T_ = typeof(val)
+            dst[key] = maybeparse(T_, src[key])
+        end
+    end
+end
+
 """
-Filter broadening_kwargs for those that are actually used by ΓcoreEvaluator_KF
+Filter broadening_kwargs for those that are actually used by ΓcoreEvaluator_KF.
+If any keyword is explicitly given in override_kwargs, override it.
 """
 function filter_broadening_kwargs(;broadening_kwargs...)
     ret = Dict(broadening_kwargs)
@@ -140,6 +183,20 @@ function filter_broadening_kwargs(;broadening_kwargs...)
         if !(key in KEYLIST)
             delete!(key, ret)
         end
+    end
+    return ret
+end
+
+function filter_KFCEvaluator_kwargs(;kwargs...)
+    ret = Dict{Symbol,Any}()
+    if haskey(Dict(kwargs), :kev)
+        val = Dict(kwargs)[:kev]
+        # get the requested Type
+        ret[:KEV] = _to_type(val)
+    end
+    if haskey(Dict(kwargs), :coreevaluator_kwargs)
+        val = Dict(kwargs)[:coreevaluator_kwargs]
+        ret[:coreEvaluator_kwargs] = parse_to_dict(val)
     end
     return ret
 end
@@ -320,6 +377,16 @@ function matsubarafull(
     end
 end
 
+function all_broadening_settings(PSFpath::AbstractString, channel::AbstractString)
+    base_path = dirname(rstrip(PSFpath, '/'))
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
+    if !haskey(broadening_kwargs, :estep)
+        broadening_kwargs[:estep] = 500
+    end
+    return (γ, sigmak, broadening_kwargs)
+end
+
 function keldyshcore(
     outname::AbstractString,
     d::Dict;
@@ -332,6 +399,7 @@ function keldyshcore(
     channel::String,
     ommax = 0.3183098861837907,
     # ωmin = -0.3183098861837907,
+    unfoldingscheme=:fused,
     npivot=5,
     pivot_steps=[div(2^R, maybeparse(Int,npivot) - 1) for R in Rs],
     serialize_tts=true,
@@ -356,12 +424,7 @@ function keldyshcore(
     end
 
     # get broadening parameters
-    base_path = dirname(rstrip(PSFpath, '/'))
-    (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
-    broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
-    if !haskey(broadening_kwargs, :estep)
-        broadening_kwargs[:estep] = 50
-    end
+    (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
 
     # prepare output
     d["times"] = times
@@ -375,10 +438,19 @@ function keldyshcore(
     d["ommax"] = ommax
     d["iK"] = ik
     broadening_kwargs = filter_broadening_kwargs(;broadening_kwargs...)
+    override_dict!(Dict(kwargs), broadening_kwargs)
     d["broadening_kwargs"] = broadening_kwargs
     tcikwargs = filter_tcikwargs(Dict(kwargs))
     d["tcikwargs"] = tcikwargs 
+    d["unfoldingscheme"] = Symbol(unfoldingscheme)
     TCI4Keldysh.logJSON(d, outname, folder)
+
+    @show kwargs
+    evaluator_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
+    @show evaluator_kwargs
+    d["FullCorrEvaluator_kwargs"] = evaluator_kwargs
+
+    TCI4Keldysh.report_mem(true)
 
     for (ir, R) in enumerate(Rs)
         t = @elapsed begin
@@ -394,12 +466,13 @@ function keldyshcore(
                 resume_path=resume_path,
                 tolerance=tolerance,
                 verbosity=2,
-                unfoldingscheme=:interleaved,
+                unfoldingscheme=Symbol(unfoldingscheme),
                 estep=broadening_kwargs[:estep],
                 emin=broadening_kwargs[:emin],
                 emax=broadening_kwargs[:emax],
                 npivot=npivot,
                 pivot_step=pivot_steps[ir],
+                evaluator_kwargs...,
                 tcikwargs...
                 )
         end 
@@ -411,6 +484,220 @@ function keldyshcore(
         TCI4Keldysh.updateJSON(outname, "bonddims", bonddims, folder)
 
         if serialize_tts            
+            serialize_tt(qtt.tci, qtt.grid, outname, folder)
+        end
+
+        println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+        flush(stdout)
+        flush(stderr)
+    end
+end
+
+"""
+Conventional computation of keldysh core vertex
+"""
+function keldyshcore_conv(outname; 
+    Rs,
+    folder,
+    PSFpath,
+    flavor_idx,
+    channel,
+    ommax = 0.3183098861837907,
+    kwargs...)
+
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    ommax = maybeparse(Float64, ommax)
+    (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
+    override_dict!(Dict(kwargs), broadening_kwargs)
+
+    d = Dict()
+    d["PSFpath"] = PSFpath
+    d["flavor_idx"] = flavor_idx
+    d["channel"] = channel
+    d["gamma"] = γ 
+    d["sigmak"] = sigmak
+    d["broadening_kwargs"] = broadening_kwargs 
+    d["Rs"] = Rs 
+    d["ommax"] = ommax 
+    TCI4Keldysh.logJSON(d, outname, folder)
+    
+    for R in Rs
+        if R>9
+            error("This calculation (R=$R) is doomed.")
+        end
+        ωs_ext = TCI4Keldysh.KF_grid(ommax, R, 3)
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+        om_sig = TCI4Keldysh.Σ_grid(ntuple(i -> ωs_ext[i],2))
+        (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=flavor_idx, sigmak, γ, broadening_kwargs...)
+        gamcore = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+            "KF",
+            joinpath(PSFpath, "4pt"),
+            Σ_R
+            ;
+            Σ_calcL=Σ_L,
+            T,
+            flavor_idx,
+            ωs_ext,
+            ωconvMat,
+            sigmak=sigmak,
+            γ=γ,
+            broadening_kwargs...
+            )
+
+        # store
+        h5name = "V_KF_$(channel)_R=$(R).h5"
+        h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "V_KF", gamcore)
+        for i in eachindex(ωs_ext)
+            h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "omgrid$i", ωs_ext[i])
+        end
+        println("==== R=$R DONE")
+        flush(stdout)
+        flush(stderr)
+    end
+end
+
+
+function corrmatsubara(
+    outname::AbstractString, d::Dict;
+    Rs,
+    PSFpath,
+    folder,
+    flavor_idx,
+    channel,
+    tolerance,
+    serialize_tts=true,
+    unfoldingscheme=:interleaved,
+    add_pivots=true,
+    kwargs...)
+
+
+    npt = 4
+    times = []
+    qttranks = []
+    qttbonddims = []
+    svd_kernel = true
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    beta = 1.0/T
+
+    # prepare output
+    d["times"] = times
+    d["ranks"] = qttranks
+    d["bonddims"] = qttbonddims
+    d["svd_kernel"] = svd_kernel
+    d["add_pivots"] = maybeparse(Bool, add_pivots)
+    tcikwargs = filter_tcikwargs(Dict(kwargs))
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    for R in Rs
+        GF = TCI4Keldysh.dummy_correlator(npt, R; PSFpath=PSFpath, beta=beta, channel=channel)[flavor_idx]
+        t = @elapsed begin
+            qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(
+                GF, svd_kernel; 
+                add_pivots=add_pivots, 
+                tolerance=tolerance, 
+                unfoldingscheme=Symbol(unfoldingscheme), 
+                tcikwargs...
+                )
+        end
+        push!(times, t)
+        push!(qttranks, TCI4Keldysh.rank(qtt))
+        push!(qttbonddims, TCI.linkdims(qtt.tci))
+        TCI4Keldysh.updateJSON(outname, "times", times, folder)
+        TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+        TCI4Keldysh.updateJSON(outname, "bonddims", qttbonddims, folder)
+
+        if serialize_tts
+            serialize_tt(qtt.tci, qtt.grid, outname, folder)
+        end
+
+        println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+        flush(stdout)
+    end
+end
+
+
+
+function corrkeldysh(
+    outname::AbstractString, d::Dict;
+    ik,
+    Rs,
+    PSFpath,
+    folder,
+    flavor_idx,
+    channel,
+    tolerance=tolerance,
+    ommax = 0.3183098861837907,
+    unfoldingscheme=:fused,
+    serialize_tts=true,
+    kwargs...)
+
+    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    Ops = ["F1", "F1dag", "F3", "F3dag"]
+    T = 1.0/beta
+    npt = 4
+    times = []
+    qttranks = []
+    bonddims = []
+    svd_kernel = true
+    ik = maybeparse(Int, ik)
+    ommax = maybeparse(Float64, ommax)
+    # broadening
+    (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
+    broadening_kwargs = filter_broadening_kwargs(; broadening_kwargs...)
+    override_dict!(Dict(kwargs), broadening_kwargs)
+    # prepare output
+    d["times"] = times
+    d["ranks"] = qttranks
+    d["bonddims"] = bonddims
+    d["svd_kernel"] = svd_kernel
+    d["gamma"] = γ
+    d["sigmak"] = sigmak 
+    d["ommax"] = ommax
+    d["iK"] = ik
+    d["broadening_kwargs"] = broadening_kwargs
+    tcikwargs = filter_tcikwargs(Dict(kwargs))
+    d["tcikwargs"] = tcikwargs 
+    d["Ops"] = Ops
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    for R in Rs
+        
+        # create correlator
+        D = npt-1
+        ωs_ext = TCI4Keldysh.KF_grid(ommax, R, D)
+        ωconvMat = TCI4Keldysh.channel_trafo(channel)
+        KFC = TCI4Keldysh.FullCorrelator_KF(
+            joinpath(PSFpath, "4pt"), Ops;
+            T=T,
+            ωs_ext=ωs_ext,
+            flavor_idx=flavor_idx,
+            ωconvMat=ωconvMat,
+            sigmak=sigmak,
+            γ=γ,
+            name="KFC",
+            broadening_kwargs...
+            )
+        # create correlator END
+
+        t = @elapsed begin
+            qtt = TCI4Keldysh.compress_FullCorrelator_pointwise(
+                KFC, ik;
+                tolerance=tolerance,
+                dump_path=nothing,
+                resume_path=nothing,
+                verbosity=2,
+                unfoldingscheme=Symbol(unfoldingscheme),
+                tcikwargs...
+                )
+        end
+        push!(times, t)
+        push!(qttranks, TCI4Keldysh.rank(qtt))
+        push!(bonddims, TCI.linkdims(qtt.tci))
+        TCI4Keldysh.updateJSON(outname, "times", times, folder)
+        TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+        TCI4Keldysh.updateJSON(outname, "bonddims", bonddims, folder)
+
+        if serialize_tts
             serialize_tt(qtt.tci, qtt.grid, outname, folder)
         end
 

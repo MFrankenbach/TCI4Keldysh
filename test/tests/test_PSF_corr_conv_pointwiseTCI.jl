@@ -1,5 +1,6 @@
 using ITensors
 using QuanticsTCI
+using LinearAlgebra
 
 @testset "PSF -> Correlator @ pointwise TCI" begin
 
@@ -139,7 +140,16 @@ end
                 TCI4Keldysh.ωconvMat_K1()
             end
         γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
-        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
+        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops;
+            T=T,
+            ωs_ext=ωs_ext,
+            flavor_idx=1,
+            ωconvMat=ωconvMat,
+            sigmak=sigmak,
+            γ=γ,
+            name="Kentucky fried chicken",
+            estep=50
+            )
 
         KFev = TCI4Keldysh.FullCorrEvaluator_KF_single(KFC, iK)
         function KFC_(idx::Vararg{Int,N}) where {N}
@@ -185,7 +195,16 @@ end
                 TCI4Keldysh.ωconvMat_K1()
             end
         γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
-        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
+        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops;
+            T=T,
+            ωs_ext=ωs_ext,
+            flavor_idx=1,
+            ωconvMat=ωconvMat,
+            sigmak=sigmak,
+            γ=γ,
+            name="Kentucky fried chicken",
+            estep=50
+            )
 
         # reference
         data_ref = TCI4Keldysh.precompute_all_values(KFC)[fill(Colon(),D)..., TCI4Keldysh.KF_idx(iK,D)...]

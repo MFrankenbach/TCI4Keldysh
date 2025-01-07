@@ -42,11 +42,16 @@ function compress_FullCorrelator_pointwise(
 
     kwargs_dict = Dict(tcikwargs...)
     tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
-    cutoff = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance]*1.e-3 : 1.e-15
     if isnothing(resume_path)
-        KFev = FullCorrEvaluator_KF_single(GF, iK; cutoff=cutoff)
+        KFev::Union{FullCorrEvaluator_KF_single, KFCEvaluator} = if D==3
+            KFCEvaluator(GF)
+        else
+            cutoff = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance]*1.e-3 : 1.e-15
+            FullCorrEvaluator_KF_single(GF, iK; cutoff=cutoff)
+        end
     else
         # load
+        error("Loading checkpoints for Keldysh correlator compression no longer supported")
         KFev = load(joinpath(resume_path, KFev_filename()))[jld2_to_dictkey(KFev_filename())]
         # check
         KFC_ = KFev.KFC
@@ -72,7 +77,7 @@ function compress_FullCorrelator_pointwise(
     # checkpoint results every couple of iterations
 
     # set up crossinterpolate in quantics representation
-    grid = QuanticsGrids.InherentDiscreteGrid{D}(R ;unfoldingscheme=unfoldingscheme)
+    grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
 
     qlocaldimensions = if grid.unfoldingscheme === :interleaved
         fill(2, D * R)
@@ -80,9 +85,15 @@ function compress_FullCorrelator_pointwise(
         fill(2^D, R)
     end
 
-    qKFev_ = (D == 1
-           ? q -> KFev(only(QuanticsGrids.quantics_to_origcoord(grid, q)))
-           : q -> KFev(QuanticsGrids.quantics_to_origcoord(grid, q)...))
+    qKFev_ = 
+            if D==1
+                q -> KFev(only(QuanticsGrids.quantics_to_origcoord(grid, q)))
+            elseif D==2
+                q -> KFev(QuanticsGrids.quantics_to_origcoord(grid, q)...)
+            elseif D==3
+                # KFCEvaluator evaluates all Keldysh components
+                q -> KFev(QuanticsGrids.quantics_to_origcoord(grid, q)...)[iK]
+            end
     if !isnothing(resume_path)
         # load saved cache and coefficients
         cache = load(joinpath(resume_path,cacheKFcorr_filename()))[jld2_to_dictkey(cacheKFcorr_filename())]
@@ -133,7 +144,11 @@ function compress_FullCorrelator_pointwise(
         gridmax = min(2^R, Nhalf+2^5)
         grid1D = gridmin:2:gridmax
         grid = collect(Iterators.product(ntuple(_->grid1D,D)...))
-        maxerr = check_interpolation(qtt, KFev, grid)
+        if isa(KFev, KFCEvaluator)
+            maxerr = check_interpolation(qtt, (w1,w2,w3) -> KFev(w1,w2,w3)[iK], grid)
+        else
+            maxerr = check_interpolation(qtt, KFev, grid)
+        end
         tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
         println(" Maximum interpolation error: $maxerr (tol=$tol)")
     end

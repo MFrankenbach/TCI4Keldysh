@@ -174,10 +174,13 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
                     Gp.tucker.center, kernels_act, nlevel; cutoff=cutoff
                     )
             end
-            ωconvOffs[ip] = Gp.ωconvOff
-            ωconvMats[ip] = Gp.ωconvMat
+            ωconvOffs[ip] = copy(Gp.ωconvOff)
+            ωconvMats[ip] = copy(Gp.ωconvMat)
         end
-        return new{D}(Gps_, ωconvOffs, ωconvMats, GF.ωs_ext, GF.GR_to_GK)
+        println("==== COMBINED HIERARCHICAL TUCKER: MEMORY")
+        @show Base.summarysize(Gps_) / 1.e9
+        println("==== MEMORY END")
+        return new{D}(Gps_, ωconvOffs, ωconvMats, deepcopy(GF.ωs_ext), copy(GF.GR_to_GK))
     end
 end
 

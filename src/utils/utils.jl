@@ -1290,8 +1290,8 @@ end
 Where to find PSF data
 """
 function datadir()
-    return joinpath(dirname(Base.current_project()), "data")
-    # return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
+    # return joinpath(dirname(Base.current_project()), "data")
+    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
 end
 
 """
@@ -1321,7 +1321,9 @@ function dir_to_T(PSFpath::String) :: Float64
         "SIAM_u=1.00"=>1.0/2000.0,
         "SIAM_u=0.50"=>1.0/2000.0,
         "SIAM_u=1.50"=>1.0/2000.0,
-        "siam05_U0.05_T0.005_Delta0.0318"=>1.0/200.0
+        "siam05_U0.05_T0.005_Delta0.0318"=>1.0/200.0,
+        "SIAM_strong2_U0.2_T0.0001"=>1.0/10000.0,
+        "siam05_U0.05_T0.05_Delta0.0318"=>1.0/20.0
         )
     for (key, val) in d
         if contains(PSFpath, key)
@@ -1351,8 +1353,8 @@ end
 function report_mem(do_gc=false)
     println("---------- MEMORY REPORT ----------")
     if do_gc
-        Base.GC.gc()
         println("  Available system memory (before gc()): $(Sys.free_memory() / 1024^2) MB")
+        Base.GC.gc()
         println("  Garbage collected")
     end
     println("  Total system memory: $(Sys.total_memory() / 1024^2) MB")

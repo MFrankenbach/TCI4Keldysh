@@ -323,6 +323,7 @@ end
     function test_Γcore_KF(
         iK::Int, flavor_idx, channel::String="a";
         R=3, tolerance=1.e-5, batched=false,
+        unfoldingscheme=:interleaved,
         kwargs...
         )
         basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
@@ -365,10 +366,8 @@ end
             γ=γ,
             T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx,
             tolerance=tolerance,
-            unfoldingscheme=:interleaved,
+            unfoldingscheme=unfoldingscheme,
             batched=batched,
-            # KEV=KEV,
-            # coreEvaluator_kwargs=coreEvaluator_kwargs
             kwargs...
             )
 
@@ -387,11 +386,13 @@ end
         batched=true,
         KEV=TCI4Keldysh.MultipoleKFCEvaluator,
         coreEvaluator_kwargs=Dict{Symbol,Any}(:cutoff=>1.e-6, :nlevel=>2),
+        unfoldingscheme=:fused
         )
     test_Γcore_KF(2, 1, "p")
     test_Γcore_KF(8, 1, "a"; R=4, tolerance=1.e-4, batched=true)
     # test_Γcore_KF(14, 1, "t"; R=3, tolerance=1.e-8, batched=true)
     test_Γcore_KF(9, 1, "p"; R=3, tolerance=1.e-8, batched=false)
+    test_Γcore_KF(6, 1, "p"; R=4, tolerance=1.e-4, batched=true, unfoldingscheme=:fused)
 end
 
 # revert temporary change
