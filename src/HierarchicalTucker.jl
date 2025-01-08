@@ -1,16 +1,3 @@
-#=
-Implement a tucker decomposition
-G(ω,ν,ν')=∑_ϵ k(ω,ϵ1)k(ν,ϵ2)k(ν',ϵ3) center(ϵ)
-that performs blockwise SVD compression of kernel slices
-k[slice,:] and contracts SV into the corresponding part of the
-center. This can be used to achieve a balance between memory and
-single point evaluation cost.
-It can be viewed (kind of) as a multipole expansion of the kernels.
-
-In principle, one could also partition the range of ϵ's, but this
-did not look promising.
-=#
-
 function nested_intervals(min::Int, max::Int, nlevel::Int)
     levels = [[min:max]]
     if max<=min error("Invalid boundaries") end
@@ -94,6 +81,17 @@ end
 const Legs{D,T}=NTuple{D,Vector{Matrix{T}}} where {D,T}
 
 """
+Implement a tucker decomposition
+G(ω,ν,ν')=∑_ϵ k(ω,ϵ1)k(ν,ϵ2)k(ν',ϵ3) center(ϵ)
+that performs blockwise SVD compression of kernel slices
+k[slice,:] and contracts SV into the corresponding part of the
+center. This can be used to achieve a balance between memory and
+single point evaluation cost.
+It can be viewed (kind of) as a multipole expansion of the kernels.
+
+In principle, one could also partition the range of ϵ's, but this
+did not look promising.
+
 * ids_cumulated: at which indices the different kernel matrices
 start in each direction (minus 1), i.e., [0, length(FirstMatrix), ...]
 total length: number of kernels + 1
@@ -163,8 +161,9 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
         Gps_ = Matrix{HierarchicalTucker{D,ComplexF64}}(undef, D, nGps)
         ωconvOffs = Vector{SVector{D,Int}}(undef, nGps)
         ωconvMats = Vector{SMatrix{D,D,Int}}(undef, nGps)
-        for (ip,Gp) in enumerate(GF.Gps)
+        Threads.@threads for ip in eachindex(GF.Gps)
             println(" Processing partial correlator no. $ip/$nGps")
+            Gp = GF.Gps[ip]
             for id in 1:D
                 kernels_act = ntuple(
                     i -> ifelse(i>=id, Gp.tucker.legs[i], conj.(Gp.tucker.legs[i])),

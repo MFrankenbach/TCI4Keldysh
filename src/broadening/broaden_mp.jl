@@ -61,6 +61,35 @@ function get_Acont_grid(;estep=_ESTEP_DEFAULT(), emin=1.e-12, emax=1.e4)
     return vcat(-reverse(ocont_p), [0.0], ocont_p)
 end
 
+"""
+Compute broadened Keldysh kernel on given 1D frequency grid.
+"""
+function compute_broadened_kernel(
+    ωdisc::Vector{Float64},
+    sigmak::Array{Float64},
+    γ::Float64;
+    ωs_ext::Vector{Float64},
+    broadening_kwargs...
+)
+    
+    # broadening kernels
+    ωcont_in = get_Acont_grid(;broadening_kwargs...)
+    ωcont, Kernel = getAcont(
+        ωdisc,
+        Matrix{Float64}(LinearAlgebra.I, (ones(Int, 2).*length(ωdisc))...),
+        sigmak .+ zeros(length(ωdisc)),
+        γ;
+        ωcont=ωcont_in,
+        broadening_kwargs...
+        )
+
+    # hilbert transform
+    @show size(Kernel)
+    @show extrema(ωs_ext)
+    @show extrema(ωcont)
+    kernel = -im * π * my_hilbert_trafo(ωs_ext, ωcont, Kernel)
+    return kernel
+end
 
 function _prepare_broadening_mp(
     ωdisc   ::Vector{Float64},  # Logarithimic frequency bins. 
@@ -98,6 +127,7 @@ function _prepare_broadening_mp(
     
     # Delete rows/columns that contain only zeros
     AdiscIsZero_oks, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
+    # AdiscIsZero_oks, ωdiscs, Adisc = compactAdisc(ωdisc, ones(Float64, size(Adisc)))
     ishifts = ntuple(i -> div(length(ωcont_largest) - length(ωconts[i]), 2), D)
     Kernels = [Kernel[1+ishifts[i]:end-ishifts[i], .!AdiscIsZero_oks[i]] for i in 1:D]
     return D, ωdiscs, Adisc, Kernels, ωcont

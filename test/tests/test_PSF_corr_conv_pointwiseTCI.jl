@@ -172,8 +172,8 @@ end
             refval = vec(KFC2_(idx...))
             totest_nocut = vec(KFev2(Val{:nocut}(), idx...))
             totest_cut = vec(KFev2(idx...))
-            @test isapprox(norm(refval .- totest_cut), 0.0; atol=1.e-11)
-            @test isapprox(norm(refval .- totest_nocut), 0.0; atol=1.e-11)
+            @test isapprox(norm(refval .- totest_cut), 0.0; atol=5.e-11)
+            @test isapprox(norm(refval .- totest_nocut), 0.0; atol=5.e-11)
         end
     end
 

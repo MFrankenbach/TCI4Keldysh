@@ -7,6 +7,7 @@ using HDF5
 using BenchmarkTools 
 using Profile
 using StatProfilerHTML
+using FastChebInterp
 import TensorCrossInterpolation as TCI
 import QuanticsGrids as QG
 
@@ -29,6 +30,88 @@ function qttfile_to_json(qttfile::String)
 end
 # UTILITIES END
 
+function interpolate_kernel_nonlin()
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt")
+    Ops = TCI4Keldysh.dummy_operators(4)
+    ωdisc = TCI4Keldysh.load_ωdisc(PSFpath, Ops)
+
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath)
+    kwargs = TCI4Keldysh.read_broadening_settings(basepath)
+    kwargs[:estep] = 50
+
+    ommax = 0.318
+    R = 10
+    # ωs_ext = TCI4Keldysh.KF_grid_fer(ommax, R)
+    # for logarithmic grid: why the strange jumps around 0?
+    ωs_ext = TCI4Keldysh.get_Acont_grid(;kwargs...)
+    k = TCI4Keldysh.compute_broadened_kernel(ωdisc, sigmak, γ; ωs_ext=ωs_ext, kwargs...)
+
+    # interpolate with Chebychev
+    samples = 1:10:length(ωdisc)
+    chebs = Dict{Int,Any}()
+    wpos = findfirst(w -> w>0.0, ωs_ext)
+    # ωids = collect(wpos:length(ωs_ext))
+    ωids = 302:450
+    for ie in samples
+        chebs[ie] = chebregression(convert.(Float64, ωids), k[ωids,ie], 20)
+    end
+
+    p = TCI4Keldysh.default_plot()
+    for ie in samples
+        plot!(p, ωids, real.(k[ωids,ie]); alpha=0.8, label="")
+        plot!(p, ωids, real.(chebs[ie].(ωids)); alpha=0.8, label="Cheb$ie", linestyle=:dash)
+        # plot!(p, ωids, imag.(k[:,ie]); alpha=0.8, linestyle=:dot)
+    end
+    xlabel!(p, L"i_\omega")
+    savefig(p, "foo.pdf")
+
+end
+
+function chebychev_broadened_kernrel()
+    ommax = 0.3
+    ommin = -0.3
+    # large linear grid
+    R = 12
+    klin, oms, omdisc = get_broadened_kernel(;R=R, ommax=ommax)
+
+    # interpolate kernel on subintervals for each epsilon
+    deg = 20
+    chebs = []
+    for ie in axes(klin, 2)
+        c = chebregression(oms, klin[:,ie], ommin, ommax, deg)
+        push!(chebs, c)
+    end
+
+    # try out chebregression
+    f(x::Float64) = 1/(1+x^2) + im * exp(-x^2)
+    cf = chebregression(oms, f.(oms), ommin, ommax, 10)
+    @show maximum(@. abs(cf(oms) - f(oms)))
+
+    # print errors
+    to_plot = [3, 60]
+    p = TCI4Keldysh.default_plot()
+    for ie in axes(klin, 2)
+        c = chebs[ie]
+        cvals = c.(oms)
+        err = abs.(cvals - klin[:,ie])
+        maxf = maximum(abs.(klin[:,ie]))
+        println("Peak no. $ie: max(err)=$(maximum(err)) mean(err)=$(sum(err)/length(err))")
+        println("Peak no. $ie: max(tcierr)=$(maximum(err)/maxf) mean(tcierr)=$(sum(err)/length(err)/maxf)")
+        println("----")
+        if ie in to_plot
+            plot!(p, oms, real.(cvals); label="ReCheb$ie", alpha=0.8)
+            plot!(p, oms, real.(klin[:,ie]); label="ReK$ie", linestyle=:dot, alpha=0.8)
+        # plot!(oms, imag.(cvals); label="ImCheb$ie")
+        end
+    end
+    savefig(p, "foo.pdf")
+
+end
+
+"""
+Return: broadened kernel, frequency grid, discrete energy grid ωdisc
+"""
 function get_broadened_kernel(;R::Int=10, ommax::Float64=0.5)
     
     basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
@@ -106,6 +189,108 @@ function memory_multipole_kernel()
 
     @show memory_multipole_kernel(om_intervals[5], eps_intervals[1], k; cutoff=1.e-8) ./ 1.e9
 
+end
+
+function V_KF_eval_accuracy(
+    refpath::String,
+    R::Int,
+    iK::Int,
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg"),
+    KEV::Type=TCI4Keldysh.MultipoleKFCEvaluator,
+    coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6, :nlevel=>4)
+    )
+
+    # load settings
+    refjson = only(
+        filter(f -> endswith(f, ".json"), readdir(refpath))
+    )
+    refsettings = TCI4Keldysh.readJSON(refjson, refpath)
+    ωmax = refsettings["ommax"]
+    broadening_kwargs_ = refsettings["broadening_kwargs"]
+    broadening_kwargs = Dict{Symbol,Any}()
+    for (key,val) in pairs(broadening_kwargs_)
+        broadening_kwargs[Symbol(key)] = val
+    end
+    γ = refsettings["gamma"]
+    sigmak = Vector{Float64}(refsettings["sigmak"])
+    channel = refsettings["channel"]
+    flavor_idx = refsettings["flavor_idx"]
+    if !(R in refsettings["Rs"])
+        error("Requested grid size is not available")
+    end
+
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+
+    # prepare core evaluator
+    broadening_kwargs[:estep] = 20
+
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    # make frequency grid
+    D = size(ωconvMat, 2)
+    @assert D==3
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
+
+    # all 16 4-point correlators
+    letters = ["F", "Q"]
+    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
+    op_labels = ("1", "1dag", "3", "3dag")
+    op_labels_symm = ("3", "3dag", "1", "1dag")
+    is_incoming = (false, true, false, true)
+
+    # create correlator objects
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{TCI4Keldysh.FullCorrelator_KF{D}}(undef, Ncorrs)
+    PSFpath_4pt = joinpath(PSFpath, "4pt")
+    filelist = readdir(PSFpath_4pt)
+    for l in 1:Ncorrs
+        letts = letter_combinations[l]
+        println("letts: ", letts)
+        ops = [letts[i]*op_labels[i] for i in 1:4]
+        if !any(TCI4Keldysh.parse_Ops_to_filename(ops) .== filelist)
+            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
+        end
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...)
+    end
+
+    # evaluate self-energy
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+    ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
+    Σω_grid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
+    (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
+
+    # frequency grid offset for self-energy
+    ΣωconvMat = incoming_trafo * ωconvMat
+    corner_low = [first(ωs_ext[i]) for i in 1:D]
+    corner_idx = ones(Int, D)
+    corner_image = ΣωconvMat * corner_low
+    idx_image = ΣωconvMat * corner_idx
+    desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
+    ωconvOff = desired_idx .- idx_image
+
+    sev = TCI4Keldysh.SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
+
+    gev = TCI4Keldysh.ΓcoreEvaluator_KF(GFs, iK, sev, KEV; coreEvaluator_kwargs...)
+
+    # load reference
+    refdatafile = joinpath(refpath, "V_KF_$(channel)_R=$(R).h5")
+    refdata = h5read(refdatafile, "V_KF")[:,:,:,TCI4Keldysh.KF_idx(iK,3)...]
+    # SETUP DONE
+
+    # check
+    N = 10^4
+    errs = Vector{Float64}(undef, N)
+    vals = Vector{ComplexF64}(undef, N)
+    idx_range = Base.OneTo.(size(refdata))
+    Threads.@threads for n in 1:N
+        idx = ntuple(i -> rand(idx_range[i]), 3)
+        val = gev(idx...)
+        errs[n] = abs(val - refdata[idx...])
+        vals[n] = val
+    end
+
+    h5write("errs.h5", "vals", vals)
+    h5write("errs.h5", "errs", errs)
 end
 
 """
@@ -187,8 +372,9 @@ function hierarchical_Gp(;R=5, ommax=0.5, do_profile=false)
     @time ht = TCI4Keldysh.HierarchicalTucker(center, Tuple(kernels), 4; cutoff=1.e-6)
     # Keldysh evaluator with one leg contracted
     # @time KFC = TCI4Keldysh.KFCEvaluator(G)
-    # printstyled("\n==  Memory\n"; color=:blue)
-    # @show Base.summarysize(ht) * 3*24 / 1.e9
+    printstyled("\n==  Memory\n"; color=:blue)
+    @show Base.summarysize(G) * 16 / 1.e9
+    @show Base.summarysize(ht) * 3*24*16 / 1.e9
     # @show Base.summarysize(KFC) / 1.e9
     printstyled("\n==  Benchmark\n"; color=:blue)
     # @btime $KFC(rand(1:2^$R,3)...)
