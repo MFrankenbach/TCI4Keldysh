@@ -148,7 +148,7 @@ function V_KF_broadening_impact(fac_lin::Float64=1.1, fac_log::Float64=1.1; ωma
 
     broadening_kwargs = TCI4Keldysh.read_broadening_settings(joinpath(TCI4Keldysh.datadir(), base_path); channel=channel)
     if !haskey(broadening_kwargs, "estep")
-        broadening_kwargs[:estep] = 200
+        broadening_kwargs[:estep] = 100
     end
 
     # with MuNRG broadening parameters

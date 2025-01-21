@@ -178,17 +178,18 @@ function check_V_MFfull(channel="t", flavor_idx=1)
     heatmap(abs.(Vref_window[Nhalf+1,:,:]))
     savefig("V_MF_full_ref.pdf")
     heatmap(abs.(diff[Nhalf+1,:,:]))
-    savefig("V_MF_full_ref.pdf")
+    savefig("V_MF_full_diff.pdf")
 end
 
 
-function check_V_KFfull(iK::Int, channel="t")
-    error("nyi")
+function check_V_KFfull(iK::Int=2, channel="t")
+
+    flavor_idx=1
+
     basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
     PSFpath = joinpath(basepath, "PSF_nz=4_conn_zavg/")
     Vpath = joinpath(basepath, "V_KF_$(TCI4Keldysh.channel_translate(channel))")
 
-    flavor_idx=1
     T = TCI4Keldysh.dir_to_T(PSFpath)
 
     # load MuNRG
@@ -197,39 +198,52 @@ function check_V_KFfull(iK::Int, channel="t")
     matopen(joinpath(Vpath, "V_KF_sym.mat")) do f
         CFdat = read(f, "CFdat")
         Vref = CFdat["Ggrid"][flavor_idx]
-        ωs_ref = ntuple(i -> imag.(vec(vec(CFdat["ogrid"])[i])), 3)
+        ωs_ref = ntuple(i -> real.(vec(vec(CFdat["ogrid"])[i])), 3)
         ωs_ref = ωs_ref[[3,1,2]]
     end
-    Vref = reverse(permutedims(Vref, (3,1,2,4,5,6,7)))
+    Vref = permutedims(Vref, (3,1,2,4,5,6,7))
+    Vref = reverse(Vref; dims=(1,2,3))
+    @show size(Vref)
 
     # Julia
-    
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+    broadening_kwargs = TCI4Keldysh.read_broadening_settings(joinpath(TCI4Keldysh.datadir(), basepath); channel=channel)
+    if !haskey(broadening_kwargs, :estep)
+        broadening_kwargs[:estep] = 10
+    end
+
     # ωs_ext = ωs_ref
-    R = 5
+    R = 4
     Nhalf = 2^(R-1)
-    ωs_ext = TCI4Keldysh.MF_npoint_grid(T, Nhalf, 3)
+    ωs_cen = [div(length(om), 2)+1 for om in ωs_ref]
+    @show [ωs_ref[i][ωs_cen[i]] for i in eachindex(ωs_ref)]
+    om_small = ntuple(i -> ωs_ref[i][ωs_cen[i] - Nhalf : ωs_cen[i] + Nhalf], 3)
     Vfull = TCI4Keldysh.compute_Γfull_symmetric_estimator(
         "KF",
         PSFpath;
         T=T,
         flavor_idx=flavor_idx,
-        ωs_ext=ωs_ext,
-        channel=channel
+        ωs_ext=om_small,
+        channel=channel,
+        γ=γ,
+        sigmak=sigmak,
+        broadening_kwargs...
     )
-
-    # compare
-    offset = TCI4Keldysh.idx_trafo_offset(ωs_ext, ωs_ref, diagm([1,1,1]))
-    @show (1+offset[1]:offset[1]+2^R+1, 1+offset[2]:offset[2]+2^R, 1+offset[3]:offset[3]+2^R)
-    Vref_window = Vref[1+offset[1]:offset[1]+2^R+1, 1+offset[2]:offset[2]+2^R, 1+offset[3]:offset[3]+2^R]
-    @show size(Vref)
-    @show length.(ωs_ref)
     @show size(Vfull)
-    @show size(Vref_window)
+    
+    # compare
+    # offset = TCI4Keldysh.idx_trafo_offset(ωs_ext, ωs_ref, diagm([1,1,1]))
+    # @show (1+offset[1]:offset[1]+2^R+1, 1+offset[2]:offset[2]+2^R, 1+offset[3]:offset[3]+2^R)
+    # Vref_window = Vref[1+offset[1]:offset[1]+2^R+1, 1+offset[2]:offset[2]+2^R, 1+offset[3]:offset[3]+2^R]
+    # @show size(Vref)
+    # @show length.(ωs_ref)
+    # @show size(Vfull)
+    # @show size(Vref_window)
 
-    diff = abs.(Vref_window .- Vfull)
-    @show maximum(abs.(Vref_window))
-    @show maximum(abs.(Vfull))
-    printstyled("Maximum deviation Julia vs. MuNRG: $(maximum(diff))\n"; color=:blue)
+    # diff = abs.(Vref_window .- Vfull)
+    # @show maximum(abs.(Vref_window))
+    # @show maximum(abs.(Vfull))
+    # printstyled("Maximum deviation Julia vs. MuNRG: $(maximum(diff))\n"; color=:blue)
 end
 
 # check_V_MFfull("a", 1)

@@ -744,7 +744,12 @@ struct FullCorrelator_KF{D}
         for (i,sp) in enumerate(Aconts)
             sp.center .*= Gp_to_G[i]
         end
-        Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
+        Gps = Vector{PartialCorrelator_reg{D}}(undef, length(collect(perms)))
+        for (i,p) in enumerate(perms)
+            Gps[i] = PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1))
+            GC.gc(true)
+        end
+        # Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
         GR_to_GK = get_GR_to_GK(D)
         end
         return new{D}(name, Gps, Gp_to_G, GR_to_GK, ωs_ext, ωconvMat, isBos)
@@ -1137,6 +1142,27 @@ function precompute_all_values(G :: FullCorrelator_KF{D}) where{D}
         result += reshape(temp, (prod(size(temp)[1:end-1]),D+1)) * view(G.GR_to_GK, :, :, p)
     end
     return reshape(result, (length.(G.ωs_ext)..., (2*ones(Int, D+1))...))
+end
+
+"""
+Replace Keldysh component G^22 by FDT-computed G^22: 
+"""
+function precompute_all_values_FDT(G::FullCorrelator_KF{1}, T::Float64, isFermionic=true)
+    vals = precompute_all_values(G)    
+    om = only(G.ωs_ext)
+    if isFermionic
+        G22 = tanh.(om./(2T)) .* (vals[:,2,1] .- vals[:,1,2])
+    else    
+        # treat divergence of coth at 0
+        omtmp = abs.(om) .> T * 1.e-6
+        nonomtmp = .!omtmp
+        G22 = zeros(ComplexF64, size(vals,1))
+        G22[omtmp] .= coth.(om[omtmp]./(2T)) .* (vals[omtmp,2,1] .- vals[omtmp,1,2])
+        interp = linear_interpolation(om[omtmp], G22[omtmp])
+        G22[nonomtmp] .= interp.(om[nonomtmp])
+    end
+    vals[:,2,2] .= G22
+    return vals
 end
 
 

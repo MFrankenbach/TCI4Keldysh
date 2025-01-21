@@ -294,11 +294,33 @@ end
         @test iK_==iK
     end
 
+    function test_merge_iK_K2()
+        for channel in ["t","a","p"]
+            for prime in [true, false]
+                for ik in TCI4Keldysh.ids_KF(3)
+                    ik4s = TCI4Keldysh.equivalent_iK_K2(ik, channel, prime)
+                    ik_ = only(unique(TCI4Keldysh.merge_iK_K2.(Tuple.(ik4s), channel, prime)))
+                    @test ik_==ik
+                end
+            end
+        end
+    end
+
+    function test_merge_iK_K1()
+        for channel in ["t","a","p"]
+            for ik in TCI4Keldysh.ids_KF(2)
+                ik4s = TCI4Keldysh.equivalent_iK_K1(ik, channel)
+                ik_ = only(unique(TCI4Keldysh.merge_iK_K1.(Tuple.(ik4s), channel)))
+                @test ik_==ik
+            end
+        end
+    end
+
     function test_trafo_grids()
         ωs_ext = (0.5 * [1,2,3], 0.5*[-1,0,1,2])
         trafo = [1 -1; 0 1]
         ωs_new = TCI4Keldysh.trafo_grids(ωs_ext, trafo)
-        @assert ωs_new == ([-0.5, 0.0, 0.5, 1.0, 1.5, 2.0], [-0.5, 0.0, 0.5, 1.0])
+        @test ωs_new == ([-0.5, 0.0, 0.5, 1.0, 1.5, 2.0], [-0.5, 0.0, 0.5, 1.0])
     end
 
     function test_idx_trafo_offset()
@@ -307,12 +329,14 @@ end
         ωs_new = TCI4Keldysh.trafo_grids(ωs_ext, trafo)
         # ωs_new == ([-0.5, 0.0, 0.5, 1.0, 1.5, 2.0], [-0.5, 0.0, 0.5, 1.0])
         s = TCI4Keldysh.idx_trafo_offset(ωs_ext, ωs_new, trafo)
-        @assert s==[4,0]
+        @test s==[4,0]
     end
 
 
     test_MF_grid()
     test_KF_idx()
+    test_merge_iK_K1()
+    test_merge_iK_K2()
     test_trafo_grids()
     test_idx_trafo_offset()
 end

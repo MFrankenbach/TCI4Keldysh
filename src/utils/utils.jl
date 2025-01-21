@@ -1354,9 +1354,13 @@ function report_mem(do_gc=false)
     println("---------- MEMORY REPORT ----------")
     if do_gc
         println("  Available system memory (before gc()): $(Sys.free_memory() / 1024^2) MB")
-        Base.GC.gc()
+        println("  GC live: $(Base.gc_live_bytes() / 1024^2) MB")
+        Base.GC.gc(true)
         println("  Garbage collected")
     end
+    println("  GC live: $(Base.gc_live_bytes() / 1024^2) MB")
+    println("  JIT: $(Base.jit_total_bytes() / 1024^2) MB")
+    println("  Max RSS: $(Sys.maxrss() / 1024^2) MB")
     println("  Total system memory: $(Sys.total_memory() / 1024^2) MB")
     println("  Available system memory: $(Sys.free_memory() / 1024^2) MB")
     println("-----------------------------------")
@@ -1482,7 +1486,7 @@ end
 function merged_legs_K1(channel::String)
     if channel=="t"
         return [(1,2), (3,4)]
-    elseif channel=="p"
+    elseif channel in ["p", "pNRG"]
         return [(1,3), (2,4)]
     elseif channel=="a"
         return [(1,4), (2,3)]
@@ -1585,7 +1589,7 @@ function equivalent_iK_K2(ik2::NTuple{3,Int}, channel::String, prime::Bool; merg
     l1,l2 = merged_legs_K2(channel, prime)    
     ret = []
     for k in ikunfold
-        ret_act = zeros(4)
+        ret_act = zeros(Int, 4)
         ret_act[l1] = k[1]
         ret_act[l2] = k[2]
         ret_act[ret_act.==0] .= ik2[[i!=merged_idx for i in 1:3]]
@@ -1595,9 +1599,30 @@ function equivalent_iK_K2(ik2::NTuple{3,Int}, channel::String, prime::Bool; merg
 end
 
 """
+Assign 4-component Keldysh index to 3-component Keldysh index of K2r(')
+"""
+function merge_iK_K2(ik::NTuple{4,Int}, channel::String, prime::Bool; merged_idx::Int=1)::NTuple{3,Int}
+    l1,l2 = merged_legs_K2(channel, prime)    
+    ik1 = merge_iK(ik[l1], ik[l2])
+    ret = [ik[l] for l in 1:4 if !(l in [l1,l2])]
+    insert!(ret, merged_idx, ik1)
+    return Tuple(ret)
+end
+
+"""
+Assign 4-component Keldysh index to 2-component Keldysh index of K1r
+"""
+function merge_iK_K1(ik::NTuple{4,Int}, channel::String)::NTuple{2,Int}
+    l12, l34 = merged_legs_K1(channel)    
+    ik1 = merge_iK(ik[l12[1]], ik[l12[2]])
+    ik2 = merge_iK(ik[l34[1]], ik[l34[2]])
+    return (ik1, ik2)
+end
+
+
+"""
 Get Keldysh 4-indices that coincide in ik1 component of K1
 * ik1: Keldysh idx of K1
-* merged_idx: which idx in ik1 should be unfolded into two indices
 """
 function equivalent_iK_K1(ik1::NTuple{2,Int}, channel::String)
     unfold1 = unfold_iK(ik1[1])
@@ -1605,7 +1630,7 @@ function equivalent_iK_K1(ik1::NTuple{2,Int}, channel::String)
     l1,l2 = merged_legs_K1(channel)    
     ret = []
     for (u1,u2) in Iterators.product(unfold1, unfold2)
-        ret_act = zeros(4)
+        ret_act = zeros(Int, 4)
         ret_act[collect(l1)] .= u1
         ret_act[collect(l2)] .= u2
         push!(ret, ret_act)
@@ -1760,4 +1785,43 @@ function read_broadening_params(path::String; channel="t")
         sigmak = read(f, "Hwidth")
     end
     return (γ, [sigmak])
+end
+
+function read_all_broadening_params(base_path; channel)
+    (γ, sigmak) = read_broadening_params(base_path; channel=channel)
+    broadening_kwargs = read_broadening_settings(joinpath(datadir(), base_path); channel=channel)
+    broadening_kwargs[:γ]=γ
+    broadening_kwargs[:sigmak]=sigmak
+    return broadening_kwargs
+end
+
+"""
+Group set into orbits w.r.t. operations in ops. Each op∈ops should map op:set->set
+"""
+function group_orbits(set::Set{T}, ops::Vector{<:Function}) where {T}
+    orbits = Vector{Set{T}}()
+    not_assigned = copy(set)
+    while !isempty(not_assigned)
+        s = first(not_assigned)
+        orbit = Set(vcat([op(s) for op in ops], [s]))
+        not_assigned = setdiff(not_assigned, orbit)
+        push!(orbits, orbit)
+    end
+    return orbits
+end
+
+function maybeparse(T::Type, val)
+    return isa(val,T) ? val : parse(T, val)
+end
+
+"""
+Override values in dst with values from src on matching keys.
+"""
+function override_dict!(src::Dict, dst::Dict)
+    for (key,val) in pairs(dst)
+        if haskey(src, key)
+            T_ = typeof(val)
+            dst[key] = maybeparse(T_, src[key])
+        end
+    end
 end

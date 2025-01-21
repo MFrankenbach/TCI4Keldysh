@@ -198,6 +198,24 @@ function _mult_Σ_KF(G_data::Array{ComplexF64,N}, Σ::Array{ComplexF64,NΣ}; idi
     return G_out
 end
 
+function Γbare_KF(PSFpath::String, flavor_idx::Int)
+    if flavor_idx==2
+        gam0 = load_Adisc_0pt(PSFpath, "Q12")
+        ret = zeros(ComplexF64, 2,2,2,2)
+        for iK in ids_KF(4)
+            if isodd(sum(iK))
+                ret[iK...] = gam0
+            end
+        end
+        return ret
+    else
+        return zeros(ComplexF64, 2,2,2,2)
+    end
+end
+
+_DEBUG_FULLVERTEX_SIE() = false
+_DEBUG_FULLVERTEX_SIE_DIR() = joinpath(TCI4Keldysh.pdatadir(), "V_KF_JULIA")
+
 function compute_Γfull_symmetric_estimator(
     formalism ::String,
     PSFpath::String,
@@ -260,6 +278,8 @@ function compute_Γfull_symmetric_estimator(
                         Γfull[slice...] .+= K2
                     end
                 else
+                    K2 /= sqrt(2)
+                    before = copy(Γfull)
                     for ik2 in ids_KF(3)
                         for iK in equivalent_iK_K2(ik2, ch, prime)
                             for i in axes(Γfull,nonfidx)
@@ -267,6 +287,11 @@ function compute_Γfull_symmetric_estimator(
                                 Γfull[slice..., iK...] .+= K2[:,:,ik2...]
                             end
                         end
+                    end
+                    if _DEBUG_FULLVERTEX_SIE()
+                        outdata = Γfull .- before
+                        outdir = joinpath(_DEBUG_FULLVERTEX_SIE_DIR(), "V_KF_$(channel_translate(channel))")
+                        h5write(joinpath(outdir, "V_KF_U3_$(channel_translate(ch))_$(prime).h5"), "K2", collect(outdata))
                     end
                 end
             else
@@ -285,16 +310,23 @@ function compute_Γfull_symmetric_estimator(
                 if formalism=="MF"
                     off_stride = K2strides*offset + sum(K2strides*changeMat) - sum(K2strides)
                     sv = StridedView(K2, size(Γfull), Tuple(K2strides * changeMat), off_stride)
-                    testsv = collect(sv)
+                    # testsv = collect(sv)
                     Γfull .+= collect(sv)
                 else
+                    K2 /= sqrt(2)
                     # take care of Keldysh components
+                    before = copy(Γfull)
                     for ik in Iterators.product(fill([1,2], 3)...)
                         off_stride = K2strides*offset + sum(K2strides*changeMat) - sum(K2strides)
                         sv = StridedView(K2[:,:,ik...], size(Γfull)[1:3], Tuple(K2strides * changeMat), off_stride)
                         for iK in equivalent_iK_K2(ik, ch, prime)
                             Γfull[:,:,:,iK...] .+= collect(sv)
                         end
+                    end
+                    if _DEBUG_FULLVERTEX_SIE()
+                        outdata = Γfull .- before
+                        outdir = joinpath(_DEBUG_FULLVERTEX_SIE_DIR(), "V_KF_$(channel_translate(channel))")
+                        h5write(joinpath(outdir, "V_KF_U3_$(channel_translate(ch))_$(prime).h5"), "K2", collect(outdata))
                     end
                 end
             end
@@ -311,27 +343,45 @@ function compute_Γfull_symmetric_estimator(
             if formalism=="MF"
                 Γfull .+= reshape(K1, (length(K1),1,1))
             else
+                K1 *= 0.5 
+                before = copy(Γfull)
                 for ik1 in ids_KF(2)
                     for iK in equivalent_iK_K1(ik1, ch)
                         Γfull[:,:,:,iK...] .+= reshape(K1[:,ik1...], (size(K1,1),1,1)) 
                     end
+                end
+                if _DEBUG_FULLVERTEX_SIE()
+                    outdata = Γfull .- before
+                    outdir = joinpath(_DEBUG_FULLVERTEX_SIE_DIR(), "V_KF_$(channel_translate(channel))")
+                    h5write(joinpath(outdir, "V_KF_U2_$(channel_translate(ch)).h5"), "K1", collect(outdata))
                 end
             end
         else
             changeMat = reshape(channel_change(channel, ch)[1,:], 1,3)
             ωs_extK1, offset = trafo_grids_offset(ωs_ext, changeMat)
             K1 = precompute_K1r(PSFpath, flavor_idx, formalism; ωs_ext=only(ωs_extK1), channel=ch, broadening_kwargs...)
+            printstyled("==== NORM K1 (channel=$(ch)): $(norm(K1))\n"; color=:magenta)
             if formalism=="MF"
                 off_stride = only(offset) + sum(changeMat) - 1
                 sv = StridedView(K1, size(Γfull), Tuple([1] * changeMat), off_stride)
                 Γfull .+= collect(sv)
             else
+                K1 *= 0.5
+                before = copy(Γfull)
+                printstyled("==== NORM BEFORE: $(norm(before))\n"; color=:magenta)
                 for ik1 in ids_KF(2)
                     for iK in equivalent_iK_K1(ik1, ch)
                         off_stride = only(offset) + sum(changeMat) - 1
-                        sv = StridedView(K1, size(Γfull)[1:3], Tuple([1] * changeMat), off_stride)
+                        sv = StridedView(K1[:,ik1...], size(Γfull)[1:3], Tuple([1] * changeMat), off_stride)
+                        printstyled("  == NORM SV: $(norm(collect(sv)))\n"; color=:magenta)
                         Γfull[:,:,:,iK...] .+= collect(sv)
                     end
+                end
+                printstyled("==== NORM AFTER: $(norm(Γfull))\n"; color=:magenta)
+                if _DEBUG_FULLVERTEX_SIE()
+                    outdata = Γfull .- before
+                    outdir = joinpath(_DEBUG_FULLVERTEX_SIE_DIR(), "V_KF_$(channel_translate(channel))")
+                    h5write(joinpath(outdir, "V_KF_U2_$(channel_translate(ch)).h5"), "K1", collect(outdata))
                 end
             end
         end

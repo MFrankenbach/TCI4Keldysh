@@ -1,3 +1,4 @@
+using TCI4Keldysh
 using QuanticsTCI
 using LinearAlgebra
 using Plots
@@ -10,6 +11,8 @@ using StatProfilerHTML
 using FastChebInterp
 import TensorCrossInterpolation as TCI
 import QuanticsGrids as QG
+
+default(right_margin=10Plots.mm)
 
 #=
 Different analyses of Keldysh core vertex interpolation.
@@ -191,108 +194,6 @@ function memory_multipole_kernel()
 
 end
 
-function V_KF_eval_accuracy(
-    refpath::String,
-    R::Int,
-    iK::Int,
-    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg"),
-    KEV::Type=TCI4Keldysh.MultipoleKFCEvaluator,
-    coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6, :nlevel=>4)
-    )
-
-    # load settings
-    refjson = only(
-        filter(f -> endswith(f, ".json"), readdir(refpath))
-    )
-    refsettings = TCI4Keldysh.readJSON(refjson, refpath)
-    ωmax = refsettings["ommax"]
-    broadening_kwargs_ = refsettings["broadening_kwargs"]
-    broadening_kwargs = Dict{Symbol,Any}()
-    for (key,val) in pairs(broadening_kwargs_)
-        broadening_kwargs[Symbol(key)] = val
-    end
-    γ = refsettings["gamma"]
-    sigmak = Vector{Float64}(refsettings["sigmak"])
-    channel = refsettings["channel"]
-    flavor_idx = refsettings["flavor_idx"]
-    if !(R in refsettings["Rs"])
-        error("Requested grid size is not available")
-    end
-
-    T = TCI4Keldysh.dir_to_T(PSFpath)
-
-    # prepare core evaluator
-    broadening_kwargs[:estep] = 20
-
-    ωconvMat = TCI4Keldysh.channel_trafo(channel)
-    # make frequency grid
-    D = size(ωconvMat, 2)
-    @assert D==3
-    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
-
-    # all 16 4-point correlators
-    letters = ["F", "Q"]
-    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
-    op_labels = ("1", "1dag", "3", "3dag")
-    op_labels_symm = ("3", "3dag", "1", "1dag")
-    is_incoming = (false, true, false, true)
-
-    # create correlator objects
-    Ncorrs = length(letter_combinations)
-    GFs = Vector{TCI4Keldysh.FullCorrelator_KF{D}}(undef, Ncorrs)
-    PSFpath_4pt = joinpath(PSFpath, "4pt")
-    filelist = readdir(PSFpath_4pt)
-    for l in 1:Ncorrs
-        letts = letter_combinations[l]
-        println("letts: ", letts)
-        ops = [letts[i]*op_labels[i] for i in 1:4]
-        if !any(TCI4Keldysh.parse_Ops_to_filename(ops) .== filelist)
-            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
-        end
-        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...)
-    end
-
-    # evaluate self-energy
-    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
-    @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
-    ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
-    Σω_grid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
-    (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
-
-    # frequency grid offset for self-energy
-    ΣωconvMat = incoming_trafo * ωconvMat
-    corner_low = [first(ωs_ext[i]) for i in 1:D]
-    corner_idx = ones(Int, D)
-    corner_image = ΣωconvMat * corner_low
-    idx_image = ΣωconvMat * corner_idx
-    desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
-    ωconvOff = desired_idx .- idx_image
-
-    sev = TCI4Keldysh.SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
-
-    gev = TCI4Keldysh.ΓcoreEvaluator_KF(GFs, iK, sev, KEV; coreEvaluator_kwargs...)
-
-    # load reference
-    refdatafile = joinpath(refpath, "V_KF_$(channel)_R=$(R).h5")
-    refdata = h5read(refdatafile, "V_KF")[:,:,:,TCI4Keldysh.KF_idx(iK,3)...]
-    # SETUP DONE
-
-    # check
-    N = 10^4
-    errs = Vector{Float64}(undef, N)
-    vals = Vector{ComplexF64}(undef, N)
-    idx_range = Base.OneTo.(size(refdata))
-    Threads.@threads for n in 1:N
-        idx = ntuple(i -> rand(idx_range[i]), 3)
-        val = gev(idx...)
-        errs[n] = abs(val - refdata[idx...])
-        vals[n] = val
-    end
-
-    h5write("errs.h5", "vals", vals)
-    h5write("errs.h5", "errs", errs)
-end
-
 """
 Investigate potential of Chebychev interpolation OR blockwise SVD,
 i.e., 'generalized multipole expansion'.
@@ -469,7 +370,15 @@ function plot_broadened_kernel()
 end
 
 
-function triptych_V_KF(qttfile::AbstractString, PSFpath::AbstractString; folder::AbstractString)
+"""
+Compare TCI-ed Keldysh vertex to exact result; ether precomputed and stored in `refdata` or
+computed on the fly.
+"""
+function triptych_V_KF_data(qttfile::AbstractString, PSFpath::AbstractString;
+    folder::AbstractString, refdata=nothing,
+    do_plot=false,
+    do_check_diff=true
+    )
     (tci, grid) = deserialize(joinpath(folder, qttfile)) 
     qtt_data = TCI4Keldysh.readJSON(qttfile_to_json(qttfile), folder)
     R = grid.R
@@ -481,7 +390,8 @@ function triptych_V_KF(qttfile::AbstractString, PSFpath::AbstractString; folder:
     iK = qtt_data["iK"]
     iKtuple = TCI4Keldysh.KF_idx(iK, 3)
     tolerance = qtt_data["tolerance"]
-    flavor_idx = qtt_data["flavor_idx"]
+    # flavor_idx = qtt_data["flavor_idx"]
+    flavor_idx = 1
     ωmax = qtt_data["ommax"]
     sigmak = [only(qtt_data["sigmak"])]
     γ = qtt_data["gamma"]
@@ -489,70 +399,67 @@ function triptych_V_KF(qttfile::AbstractString, PSFpath::AbstractString; folder:
     # reference data
     Rplot = 5
     Nhplot = 2^(Rplot-1)
-    ωmax_plot = 2^(Rplot) * ωmax/2^R
-    offset = Nhplot
-    omfer = TCI4Keldysh.KF_grid_fer(ωmax_plot, Rplot)
-    dω = omfer[2] - omfer[1]
+    offset = 0
     Nbos = max(2, 2*abs(offset))
-    ombos = TCI4Keldysh.KF_grid_bos_(dω * div(Nbos,2), Nbos)
-    omsig = TCI4Keldysh.KF_grid_fer_(ωmax_plot + ombos[end], 2^Rplot + Nbos)
-    ωconvMat = TCI4Keldysh.channel_trafo(channel)
 
-    @show dω
-    @show length(omsig)
-    @show length(ombos)
-    @show length(omfer)
+    gamcore = nothing
 
-    # TODO: Load precomputed vertex
-    # TODO: Somehow fails for Rplot=5?
-    (ΣL,ΣR) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(
-        PSFpath,
-        omsig; flavor_idx=flavor_idx,
-        T=T,
-        sigmak=sigmak,
-        γ=γ,
-        broadening_kwargs...
+    if isnothing(refdata)
+
+        ωmax_plot = 2^(Rplot) * ωmax/2^R
+        omfer = TCI4Keldysh.KF_grid_fer(ωmax_plot, Rplot)
+        dω = omfer[2] - omfer[1]
+        ombos = TCI4Keldysh.KF_grid_bos_(dω * div(Nbos,2), Nbos)
+        omsig = TCI4Keldysh.KF_grid_fer_(ωmax_plot + ombos[end], 2^Rplot + Nbos)
+        ωconvMat = TCI4Keldysh.channel_trafo(channel)
+        @show dω
+        @show length(omsig)
+        @show length(ombos)
+        @show length(omfer)
+
+        # TODO: Somehow fails for Rplot=5?
+        (ΣL,ΣR) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(
+            PSFpath,
+            omsig; flavor_idx=flavor_idx,
+            T=T,
+            sigmak=sigmak,
+            γ=γ,
+            broadening_kwargs...
+            )
+        gamcore = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+            "KF",
+            joinpath(PSFpath, "4pt"),
+            ΣR;
+            Σ_calcL=ΣL,
+            T=T,
+            flavor_idx=flavor_idx,
+            ωs_ext=(ombos,omfer,omfer),
+            ωconvMat=ωconvMat,
+            sigmak=sigmak,
+            γ=γ,
+            broadening_kwargs...
         )
-    gamcore = TCI4Keldysh.compute_Γcore_symmetric_estimator(
-        "KF",
-        joinpath(PSFpath, "4pt"),
-        ΣR;
-        Σ_calcL=ΣL,
-        T=T,
-        flavor_idx=flavor_idx,
-        ωs_ext=(ombos,omfer,omfer),
-        ωconvMat=ωconvMat,
-        sigmak=sigmak,
-        γ=γ,
-        broadening_kwargs...
-    )
-    # reference DONE
+        # reference DONE
 
-    # tci values
-    println("-- Rank of tt : $(TCI.rank(tci))")
-    oneslice = Nhalf-Nhplot+1 : Nhalf+Nhplot
-    plot_slice = (Nhalf+1+offset:Nhalf+1+offset, oneslice, oneslice)
-    ids = Base.OneTo.(length.(plot_slice))
-    tcival = zeros(ComplexF64, length.(plot_slice))
-    Threads.@threads for id in collect(Iterators.product(ids...))
-        w = ntuple(i -> plot_slice[i][id[i]], 3)
-        tcival[id...] = tci(QG.origcoord_to_quantics(grid, w))
+        @show size(gamcore)
+    else
+        gamcore = h5read(refdata, "V_KF")
+        omgrid_ref = h5read(refdata, "omgrid1")
+        if abs(ωmax - omgrid_ref[end])>1.e-8
+            @warn "Frequency grids incompatible!"
+        end
+        @info "Read Γcore of size $(size(gamcore))"
     end
-    # tci DONE
 
-    @show size(gamcore)
+    tcival = TCI4Keldysh.qinterleaved_fattensor_to_regular(
+        TCI4Keldysh.qtt_to_fattensor(tci.sitetensors),
+        R
+    )
+    @info "Contracted tci to tensor of size $(size(tcival))"
 
-    do_check_diff = true
     if do_check_diff
         println("  Checking error...")
-        diffslice = (Nhalf+1-Nhplot : Nhalf+1+Nhplot, Nhalf-Nhplot+1 : Nhalf+Nhplot, Nhalf-Nhplot+1 : Nhalf+Nhplot)
-        ids = Base.OneTo.(length.(diffslice))
-        tcival = zeros(ComplexF64, length.(diffslice))
-        Threads.@threads for id in collect(Iterators.product(ids...))
-            w = ntuple(i -> diffslice[i][id[i]], 3)
-            tcival[id...] = tci(QG.origcoord_to_quantics(grid, w))
-        end
-        diff = abs.(tcival .- gamcore[:,:,:,iKtuple...]) ./ tci.maxsamplevalue
+        diff = abs.(tcival .- gamcore[1:size(tcival,1),:,:,iKtuple...]) ./ tci.maxsamplevalue
         @show tci.maxsamplevalue
         @show maximum(abs.(gamcore[:,:,:,iKtuple...]))
         fname = joinpath(TCI4Keldysh.pdatadir(), "_diff.h5")
@@ -560,25 +467,215 @@ function triptych_V_KF(qttfile::AbstractString, PSFpath::AbstractString; folder:
             rm(fname)
         end
         h5write(fname, "diff", diff)
+        h5write(fname, "qttdata", tcival)
+        h5write(fname, "reference", gamcore)
+
+        # print some accuracy measures
+            # p-norms
+        dom = 2 * ωmax / 2^R
+        dV = dom^3
+        gamcore_iK = gamcore[1:2^R,:,:,iKtuple...]
+        for p in [1.0,2.0,3.0]
+            println("$(round(Int,p))-norm")
+            tcn = norm(tcival, p) * dV
+            gn = norm(gamcore_iK, p) * dV
+            @show (tcn, gn, abs(tcn-gn)/gn)
+        end
+
+            # integration along frequencies
+        for dim in 1:3
+            println("Integrate along dim: $dim")
+            tcs = sum(tcival; dims=dim) * dom
+            gs = sum(gamcore_iK; dims=dim) * dom
+            tcs = dropdims(tcs; dims=dim)
+            gs = dropdims(gs; dims=dim)
+            heatmap(abs.(gs))
+            savefig("integral_ref$dim.pdf")
+            heatmap(abs.(tcs))
+            savefig("   integral_tci$dim.pdf")
+            heatmap(log10.(abs.(tcs.-gs) / maximum(abs.(gs))))
+            savefig("integral_diff$dim.pdf")
+        end
     end
 
+    if do_plot
+        # tci values
+        println("-- Rank of tt : $(TCI.rank(tci))")
+        # oneslice = Nhalf-Nhplot+1 : Nhalf+Nhplot
+        # plot_slice = (Nhalf+1+offset:Nhalf+1+offset, oneslice, oneslice)
+        # ids = Base.OneTo.(length.(plot_slice))
+        # tcival = zeros(ComplexF64, length.(plot_slice))
+        # Threads.@threads for id in collect(Iterators.product(ids...))
+        #     w = ntuple(i -> plot_slice[i][id[i]], 3)
+        #     tcival[id...] = tci(QG.origcoord_to_quantics(grid, w))
+        # end
+        # tci DONE
 
-    # plot
-    maxval = maximum(abs.(gamcore[:,:,:,iKtuple...]))
-    scfun(x) = log10(abs(x))
-    heatmap(
-        scfun.(gamcore)[div(Nbos,2)+1+offset,:,:, iKtuple...];
-        clim=(log10(maxval) + log10(tolerance), log10(maxval))
-        )
-    savefig("V_KF_ref.pdf")
-    heatmap(
-        scfun.(tcival)[1,:,:];
-        clim=(log10(maxval) + log10(tolerance), log10(maxval))
-        )
-    savefig("V_KF_tci.pdf")
+        # plot
+        maxval = maximum(abs.(gamcore[:,:,:,iKtuple...]))
+        scfun(x) = log10(abs(x))
+        heatmap(
+            scfun.(gamcore)[2^(R-1)+1+offset,:,:, iKtuple...];
+            # scfun.(gamcore)[:,2^(R-1)+offset,:, iKtuple...];
+            clim=(log10(maxval) + log10(tolerance), log10(maxval))
+            )
+        savefig("V_KF_ref.pdf")
+        heatmap(
+            scfun.(tcival)[2^(R-1)+1+offset,:,:];
+            # scfun.(gamcore)[:,2^(R-1)+offset,:, iKtuple...];
+            clim=(log10(maxval) + log10(tolerance), log10(maxval))
+            )
+        savefig("V_KF_tci.pdf")
+    end
+    return true
 end
 
-# qttfile = "keldyshcore_R_min=8_max=8_tol=-3_beta=2000.0_R=8_qtt.serialized"
-# folder = "KF_KCS_rankdata/V_KF_tol3_R8_9pivot"
-# PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg")
-# triptych_V_KF(qttfile, PSFpath; folder=folder)
+function compress_julia_precomputed(refdata::String, iK::Int, store::Bool=true; tcikwargs...)
+    gamcore = h5read(refdata, "V_KF")
+    iKtuple = TCI4Keldysh.KF_idx(iK,3)
+    R = round(Int, trunc(log2(size(gamcore,1))))
+
+    gc = gamcore[1:2^R,1:2^R,1:2^R,iKtuple...]
+    unfsc = :fused
+    qtt, _, _ = quanticscrossinterpolate(gc; unfoldingscheme=unfsc, tcikwargs...)
+    @show TCI4Keldysh.rank(qtt)
+    @show TCI.linkdims(qtt.tci)
+    tcival = if unfsc==:interleaved
+        tcival = TCI4Keldysh.qinterleaved_fattensor_to_regular(
+            TCI4Keldysh.qtt_to_fattensor(qtt.tci.sitetensors),
+            R
+        )
+    else
+        qttfat = TCI4Keldysh.qtt_to_fattensor(qtt.tci.sitetensors)
+        qttfat = reshape(qttfat, ntuple(_->2, 3*R))
+        TCI4Keldysh.qinterleaved_fattensor_to_regular(
+            qttfat, R
+        )
+    end
+
+    if store
+        maxval = maximum(abs.(gc))
+        diff = abs.(tcival .- gc) ./ maxval
+        @show maximum(diff)
+
+        fname = joinpath(TCI4Keldysh.pdatadir(), "_diff_prec.h5")
+        if isfile(fname)
+            rm(fname)
+        end
+        h5write(fname, "diff", diff)
+        h5write(fname, "qttdata", tcival)
+        h5write(fname, "reference", gamcore)
+        println("  File $fname written")
+    else
+        println("  DONE")
+    end
+end
+
+function triptych_V_KF_plot(slice_dim::Int, slice_idx::Int)
+
+    iK = 2
+    tolerance = 1.e-2
+    iKtuple = TCI4Keldysh.KF_idx(iK, 3)
+    fname = "_diff_prec.h5"
+    @show fname
+    gamcore = h5read(fname, "reference")[:,:,:,iKtuple...]
+    tcival = h5read(fname, "qttdata")
+    dd = h5read(fname, "diff")
+    maxval = maximum(abs.(gamcore))
+
+    @show maximum(abs.(dd))
+    @show argmax(abs.(dd))
+
+    slice = ntuple(i -> ifelse(i==slice_dim, slice_idx, Colon()), 3)
+    scfun(x) = log10(abs(x))
+    heatmap(
+        scfun.(gamcore[slice...]);
+        clim=(log10(maxval) + log10(tolerance)-1, log10(maxval))
+    )
+    savefig("V_KF_ref_$(slice_dim)$(slice_idx)fix.pdf")
+    heatmap(
+        scfun.(tcival[slice...]);
+        clim=(log10(maxval) + log10(tolerance)-1, log10(maxval))
+    )
+    savefig("V_KF_tci_$(slice_dim)$(slice_idx)fix.pdf")
+    heatmap(
+        log10.(abs.(dd[slice...]));
+        clim=(log10(tolerance)-1, -1)
+    )
+    savefig("V_KF_diff_$(slice_dim)$(slice_idx)fix.pdf")
+end
+
+"""
+Compare TCI-compression of:
+- pointwisely evaluated vertex
+- TCI4Keldysh precomputed vertex
+- MuNRG precomputed vertex (differs slightly due to broadening implementation)
+"""
+function compare_pweval_Julia_MuNRG(iK::Int, munrg_compression::String, julia_data::String="_diff_prec.h5", pw_data="_diff.h5")
+    
+    iKtuple = TCI4Keldysh.KF_idx(iK,3)
+    # pointwise evaluation, generated with triptych_V_KF_data
+    println("  Loading data")
+    gamcore_pw = h5read(pw_data, "reference")[:,:,:,iKtuple...]
+    tcival_pw = h5read(pw_data, "qttdata")
+    err_pw = h5read(pw_data, "diff")
+    @show maximum(err_pw)
+
+    # Julia
+    gamcore_jl = h5read(julia_data, "reference")[:,:,:,iKtuple...]
+    tcival_jl = h5read(julia_data, "qttdata")
+    err_jl = h5read(julia_data, "diff")
+    @show maximum(err_jl)
+
+    # MuNRG
+    gamcore_mat = h5read(munrg_compression, "reference")
+    tcival_mat = h5read(munrg_compression, "qttdata")
+    diff_mat = h5read(munrg_compression, "diff")
+    err_mat = abs.(diff_mat) ./ maximum(abs.(gamcore_mat))
+    @show maximum(err_mat)
+
+    @show size(gamcore_pw)
+    @show size(gamcore_jl)
+    @show size(gamcore_mat)
+    println("\n  Analyze data")
+
+    # plot histograms of errors
+end
+
+function plot_slice(data::Array{T,3}, slice_dim::Int, slice_idx::Int; n_decades::Int=5, ommax::Float64) where {T<:Number}
+    scfun(x::T) = log10(abs(x))    
+    slice_tuple = ntuple(i -> ifelse(i==slice_dim, slice_idx, Colon()), 3)
+    lmaxval = log10(maximum(abs.(data)))
+    p = TCI4Keldysh.default_plot()
+    heatmap!(p, scfun.(data[slice_tuple...]); clim=(lmaxval - n_decades, lmaxval))
+    ntick = 6
+    plot_dims = [i for i in 1:3 if i!=slice_dim]
+    ticksteps = [div(size(data, i), ntick) for i in plot_dims]
+    tickpos = [collect(1:ticksteps[i]:size(data,plot_dims[i])) for i in 1:2]
+    ticklabels = [string.(collect(range(-ommax, ommax; length=length(tickpos[i])))) for i in 1:2]
+    xticks!(p, tickpos[1], ticklabels[1])
+    yticks!(p, tickpos[2], ticklabels[2])
+    savefig(p, "foo.pdf")
+end
+
+# TODO
+#=
+- interpolate precomputed MuNRG and Julia with initial pivots
+- so far: bond dimensions for MuNRG slightly lower than pointwise eval;
+  see whether this changes with in initial pivots
+- check whether interpolations fails similarly for all three compressions
+=#
+
+R = 8
+qttfile = "keldyshcore_R_min=$(R)_max=$(R)_tol=-3_beta=2000.0_R=$(R)_qtt.serialized"
+folder = "cluster_output_KCS/V_KF_tol3_R$(R)_9pivot_global"
+# qttfile = "KF_gammacore_iK=2_R_min=5_max=9_tol=-2_beta=2000.0_omega-0.32_to_0.32_iK=2_broaden_γ=0.00_σ=0.40_R=8_qtt.serialized"
+# folder = "cluster_output/V_KF_pch_tol2_iK2_R0509"
+PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg")
+refdata = "cluster_output/V_KF_conventional_u1.50_ommax1.5/V_KF_p_R=$(R).h5"
+
+# triptych_V_KF_data(qttfile, PSFpath; folder=folder, refdata=refdata, do_plot=false, do_check_diff=true)
+# compress_julia_precomputed(refdata, 2, true; tolerance=1.e-3)
+
+# munrg_compression = "keldysh_seungsup_results/vertex_iK=2_tol=-2.h5"
+# compare_pweval_Julia_MuNRG(2, munrg_compression)

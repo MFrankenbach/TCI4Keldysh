@@ -14,6 +14,35 @@ function default_T()
     return 1.0/(2000.0)
 end
 
+function plot_ImGR_2pt()
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+    base_path = dirname(rstrip(PSFpath, '/'))
+    npt = 2
+    D = npt-1
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    Ops = ["F1", "F1dag"]
+
+    R = 12
+    ωmax = 0.3183098861837907
+    ωmin = -ωmax
+    ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
+    ωconvMat = TCI4Keldysh.ωconvMat_K1()
+    flavor_idx = 1
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path)
+    KFC = TCI4Keldysh.FullCorrelator_KF(
+        PSFpath, Ops;
+        T=T, ωs_ext=ωs_ext, flavor_idx=flavor_idx, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken",
+        emin=2.5e-5, emax=50.0, estep=50
+        )
+
+    KFCval = TCI4Keldysh.precompute_all_values(KFC)
+
+    PSF = imag.(KFCval[:,2,1])
+
+    plot(only(ωs_ext), PSF)
+    savefig("PSF.pdf")
+end
+
 
 function load_AcontAdisc(
     γ::Float64, sigmak::Float64, ωmax::Float64=1.0;

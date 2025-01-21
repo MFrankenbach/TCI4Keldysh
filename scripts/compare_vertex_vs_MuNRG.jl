@@ -310,23 +310,23 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
     # broadening_kwargs[:emax] += 20.0
     # broadening_kwargs[:emin] /= 100.0
     if !haskey(broadening_kwargs, :estep)
-        broadening_kwargs[:estep] = 500
+        broadening_kwargs[:estep] = 100
     end
 
 
     # TCI4Keldysh
     ωs_ext = vec(grid[end])
     K1_test_alliK = TCI4Keldysh.precompute_K1r(PSFpath, flavor, "KF"; channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)
-    for ik in Iterators.product(ntuple(_->[1,2], 2)...)
-        @show (ik, norm(K1_test_alliK[:,ik...]))
-    end
+    # for ik in Iterators.product(ntuple(_->[1,2], 2)...)
+    #     @show (ik, norm(K1_test_alliK[:,ik...]))
+    # end
 
     # TODO: translate_K1_iK does not seem to be correct -> probably iKtuple should be permuted somehow...
     # ik = translate_K1_iK(iKtuple, channel)
     ik = (2,2)
     K1_test = K1_test_alliK[:,ik...]
 
-    # seems to be the right prefactor; WHY this factor?
+    # REASON FOR PREFACTOR: Eq. (100) SIE paper (Lihm et. al), factors P^k1k2k12 and P^k3k4k34 introduce two times 1/√2
     fac = 1/2
 
     if ik==(2,2)
@@ -699,7 +699,7 @@ function check_K2_KF(;channel="t", prime=false)
     Vpath = joinpath(TCI4Keldysh.datadir(), basepath, "V_KF_" * TCI4Keldysh.channel_translate(channel))
     
     # load K2
-    flavor = 1
+    flavor = 2
     K2 = nothing
     grid = nothing
     channel_id = if channel=="t"
@@ -735,29 +735,40 @@ function check_K2_KF(;channel="t", prime=false)
     K2D = K2[slice...]
     # move bosonic frequency to first argument
     K2D = permutedims(K2D, [2,1,3,4,5,6])
+    reverse!(K2D; dims=(1,2))
 
     # TCI4Keldysh
-    T = TCI4Keldysh.dir_to_T(PSFpath)
     permute!(grid, [3,1,2])
-    ωconvMat = TCI4Keldysh.channel_trafo_K2(channel,prime)
     ωs_ext = ntuple(i -> real.(vec(grid[i])), 2)
-    op_labels = TCI4Keldysh.oplabels_K2(channel,prime)
     (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath)
     broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath)
-    (ΣL, ΣR) = TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor,T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
-    # ΣR = TCI4Keldysh.calc_Σ_KF_sIE(PSFpath, ωs_Σ; flavor_idx=flavor,T=T)
-    printstyled("  Compute K2...\n"; color=:blue)
-    K2julia = TCI4Keldysh.compute_K2r_symmetric_estimator(
-        "KF",
+    broadening_kwargs[:estep] = 20
+    # T = TCI4Keldysh.dir_to_T(PSFpath)
+    # ωconvMat = TCI4Keldysh.channel_trafo_K2(channel,prime)
+    # op_labels = TCI4Keldysh.oplabels_K2(channel,prime)
+    # (ΣL, ΣR) = TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor,T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+    # K2julia = TCI4Keldysh.compute_K2r_symmetric_estimator(
+    #     "KF",
+    #     PSFpath,
+    #     op_labels,
+    #     ΣR;
+    #     Σ_calcL=ΣL,
+    #     # Σ_calcL=nothing,
+    #     T=T,
+    #     flavor_idx=flavor,
+    #     ωs_ext=ωs_ext,
+    #     ωconvMat=ωconvMat,
+    #     γ=γ,
+    #     sigmak=sigmak,
+    #     broadening_kwargs...
+    # )
+    K2julia = TCI4Keldysh.precompute_K2r(
         PSFpath,
-        op_labels,
-        ΣR;
-        Σ_calcL=ΣL,
-        # Σ_calcL=nothing,
-        T=T,
-        flavor_idx=flavor,
+        flavor,
+        "KF";
         ωs_ext=ωs_ext,
-        ωconvMat=ωconvMat,
+        channel=channel,
+        prime=prime,
         γ=γ,
         sigmak=sigmak,
         broadening_kwargs...
@@ -765,21 +776,19 @@ function check_K2_KF(;channel="t", prime=false)
     @show size(K2julia)
     @show size(K2D)
 
-    error("nyi")
+    # REASON FOR PREFACTOR: Eq. (100) SIE paper (Lihm et. al), factor P introduces 1/√2
+    fac = 1.0/sqrt(2)
+    K2julia .*= fac
 
-    # t-channel: no sign
-    # p-channel: 0
-    # a-channel: minus sign if prime===false
-    sign = ifelse(channel=="a" && !prime, -1, 1)
-    K2julia *= sign
-    reverse!(K2julia)
-    heatmap(real.(K2julia))
-    savefig("K2.pdf")
-    heatmap(real.(K2D))
-    savefig("K2_ref.pdf")
-    @show maximum(abs.(real.(K2D .- K2julia)))
-    @show maximum(abs.(imag.(K2D .- K2julia)))
-    @show maximum(abs.(K2D .- K2julia))
+    # check all Keldysh components
+    for ik in TCI4Keldysh.ids_KF(4)
+        maxref = maximum(abs.(K2D[:,:,ik...]))
+        ik3 = TCI4Keldysh.merge_iK_K2(ik, channel, prime; merged_idx=1)
+        diff = K2julia[:,:,ik3...] .- K2D[:,:,ik...]
+        println("Norm REF: $(norm(K2D[:,:,ik...]))")
+        println("Norm JULIA: $(norm(K2julia[:,:,ik3...]))")
+        println("Error for ik=$(ik)∼$(ik3): $(maximum(abs.(diff)) / maxref)\n") 
+    end
 end
 
 
@@ -1143,7 +1152,7 @@ function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
 
     broadening_kwargs = read_broadening_settings(joinpath(TCI4Keldysh.datadir(), base_path); channel=channel)
     if !haskey(broadening_kwargs, "estep")
-        broadening_kwargs[:estep] = 200
+        broadening_kwargs[:estep] = 100
     end
     # Σ_ref = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, om_sig; T=T, flavor_idx=spin, sigmak, γ, broadening_kwargs...)
     (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=spin, sigmak, γ, broadening_kwargs...)
@@ -1298,6 +1307,41 @@ function compress_precomputed_V_KF(Γcore_ref::Array{ComplexF64,7}, iK::Int, cha
 
     @show TCI4Keldysh.rank(qtt)
     return TCI.linkdims(qtt.tci)
+end
+
+function plot_tci_triptych(ref::Array{T,3}, tcival::Array{T,3}, err::Array{Float64,3}, tolerance, slice_dim::Int, slice_idx::Int) where {T}
+    maxval = maximum(abs.(ref))
+
+    slice = ntuple(i -> ifelse(i==slice_dim, slice_idx, Colon()), 3)
+    scfun(x) = log10(abs(x))
+    heatmap(
+        scfun.(ref[slice...]);
+        clim=(log10(maxval) + log10(tolerance), log10(maxval))
+    )
+    savefig("ref_$(slice_dim)$(slice_idx)fix.pdf")
+    heatmap(
+        scfun.(tcival[slice...]);
+        clim=(log10(maxval) + log10(tolerance), log10(maxval))
+    )
+    savefig("tci_$(slice_dim)$(slice_idx)fix.pdf")
+    heatmap(
+        log10.(abs.(err[slice...]));
+        clim=(log10(tolerance), -1)
+    )
+    savefig("diff_$(slice_dim)$(slice_idx)fix.pdf")
+end
+
+"""
+Reference - TCI - error for precomputed MuNRG Keldysh vertex
+"""
+function triptych_precomputed_V_KF(iK::Int, tolerance::Float64)
+    tci = h5read(joinpath(precompressed_datadir(), precomp_compr_filename(iK, tolerance)), "qttdata")
+    ref = h5read(joinpath(precompressed_datadir(), precomp_compr_filename(iK, tolerance)), "reference")
+    err = abs.(h5read(joinpath(precompressed_datadir(), precomp_compr_filename(iK, tolerance)), "diff")) ./ maximum(abs.(ref))
+
+    @show argmax(err)
+    @show maximum(err)
+    plot_tci_triptych(ref, tci, err, tolerance, 1, 95)
 end
 
 function compress_precomputed_V_MF(channel::String, flavor_idx::Int=1; fullvertex=false, qtcikwargs...)

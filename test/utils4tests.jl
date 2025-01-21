@@ -1,4 +1,6 @@
 using Random 
+using LinearAlgebra
+using HDF5
 
 function get_Adisc_δpeak_mp(idx_ω′s, Nωs_pos, D; 
     ωdisc_min = 1.e-6,

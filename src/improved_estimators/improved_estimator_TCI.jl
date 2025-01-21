@@ -3,7 +3,7 @@ using BenchmarkTools
 Compute interection vertex with symmetric improved estimators and TCI
 =#
 
-DEBUG_TCI_KF_RAM() = false
+DEBUG_TCI_KF_RAM() = true
 
 # ========== MATSUBARA
 
@@ -123,9 +123,13 @@ function read_GFs_Γcore!(
     end
 end
 
-function letter_combonations_Γcore()
+function letter_combinations_Γcore()
     letters = ["F", "Q"]
     return kron(kron(letters, letters), kron(letters, letters))
+end
+
+function letter_combinations_K2()
+    return ["FF", "FQ", "QF", "QQ"]
 end
 
 """
@@ -490,7 +494,7 @@ function Γ_core_TCI_MF(
     ωs_ext = MF_npoint_grid(T, Nhalf, D)
 
     # all 16 4-point correlators
-    letter_combinations = letter_combonations_Γcore()
+    letter_combinations = letter_combinations_Γcore()
     is_incoming = (false, true, false, true)
 
     Ncorrs = length(letter_combinations)
@@ -607,6 +611,8 @@ function Γ_core_TCI_MF(
 
 end
 
+# ==== Lower-dim. asymptotic contributions K1r and K2r(')
+
 """
 Second+third row in Fig 13, Lihm et. al., split in 6 terms in a, p, t channels
 Return 2*R bit quantics tensor train (2D function)
@@ -625,7 +631,7 @@ function K2_TCI(
     ωs_ext = MF_npoint_grid(T, Nhalf, 2)    
 
     # for treating fat dots
-    letter_combinations = ["FF", "FQ", "QF", "QQ"]
+    letter_combinations = letter_combinations_K2()
     op_labels = ["1", "1dag", "3", "3dag"]
     incoming_label = [false, true, false, true]
 
@@ -681,6 +687,7 @@ function precompute_K2r(
         ωs_ext::NTuple{2,Vector{Float64}},
         channel="t",
         prime=false,
+        broadening_kwargs_...
         )
     T = dir_to_T(PSFpath)
     ωconvMat = channel_trafo_K2(channel,prime)
@@ -709,8 +716,24 @@ function precompute_K2r(
 
         (γ, sigmak) = read_broadening_params(basepath)
         broadening_kwargs = read_broadening_settings(basepath)
-        @assert isodd(length(ωs_ext[1]))
-        @assert iseven(length(ωs_ext[2]))
+        broaden_dict = Dict(broadening_kwargs_)
+        override_dict!(broaden_dict, broadening_kwargs)
+        if !haskey(broadening_kwargs, :estep) && haskey(broaden_dict, :estep)
+            broadening_kwargs[:estep] = broaden_dict[:estep]
+        end
+        γ = if haskey(broaden_dict,:γ)
+                broaden_dict[:γ]
+            else
+                γ
+            end
+        sigmak = if haskey(broaden_dict,:sigmak)
+                broaden_dict[:sigmak]
+            else
+                sigmak
+            end
+
+        # @assert isodd(length(ωs_ext[1]))
+        # @assert iseven(length(ωs_ext[2]))
         # Nfer = length(ωs_ext[2])
         # ωmax = ωs_ext[1][end]
         # ωs_Σ = KF_grid_fer_(ωmax, 2*Nfer)
@@ -742,7 +765,7 @@ end
 K1 for each channel on 1D frequency grid, both MF and KF
 TODO: Move this elsewhere? Not related to TCI...
 """
-function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ext::Vector{Float64}, channel="t", broadening_kwargs...)
+function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; mode=:normal, ωs_ext::Vector{Float64}, channel="t", broadening_kwargs...)
 
     T = dir_to_T(PSFpath)
     ops = channel_K1_Ops(channel)
@@ -772,7 +795,13 @@ function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; ωs_ex
             broadening_kwargs...);
     end
     sign = TCI4Keldysh.channel_K1_sign(channel)
-    return sign * TCI4Keldysh.precompute_all_values(G)
+    if mode==:normal
+        return sign * precompute_all_values(G)
+    elseif mode==:fdt
+        return sign * precompute_all_values_FDT(G, T, false)
+    else
+        error("Invalid mode $mode")
+    end
 end
 
 """
@@ -838,6 +867,224 @@ function K1_TCI(
 end
 
 """
+Struct needed to serialize the self-energy evaluating function in Γcore_TCI_KF
+TODO: Do this more cleanly / consistently?
+"""
+struct SigmaEvaluator_KF <: Function
+    Σ_R::Array{ComplexF64,3}
+    Σ_L::Array{ComplexF64,3}
+    ΣωconvMat::Matrix{Int}
+    ωconvOff::Vector{Int}
+end
+
+function (sev::SigmaEvaluator_KF)(row::Int, is_inc::Bool, w::Vararg{Int,N}) where {N}
+    w_int = dot(sev.ΣωconvMat[row,:], SA[w...]) + sev.ωconvOff[row]
+    if is_inc
+        return sev.Σ_R[w_int,:,:]
+    else
+        return sev.Σ_L[w_int,:,:]
+    end
+end
+
+"""
+Evaluate K2 class pointwise on 2D frequency grid.
+"""
+struct K2Evaluator_KF
+    GFevs::Vector{FullCorrEvaluator_KF{2,ComplexF64}}
+    prime::Bool
+    channel::AbstractString
+    ωs_ext::NTuple{2,Vector{Float64}}
+    is_incoming::NTuple{2,Bool}
+    ωconvMat::Matrix{Int} # 2x3 Matrix
+    sign::Int
+    sevs::Vector{SigmaEvaluator_KF}
+
+    function K2Evaluator_KF(
+        PSFpath::String,
+        ωs_ext::NTuple{2,Vector{Float64}},
+        flavor_idx::Int,
+        channel::String,
+        prime::Bool;
+        broadening_kwargs...
+        )
+
+        ωconvMat = channel_trafo_K2(channel, prime)
+        (i,j) = merged_legs_K2(channel, prime)
+        nonij = sort(setdiff(1:4, (i,j)))
+        incoming_label = [false, true, false, true]
+        is_incoming = (incoming_label[nonij[1]], incoming_label[nonij[2]])
+        incoming_trafo = diagm([1, is_incoming[1] ? -1 : 1, is_incoming[2] ? -1 : 1])
+        T = dir_to_T(PSFpath)
+
+        # prepare self-energies
+        sevs = Vector{SigmaEvaluator_KF}(undef, 2)
+        ωconvMat_Σ = incoming_trafo * ωconvMat
+        for i in 1:2
+            trafo_act = reshape(ωconvMat_Σ[i+1,:], (1,2))
+            ωs_Σ, ωconvOff_Σ = trafo_grids_offset(ωs_ext, trafo_act)
+            @show ωconvMat_Σ
+            @show ωconvOff_Σ
+            @show trafo_act
+            @show (first(only(ωs_Σ)), last(only(ωs_Σ)))
+            @show (first.(ωs_ext), last.(ωs_ext))
+            (ΣL, ΣR) = calc_Σ_KF_aIE(
+                PSFpath, only(ωs_Σ);
+                flavor_idx=flavor_idx,
+                T=T,
+                broadening_kwargs...
+                )
+            sev = SigmaEvaluator_KF(
+                ΣR,
+                ΣL,
+                trafo_act,
+                ωconvOff_Σ
+                )
+            sevs[i] = sev
+        end
+
+        # create full correlators
+        letter_combinations = letter_combinations_K2()
+        op_labels = ["1", "1dag", "3", "3dag"]
+        Ncorrs = length(letter_combinations)
+        GFs = Vector{FullCorrelator_KF{2}}(undef, Ncorrs)
+        for (cc, letts) in enumerate(letter_combinations)
+            Ops = ["Q$i$j", letts[1] * op_labels[nonij[1]], letts[2] * op_labels[nonij[2]]]
+            GFs[cc] = FullCorrelator_KF(
+                PSFpath, Ops;
+                T=T,
+                ωs_ext=ωs_ext,
+                flavor_idx=flavor_idx,
+                ωconvMat=ωconvMat,
+                broadening_kwargs...
+                )
+        end
+
+        # create full correlator evaluators, tight cutoffs
+        GFevs = Vector{FullCorrEvaluator_KF{2,ComplexF64}}(undef, Ncorrs)
+        for l in 1:Ncorrs
+            GFevs[l] = FullCorrEvaluator_KF(GFs[l]; cutoff=1.e-20)
+        end
+
+        return new(
+                GFevs,
+                prime,
+                channel,
+                ωs_ext,
+                is_incoming,
+                ωconvMat,
+                channel_K2_sign(channel, prime),
+                sevs
+                )
+    end
+end
+
+"""
+Evaluate all 2^3 Keldysh components of K2
+"""
+function (k2ev::K2Evaluator_KF)(w::Vararg{Int,2})
+    ret = zeros(ComplexF64, 2,2,2)
+    lc = letter_combinations_K2()
+    for i in 1:4 # 4 correlators
+        val = reshape(k2ev.GFevs[i](w...), 2,2,2)
+        for il in 1:2
+            if lc[i][il]==='F'
+                Σ = -k2ev.sevs[il](1, k2ev.is_incoming[il], w...)
+                if k2ev.is_incoming[il]
+                    Σ = transpose(Σ)
+                end
+                val_new = zeros(ComplexF64, 2,2,2)
+                for i in 1:2
+                    for j in 1:2
+                        id_i = ntuple(a -> ifelse(a==il+1, i, Colon()), 3)
+                        id_j = ntuple(a -> ifelse(a==il+1, j, Colon()), 3)
+                        # @show (i,j,il, id_i, id_j)
+                        val_new[id_i...] .+= val[id_j...] * Σ[i,j]
+                    end
+                end
+                val = val_new
+            else
+                # apply X
+                reverse!(val; dims=1+il)
+            end
+        end
+        ret += val        
+    end
+    return k2ev.sign * ret
+end
+
+function test_K2Evaluator_KF()
+    base_path = "SIAM_u=0.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    flavor_idx = 1
+    ωs_ext = KF_grid(0.5, 4, 2)
+    omsz = length.(ωs_ext)
+    maxerr = 0.0
+    maxerrs = []
+    for channel in ["t", "a", "p"]
+        broadening_kwargs = read_all_broadening_params(base_path; channel=channel)
+        broadening_kwargs[:estep] = 10
+        for prime in [true, false]
+            K2ref = precompute_K2r(PSFpath, flavor_idx, "KF"; ωs_ext=ωs_ext, channel=channel, prime=prime, broadening_kwargs...)
+            maxref = maximum(abs.(K2ref))
+            K2ev = K2Evaluator_KF(PSFpath, ωs_ext, flavor_idx, channel, prime; broadening_kwargs...)
+            for ic in Iterators.product(Base.OneTo.(omsz)...)
+                val = K2ev(ic...)
+                refval = K2ref[ic...,:,:,:] 
+                maxerr = max(maxerr, norm(val .- refval)/maxref)
+            end
+            push!(maxerrs, maxerr)
+        end
+    end
+    printstyled("Maxerrs: $maxerrs"; color=:red)
+end
+
+function test_ΓEvaluator_KF()
+    base_path = "SIAM_u=0.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    flavor_idx = 1
+    ωs_ext = KF_grid(0.5, 3, 3)
+    omsz = length.(ωs_ext)
+    maxerr = 0.0
+    maxerrs = []
+    iK = 2
+    iKtuple = KF_idx(iK,3)
+
+    channel = "t"
+    foreign_channels = ("a", "p")
+    broadening_kwargs = read_all_broadening_params(base_path; channel=channel)
+    broadening_kwargs[:estep] = 5
+    gev = ΓEvaluator_KF(
+        PSFpath, iK, MultipoleKFCEvaluator;
+        channel=channel,
+        foreign_channels=foreign_channels,
+        flavor_idx=flavor_idx,
+        KEV_kwargs = Dict([(:nlevel, 2), (:cutoff, 1.e-10)]),
+        ωs_ext=ωs_ext,
+        broadening_kwargs...
+    )
+    # reference
+    gev_ref = compute_Γfull_symmetric_estimator(
+        "KF", PSFpath;
+        T=dir_to_T(PSFpath),
+        flavor_idx=flavor_idx,
+        ωs_ext=ωs_ext,
+        channel=channel,
+        broadening_kwargs...
+    )
+    maxref = maximum(abs.(gev_ref))
+    for ic in Iterators.product(Base.OneTo.(omsz)...)
+        val = gev(ic...)
+        refval = gev_ref[ic..., iKtuple...]
+        maxerr = max(maxerr, abs(val - refval)/maxref) 
+    end
+    push!(maxerrs, maxerr)
+
+    printstyled("Maxerrs: $maxerrs\n"; color=:red)
+end
+
+# ==== Lower-dim. asymptotic contributions END
+
+"""
 QTCI-compress K2 contributions to full vertex; fourth row in Fig 13, Lihm et. al.
 Just compute correlator on dense grid and QTCI that.
 Works for Matsubara AND Keldysh.
@@ -897,25 +1144,6 @@ end
 
 # ========== KELDYSH
 
-"""
-Struct needed to serialize the self-energy evaluating function in Γcore_TCI_KF
-TODO: Do this more cleanly / consistently?
-"""
-struct SigmaEvaluator_KF <: Function
-    Σ_R::Array{ComplexF64,3}
-    Σ_L::Array{ComplexF64,3}
-    ΣωconvMat::Matrix{Int}
-    ωconvOff::Vector{Int}
-end
-
-function (sev::SigmaEvaluator_KF)(row::Int, is_inc::Bool, w::Vararg{Int,3})
-    w_int = dot(sev.ΣωconvMat[row,:], SA[w...]) + sev.ωconvOff[row]
-    if is_inc
-        return sev.Σ_R[w_int,:,:]
-    else
-        return sev.Σ_L[w_int,:,:]
-    end
-end
 
 """
 Name to serialize cache of ΓcoreBatchEvaluator_KF
@@ -1007,12 +1235,15 @@ function Γ_core_TCI_KF(
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
         GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...)
+        if DEBUG_TCI_KF_RAM()
+            report_mem()
+        end
     end
 
     # print out memory usage
     if DEBUG_TCI_KF_RAM()
         println("==== FULL CORRELATORS: MEMORY")
-        report_mem()
+        report_mem(true)
         for i in eachindex(GFs)
             @show Base.summarysize(GFs[i]) / 1.e9
         end
@@ -1242,7 +1473,7 @@ function ΓcoreEvaluator_MF(
     ωs_ext = MF_npoint_grid(T, Nhalf, D)
 
     # all 16 4-point correlators
-    letter_combinations = letter_combonations_Γcore()
+    letter_combinations = letter_combinations_Γcore()
     is_incoming = (false, true, false, true)
 
     Ncorrs = length(letter_combinations)
@@ -1488,6 +1719,81 @@ function ΓcoreEvaluator_KF(
     return ΓcoreEvaluator_KF(GFs, iK, sev, is_incoming, letter_combinations, KEV_; kwargs...)
 end
 
+function ΓcoreEvaluator_KF(
+    PSFpath::String,
+    iK::Int,
+    ωs_ext::NTuple{3, Vector{Float64}},
+    KEV_::Type=KFCEvaluator
+    ;
+    channel::String,
+    flavor_idx::Int,
+    KEV_kwargs::Dict=Dict(),
+    broadening_kwargs...
+)
+    
+    ωconvMat = channel_trafo(channel)
+    T = dir_to_T(PSFpath)
+    # all 16 4-point correlators
+    letter_combinations = letter_combinations_Γcore()
+    op_labels = ("1", "1dag", "3", "3dag")
+    op_labels_symm = ("3", "3dag", "1", "1dag")
+    is_incoming = (false, true, false, true)
+
+    # create correlator objects
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{FullCorrelator_KF{3}}(undef, Ncorrs)
+    PSFpath_4pt = joinpath(PSFpath, "4pt")
+    filelist = readdir(PSFpath_4pt)
+    for l in 1:Ncorrs
+        letts = letter_combinations[l]
+        println("letts: ", letts)
+        ops = [letts[i]*op_labels[i] for i in 1:4]
+        if !any(parse_Ops_to_filename(ops) .== filelist)
+            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
+        end
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, broadening_kwargs...)
+        report_mem()
+    end
+
+    # print out memory usage
+    if DEBUG_TCI_KF_RAM()
+        println("==== FULL CORRELATORS: MEMORY")
+        report_mem(true)
+        for i in eachindex(GFs)
+            @show Base.summarysize(GFs[i]) / 1.e9
+        end
+        println("==== MEMORY END")
+    end
+
+    # self-energy
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+    Σω_grid = Σ_grid(ωs_ext[1:2])
+    (Σ_L,Σ_R) = calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+
+    if DEBUG_TCI_KF_RAM()
+        println("==== SELF-ENERGIES: MEMORY")
+        @show Base.summarysize((Σ_L, Σ_R)) / 1.e9
+        println("==== MEMORY END")
+    end
+
+    ΣωconvMat = incoming_trafo * ωconvMat
+    @show ΣωconvMat
+    @show incoming_trafo
+    @show ωconvMat
+    @show typeof(Σω_grid)
+    ωconvOff = idx_trafo_offset(ωs_ext, ntuple(_->Σω_grid, 4), ΣωconvMat)
+    sev = SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
+
+    return ΓcoreEvaluator_KF(
+        GFs,
+        iK,
+        sev,
+        KEV_;
+        KEV_kwargs...
+    )
+end
+
 """
 Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
 """
@@ -1516,6 +1822,183 @@ function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
         addvals[i] = res
     end
     return sum(addvals)
+end
+
+"""
+Evaluate full Keldysh vertex in given channel pointwise. In contrast to the Matsubara version,
+do not precompute K2 as this would take up significant memory.
+"""
+struct ΓEvaluator_KF
+    core::ΓcoreEvaluator_KF{ComplexF64}
+    iK::Int
+    channel::String
+    foreign_channels::Tuple{String,String}
+    K2s::NTuple{6, K2Evaluator_KF}
+    K2offsets::NTuple{2, Vector{Int}}
+    K2changeMats::NTuple{2, Matrix{Int}}
+    K2primeoffsets::NTuple{2, Vector{Int}}
+    K2primechangeMats::NTuple{2, Matrix{Int}}
+    iKK2::NTuple{6, NTuple{3,Int}}
+    K1s::NTuple{3, Array{ComplexF64, 3}}
+    K1offsets::NTuple{2, Vector{Int}}
+    K1changeMats::NTuple{2, Matrix{Int}}
+    iKK1::NTuple{3, NTuple{2,Int}}
+    Γbare::Float64
+
+    function ΓEvaluator_KF(
+        PSFpath::String,
+        iK::Int,
+        KEV_::Type=KFCEvaluator
+        ;
+        ωs_ext::NTuple{3, Vector{Float64}},
+        flavor_idx::Int,
+        channel::String,
+        foreign_channels::Tuple{String,String},
+        KEV_kwargs::Dict=Dict(),
+        broadening_kwargs...
+    )
+        iK_tuple = KF_idx(iK, 3)
+        core = ΓcoreEvaluator_KF(PSFpath, iK, ωs_ext, KEV_; KEV_kwargs=KEV_kwargs, flavor_idx=flavor_idx, channel=channel, broadening_kwargs...)
+
+        # K2
+        K2s = Vector{K2Evaluator_KF}(undef, 6)
+        K2offsets = Vector{Vector{Int}}(undef, 2)
+        K2changemats = Vector{Matrix{Int}}(undef, 2)
+        K2primeoffsets = Vector{Vector{Int}}(undef, 2)
+        K2primechangemats = Vector{Matrix{Int}}(undef, 2)
+        iKK2 = NTuple{3,Int}[]
+        ic = 1
+        for ch in [channel, foreign_channels...]
+            # matrices/offsets
+            changeMat = channel_change(channel, ch)[[1,2],:]
+            omK2, K2off = trafo_grids_offset(ωs_ext, changeMat)
+            changeMatprime = channel_change(channel, ch)[[1,3],:]
+            omK2p, K2poff = trafo_grids_offset(ωs_ext, changeMatprime)
+            if ic>1 # foreign channel
+                K2offsets[ic-1] = K2off
+                K2primeoffsets[ic-1] = K2poff
+                K2changemats[ic-1] = changeMat
+                K2primechangemats[ic-1] = changeMatprime
+            end
+            # K2r and K2r'
+            K2 = K2Evaluator_KF(
+                PSFpath, omK2, flavor_idx, ch, false;
+                broadening_kwargs...
+            )
+            K2p = K2Evaluator_KF(
+                PSFpath, omK2p, flavor_idx, ch, true;
+                broadening_kwargs...
+            )
+            K2s[2*ic-1] = K2
+            K2s[2*ic] = K2p
+            # iK
+            push!(iKK2, merge_iK_K2(iK_tuple, ch, false))
+            push!(iKK2, merge_iK_K2(iK_tuple, ch, true))
+            ic += 1
+        end
+        
+
+        # precompute K1s
+        K1s = Vector{Array{ComplexF64,3}}(undef,3)
+        K1offsets = Vector{Int}[]
+        K1changeMats = Matrix{Int}[]
+        iKK1 = NTuple{2,Int}[]
+        ic = 1
+        for ch in [channel, foreign_channels...]
+            changeMat = reshape(channel_change(channel, ch)[1,:], 1,3)
+            ωs_extK1, offset = trafo_grids_offset(ωs_ext, changeMat)
+            K1 = precompute_K1r(
+                PSFpath,
+                flavor_idx,
+                "KF";
+                ωs_ext=only(ωs_extK1),
+                channel=ch,
+                broadening_kwargs...
+                )
+            K1s[ic] = K1
+            if ic>1
+                push!(K1offsets, offset)
+                push!(K1changeMats, changeMat)
+            end
+            # iK
+            push!(iKK1, merge_iK_K1(iK_tuple, ch))
+            ic += 1
+        end
+
+        # bare interaction
+        Γbare = Γbare_KF(PSFpath, flavor_idx)[iK_tuple...]
+
+        return new(
+            core,
+            iK,
+            channel,
+            foreign_channels,
+            Tuple(K2s),
+            Tuple(K2offsets),
+            Tuple(K2changemats),
+            Tuple(K2primeoffsets),
+            Tuple(K2primechangemats),
+            Tuple(iKK2),
+            Tuple(K1s),
+            Tuple(K1offsets),
+            Tuple(K1changeMats),
+            Tuple(iKK1),
+            Γbare
+            )
+    end
+end
+
+function ΓEvaluator_KF(
+    PSFpath::String,
+    iK::Int,
+    R::Int,
+    KEV_::Type=KFCEvaluator;
+    ommax::Float64,
+    kwargs...
+)
+    ωs_ext = KF_grid(ommax, R, 3)
+    return ΓEvaluator_KF(
+        PSFpath,
+        iK,
+        KEV_;
+        ωs_ext=ωs_ext,
+        kwargs...
+    )
+end
+
+function (gev::ΓEvaluator_KF)(w::Vararg{Int,3})
+    # core vertex
+    ret = gev.core(w...)
+
+    # K2
+    K2fac = 1/sqrt(2)
+    K2val = zero(ComplexF64)
+        # same channel
+    K2val += gev.K2s[1](w[1],w[2])[gev.iKK2[1]...]
+        # foreign channel
+    for i in 1:2
+        K2val += gev.K2s[2*i+1]((gev.K2changeMats[i] * SA[w...] + gev.K2offsets[i])...)[gev.iKK2[2*i+1]...]
+    end
+
+    # K2prime
+        # same channel
+    K2val += gev.K2s[2](w[1],w[3])[gev.iKK2[2]...]
+        # foreign channel
+    for i in 1:2
+        K2val += gev.K2s[2*i+2]((gev.K2primechangeMats[i] * SA[w...] + gev.K2primeoffsets[i])...)[gev.iKK2[2*i+2]...]
+    end
+    ret += K2fac * K2val
+
+    # K1
+    K1fac = 0.5
+    K1val = zero(ComplexF64)
+    K1val += gev.K1s[1][w[1], gev.iKK1[1]...]
+    for i in 1:2
+        K1val += gev.K1s[i+1][only(gev.K1changeMats[i] * SA[w...] + gev.K1offsets[i]), gev.iKK1[i+1]...]
+    end
+    ret += K1fac * K1val
+
+    return ret + gev.Γbare
 end
 
 abstract type CachedBatchEvaluator{T} <: TCI.BatchEvaluator{T} end
@@ -1563,6 +2046,61 @@ function ΓBatchEvaluator_MF(
         foreign_channels=foreign_channels
     )
     return ΓBatchEvaluator_MF(gev)
+end
+
+struct ΓBatchEvaluator_KF <: CachedBatchEvaluator{ComplexF64}
+    grid::QuanticsGrids.InherentDiscreteGrid{3}
+    qf::TCI.CachedFunction{ComplexF64}
+    localdims::Vector{Int}
+    gev::ΓEvaluator_KF
+
+    function ΓBatchEvaluator_KF(
+        gev::ΓEvaluator_KF;
+        grid_kwargs...
+    )
+        # set up grid
+        D = 3
+        R = grid_R(gev.core.GFevs[1])
+        @assert all(R .== grid_R.(gev.core.GFevs[2:end])) "Full correlator objects have different grid sizes"
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; grid_kwargs...)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        # cached function
+        qf_ = v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+        qf = TCI.CachedFunction{ComplexF64}(qf_, localdims)
+
+        return new(grid, qf, localdims, gev)
+    end
+end
+
+function ΓBatchEvaluator_KF(
+    PSFpath::String,
+    R::Int,
+    iK::Int;
+    KEV::Type=KFCEvaluator,
+    coreEvaluator_kwargs::Dict=Dict(),
+    T::Float64,
+    ommax::Float64,
+    flavor_idx::Int,
+    channel::String,
+    foreign_channels::Tuple{String,String},
+    grid_kwargs::Dict=Dict(),
+    broadening_kwargs...
+)
+    gev = ΓEvaluator_KF(
+        PSFpath,
+        iK,
+        R,
+        KEV;
+        ommax=ommax,
+        T=T,
+        flavor_idx=flavor_idx,
+        channel=channel,
+        foreign_channels=foreign_channels,
+        KEV_kwargs=coreEvaluator_kwargs,
+        broadening_kwargs...
+    )
+    return ΓBatchEvaluator_KF(gev; grid_kwargs...)
 end
 
 struct ΓcoreBatchEvaluator_MF{T} <: CachedBatchEvaluator{T}

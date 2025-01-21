@@ -177,15 +177,37 @@ end
         end
     end
 
-    # for channel in ["a","p","t"]
-    #     for flavor in [1,2]
-    #         for formalism in ["MF","KF"]
-    #             for prime in [true,false]
-    #                 test_K2_TCI_precomputed(;formalism=formalism, prime=prime, channel=channel, flavor_idx=flavor)
-    #             end
-    #         end
-    #     end
-    # end
+    function test_K2Evaluator_KF()
+        base_path = "SIAM_u=0.50"
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+        flavor_idx = 1
+        ωs_ext = TCI4Keldysh.KF_grid(0.5, 4, 2)
+        omsz = length.(ωs_ext)
+        maxerr = 0.0
+        maxerrs = []
+        for channel in ["t", "a", "p"]
+            broadening_kwargs = TCI4Keldysh.read_all_broadening_params(base_path; channel=channel)
+            broadening_kwargs[:estep] = 10
+            for prime in [true, false]
+                K2ref = TCI4Keldysh.precompute_K2r(PSFpath, flavor_idx, "KF"; ωs_ext=ωs_ext, channel=channel, prime=prime, broadening_kwargs...)
+                maxref = maximum(abs.(K2ref))
+                if channel=="p"
+                    maxref = 1.0
+                end
+                K2ev = TCI4Keldysh.K2Evaluator_KF(PSFpath, ωs_ext, flavor_idx, channel, prime; broadening_kwargs...)
+                for ic in Iterators.product(Base.OneTo.(omsz)...)
+                    val = K2ev(ic...)
+                    refval = K2ref[ic...,:,:,:] 
+                    maxerr = max(maxerr, norm(val .- refval)/maxref)
+                end
+                push!(maxerrs, maxerr)
+            end
+        end
+        @test all(maxerrs .<= 1.e-10)
+    end
+
+    test_K2Evaluator_KF()
+
     test_K2_TCI_precomputed(;formalism="MF", prime=true, channel="t", flavor_idx=1)
     test_K2_TCI_precomputed(;formalism="MF", prime=false, channel="pNRG", flavor_idx=2)
     test_K2_TCI_precomputed(;formalism="MF", prime=true, channel="a", flavor_idx=2)
@@ -379,6 +401,50 @@ end
         @test maximum(reldiff) < 3.0*tolerance
     end
 
+    function test_ΓEvaluator_KF()
+        base_path = "SIAM_u=0.50"
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+        flavor_idx = 1
+        ωs_ext = TCI4Keldysh.KF_grid(0.5, 3, 3)
+        omsz = length.(ωs_ext)
+        maxerr = 0.0
+        maxerrs = []
+        iK = 2
+        iKtuple = TCI4Keldysh.KF_idx(iK,3)
+
+        channel = "t"
+        foreign_channels = ("a", "p")
+        broadening_kwargs = TCI4Keldysh.read_all_broadening_params(base_path; channel=channel)
+        broadening_kwargs[:estep] = 5
+        gev = TCI4Keldysh.ΓEvaluator_KF(
+            PSFpath, iK, TCI4Keldysh.MultipoleKFCEvaluator;
+            channel=channel,
+            foreign_channels=foreign_channels,
+            flavor_idx=flavor_idx,
+            KEV_kwargs = Dict([(:nlevel, 2), (:cutoff, 1.e-10)]),
+            ωs_ext=ωs_ext,
+            broadening_kwargs...
+        )
+        # reference
+        gev_ref = TCI4Keldysh.compute_Γfull_symmetric_estimator(
+            "KF", PSFpath;
+            T=TCI4Keldysh.dir_to_T(PSFpath),
+            flavor_idx=flavor_idx,
+            ωs_ext=ωs_ext,
+            channel=channel,
+            broadening_kwargs...
+        )
+        maxref = maximum(abs.(gev_ref))
+        for ic in Iterators.product(Base.OneTo.(omsz)...)
+            val = gev(ic...)
+            refval = gev_ref[ic..., iKtuple...]
+            maxerr = max(maxerr, abs(val - refval)/maxref) 
+        end
+        push!(maxerrs, maxerr)
+
+        @test maxerr <= 1.e-10
+    end
+
     test_Γcore_KF(
         6, 1, "p";
         R=4,
@@ -393,6 +459,8 @@ end
     # test_Γcore_KF(14, 1, "t"; R=3, tolerance=1.e-8, batched=true)
     test_Γcore_KF(9, 1, "p"; R=3, tolerance=1.e-8, batched=false)
     test_Γcore_KF(6, 1, "p"; R=4, tolerance=1.e-4, batched=true, unfoldingscheme=:fused)
+
+    test_ΓEvaluator_KF()
 end
 
 # revert temporary change
