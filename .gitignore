@@ -2,7 +2,6 @@ data/*
 Acontdata/*
 Manifest.toml
 scripts/plots/*
-*.ipynb
 vienna_talk/**
 cluster_output/**
 *png
