@@ -1,5 +1,6 @@
 using SpecialFunctions
 using Interpolations
+using StaticArrays
 
 @testset "Hilbert transform" begin
     
@@ -361,5 +362,21 @@ end
         end
     end
 
+    function test_interpolate_trilinear()
+        vals = zeros(Float64,2,2,2)
+        corners = map(t -> SA[t...] * 2.0, Iterators.product(0:1,0:1,0:1))
+        vals[2,2,2] = 1.0
+        vals[1,1,1] = -1.0
+        @test TCI4Keldysh.interpolate_trilinear(vals, corners, SA[1.0,1.0,1.0])==0.0
+        @test TCI4Keldysh.interpolate_trilinear(vals, corners, SA[1.5,1.5,1.5])==(1.5^3-0.5^3)/8.0
+        @test TCI4Keldysh.interpolate_trilinear(vals, corners, SA[2.0,2.0,2.0])==1.0
+    end
+
     test_lin_interp_array()
+    test_interpolate_trilinear()
+end
+
+@testset "Convenience utils" begin
+    @test isapprox(TCI4Keldysh.bonddims_to_RAM([2,3,3])*1.e6/16, 40.0; atol=1.e-10)
+    @test isapprox(TCI4Keldysh.bonddims_to_RAM([2,3,3], 8)*1.e6/16, 160.0; atol=1.e-10)
 end

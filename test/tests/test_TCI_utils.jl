@@ -150,8 +150,36 @@ using ITensors
         @test maximum(abs.(fat_sat245 .- tt245fat))/maxfat < 2 * 1.e-8
     end
 
+    function test_project_legs()
+        localdims = [6,3,4]
+        fat = zeros(Float64, Tuple(localdims))
+        for id in Iterators.product(Base.OneTo.(localdims)...)
+            fat[id...] = sum(Tuple(id))^2
+        end
+        tt, _, _ = TCI.crossinterpolate2(eltype(fat), i -> fat[i...], localdims; tolerance=1.e-8)
+
+        rm_pos = [1,3]
+        rm_val = [[1,4,5], [1,2]]
+        tt_proj = TCI4Keldysh.project_legs(tt.sitetensors, rm_pos, rm_val)
+        fat_proj = fat[[2,3,6], :, [3,4]]
+        ttfat_proj = TCI4Keldysh.qtt_to_fattensor(tt_proj)
+        @test norm(fat_proj .- ttfat_proj) < 1.e-8
+    end
+
+    function test_unfuse()
+        block = reshape(collect(1:24), 3,4,2)
+        unfused = TCI4Keldysh.unfuse(block, 2)
+        @test size(unfused)==(3,2,2,2)
+        @test block[1,1,2]==unfused[1,1,1,2]
+        @test block[2,2,1]==unfused[2,2,1,1]
+        @test block[3,3,1]==unfused[3,1,2,1]
+        @test block[2,4,2]==unfused[2,2,2,2]
+    end
+
     test_eval_mps()
     test_delta_tensor()
     test_delta_tensor_end()
     test_saturate_bits()
+    test_project_legs()
+    test_unfuse()
 end
