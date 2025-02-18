@@ -370,6 +370,28 @@ function eval(mps::MPS, idx::Vector{Int})
     return scalar(res)
 end
 
+function project_leg(arr::Array{T,N}, dim::Int, rm::Vector{Int}) where {T,N}
+    @assert dim<=ndims(arr) "Invalid dimension"
+    @assert length(rm)<size(arr,dim) "Cannot remove requested slices"
+    stay = collect(setdiff(1:size(arr,dim), rm))
+    return arr[ntuple(_->Colon(),dim-1)..., stay, ntuple(_->Colon(),ndims(arr)-dim)...]
+end
+
+"""
+Reduce leg dimensions
+"""
+function project_legs(tt::Vector{Array{T,3}}, rm_pos::Vector{Int}, rm_val::Vector{Vector{Int}}) where {T}
+    @assert length(rm_pos)==length(rm_val)
+    res = deepcopy(tt)
+    for (ir, rp) in enumerate(rm_pos)
+        b = tt[rp]
+        res_act = project_leg(b, 2, rm_val[ir])
+        res[rp] = res_act
+    end
+    return res
+end
+
+
 """
 * bit_val: between 1...d
 """
@@ -407,6 +429,22 @@ function saturate_bits(
     end
     not_bit_pos = filter(i -> !(i in bit_pos), 1:length(tt))
     return res[not_bit_pos]
+end
+
+function unfuse(block::Array{T,3}, base::Int=2) where {T}
+    d = Int(log(base, size(block,2)))        
+
+    unfuser = zeros(T, size(block,2), ntuple(_->base, d)...)
+    for id in 1:size(block, 2)
+        id_inter = QuanticsGrids.unfuse_dimensions([id], d; base=base)
+        unfuser[id, vcat(id_inter...)...] = one(T)
+    end
+    # contract with block
+    perm = [1,3,2]
+    blockperm = permutedims(block, perm)
+    matunfused = reshape(blockperm, size(blockperm,1)*size(blockperm,2), size(blockperm,3)) * reshape(unfuser, size(block,2), base^d)
+    blockunfused = reshape(matunfused, size(blockperm,1), size(blockperm,2), ntuple(_->base,d)...)
+    return permutedims(blockunfused, vcat([1], 3:2+d , [2]))
 end
 
 """

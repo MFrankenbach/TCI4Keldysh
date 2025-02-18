@@ -81,16 +81,31 @@ end
 convenience overload
 Compute Σ with pointwise matrix inversion.
 """
-function calc_Σ_KF_aIE(PSFpath::String, ω_fer::Vector{Float64}; flavor_idx::Int, sigmak::Vector{Float64}, γ::Float64, broadening_kwargs...)
+function calc_Σ_KF_aIE(PSFpath::String, ω_fer::Vector{Float64}; mode::Symbol=:normal, flavor_idx::Int, sigmak::Vector{Float64}, γ::Float64, broadening_kwargs...)
     T = dir_to_T(PSFpath)
     ωconvMat = ωconvMat_K1()
     # precompute correlators
-    G = FullCorrelator_KF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
-    G_data = precompute_all_values(G)
-    G_aux_L = FullCorrelator_KF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
-    G_aux_L_data = precompute_all_values(G_aux_L)
-    G_aux_R = FullCorrelator_KF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
-    G_aux_R_data = precompute_all_values(G_aux_R)
+    if mode==:normal
+        G = FullCorrelator_KF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
+        G_aux_L = FullCorrelator_KF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
+        G_aux_R = FullCorrelator_KF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
+        G_data = precompute_all_values(G)
+        G_aux_L_data = precompute_all_values(G_aux_L)
+        G_aux_R_data = precompute_all_values(G_aux_R)
+    elseif mode==:fdt
+        G_data = precompute_all_values_FDT(PSFpath, ["F1", "F1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+        G_aux_L_data = precompute_all_values_FDT(PSFpath, ["F1", "Q1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+        G_aux_R_data = precompute_all_values_FDT(PSFpath, ["Q1", "F1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+    else
+        error("Invalid mode $mode")
+    end
+
+    # p = default_plot()
+    # for k in [(1,2),(2,1),(2,2)]
+    #     plot!(p, real.(G_data[:,k...]); label="Re,$k")
+    #     plot!(p, imag.(G_data[:,k...]); linestyle=:dash, label="Im,$k")
+    # end
+    # savefig(p, "Gffdag.pdf")
 
     # deduce self-energies
     X = get_PauliX()

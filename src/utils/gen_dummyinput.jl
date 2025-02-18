@@ -1,7 +1,120 @@
 using Random
+using MAT
 #=
 Generate dummy PSFs/Correlators for trying things out and testing.
 =#
+
+function write_PSF(outfile, odisc::Vector{Float64}, Adiscs_new)
+    nom = length(odisc)
+    try
+        f = matopen(outfile)
+        write(f, "Adisc", Adiscs_new)
+        write(f, "odisc", reshape(odisc, (nom,1)))
+        close(f)
+    catch e
+        # println("Caught exception: $(e)")
+        f = matopen(outfile, "w")
+        write(f, "Adisc", Adiscs_new)
+        write(f, "odisc", reshape(odisc, (nom,1)))
+        close(f)
+    end
+end
+
+"""
+Create artificial PSF
+Careful: PSFs with Ops and reverse(Ops) are expected to be the same
+"""
+function artificial_PSF(outfile::AbstractString, odisc::Vector{Float64}, D::Int; scale::Float64=0.1, nflavor::Int)
+    rng = MersenneTwister(42)
+    nom = length(odisc)
+    Adiscs_new = []
+    for _ in 1:nflavor
+        if D>0
+            A = scale * randn(rng, ntuple(_->nom, D))
+        else
+            # NO brackets here to get correct format for 0 point functions
+            A = scale * randn()
+        end
+        if D==1
+            A = reshape(A, (nom,1))
+        end
+        push!(Adiscs_new, A)
+    end
+    try
+        f = matopen(outfile)
+        write(f, "Adisc", Adiscs_new)
+        write(f, "odisc", reshape(odisc, (nom,1)))
+        close(f)
+    catch e
+        # println("Caught exception: $(e)")
+        f = matopen(outfile, "w")
+        write(f, "Adisc", Adiscs_new)
+        write(f, "odisc", reshape(odisc, (nom,1)))
+        close(f)
+    end
+    return Adiscs_new
+end
+
+"""
+Prune Adisc and odisc so that odisc contains 2*prunesize+1 frequencies afterwards
+and Adisc is contains only the corresponding peaks.
+Write to new file as output.
+"""
+function prune_PSF(inputfile::AbstractString, slice, outdir::Union{Nothing,String}=nothing)
+    odisc_new = Vector{Float64}(undef, length(slice))
+    Adiscs_new = []
+    # read and prune
+    matopen(inputfile) do f    
+        try
+            keys(f)
+        catch
+            keys(f)
+        end
+        Adisc = read(f,"Adisc")
+        odisc = read(f,"odisc")
+        odisc_new .= odisc[slice]
+        odisc_new = reshape(odisc_new, (length(odisc_new), 1))
+        # special treatment for 0-point
+        if !(isa(Adisc[1], Float64) && length(Adisc)==1)
+            # is either empty or has 1 index for 1D PSFs
+            singleton = findall(size(Adisc[1]).==1)
+            nd = ndims(Adisc[1]) - length(singleton)
+            for A in Adisc
+                if isempty(singleton)
+                    A_new = A[ntuple(_->slice, nd)...]
+                    push!(Adiscs_new, A_new)
+                else
+                    A_new = dropdims(A, dims=only(singleton))[slice]
+                    A_new = reshape(A_new, (length(A_new),1))
+                    push!(Adiscs_new, A_new)
+                end
+            end
+        else
+            # 0-point PSF
+            push!(Adiscs_new, only(Adisc))
+        end
+    end
+
+    # write
+    dir, file = Base.splitdir(inputfile)
+    if isnothing(outdir)
+        outdir = dir
+    end
+    outfile = joinpath(outdir, "NEW_" * file)
+    try
+        f = matopen(outfile)
+        write(f, "Adisc", Adiscs_new)
+        write(f, "odisc", odisc_new)
+        close(f)
+    catch e
+        println("Caught exception: $(e)")
+        f = matopen(outfile, "w")
+        write(f, "Adisc", Adiscs_new)
+        write(f, "odisc", odisc_new)
+        close(f)
+    end
+    println("-- File $(outfile) written.")
+end
 
 """
     function get_Adisc_multipeak_noano(D::Int; nωdisc::Int=5, ωdisc_min=1.e-6, ωdisc_max=1.e4)

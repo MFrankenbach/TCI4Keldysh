@@ -134,6 +134,128 @@ function (ht::HierarchicalTucker{D,T})(idx::Vararg{Int,D}) where {D,T}
     return eval_tucker(ht.center[matrix_ids...], legs_idx) 
 end
 
+function locate_block(ht::HierarchicalTucker{D,T}, idx::NTuple{D,Int}) :: NTuple{D,Int} where {D,T}
+    return ntuple(d -> findlast(id -> id<idx[d], ht.ids_cumulated[d]), D)
+end
+
+function find_legs(ht::HierarchicalTucker{D,T}, idx::NTuple{D,Int}) where {D,T}
+    matrix_ids = locate_block(ht, idx)
+    idx_new = ntuple(d -> idx[d] - ht.ids_cumulated[d][matrix_ids[d]], D)
+    return (matrix_ids, ntuple(d -> view(ht.kernels[d][matrix_ids[d]], :, idx_new[d]), D))
+end
+
+function find_legs_blockbased(ht::HierarchicalTucker{D,T}, matrix_ids::NTuple{D,Int}, idx::NTuple{D,Int}) where {D,T}
+    idx_new = ntuple(d -> idx[d] - ht.ids_cumulated[d][matrix_ids[d]], D)
+    return ntuple(d -> view(ht.kernels[d][matrix_ids[d]], :, idx_new[d]), D)
+end
+
+"""
+Interpolate function f(Vararg{Int,D})->::Array{ComplexF64,D} linearly onto point w
+ws: 1D frequency grids
+"""
+function eval_interpol(::T, f, ws::NTuple{D,Vector{Float64}}, w::Vararg{Float64,D}) where {T,D}
+    # surrounding indices
+    idxup = ntuple(i -> min(searchsortedfirst(ws[i], w[i]), length(ws[i])), D)
+    idxlow = ntuple(i -> max(idxup[i]-1, 1), D)
+    # corners of enclosing cube
+    pts = Array{SVector{D,Float64},D}(undef, ntuple(_->2,D)...)
+    ids_pts = Array{SVector{D,Int},D}(undef, ntuple(_->2,D)...)
+    values_pts = Array{T,D}(undef, ntuple(_->2,D)...)
+    for t in Iterators.product(ntuple(_->1:2,D)...)
+        ids_act = SA[ntuple(j -> t[j]==1 ? idxlow[j] : idxup[j], D)...]
+        ids_pts[t...] = ids_act
+        pts[t...] = SA[ntuple(j -> ws[j][ids_act[j]], D)...]
+        values_pts[t...] = f(ids_act...)
+    end
+    # trilinear interpolation from cube corners
+    return interpolate_trilinear(values_pts, pts, SA[w...] .- first(pts))
+end
+
+"""
+Interpolate HierarchicalTucker linearly onto point w
+ws: 1D frequency grids
+"""
+function eval_interpol(ht::HierarchicalTucker{D,T}, ws::NTuple{D,LinRange{Float64}}, w::Vararg{Float64,D}) where {D,T}
+    # surrounding indices
+    idxup = ntuple(i -> min(searchsortedfirst(ws[i], w[i]), length(ws[i])), D)
+    idxlow = ntuple(i -> max(idxup[i]-1, 1), D)
+    # corners of enclosing cube
+    pts = Array{SVector{D,Float64},D}(undef, ntuple(_->2,D)...)
+    ids_pts = Array{SVector{D,Int},D}(undef, ntuple(_->2,D)...)
+    values_pts = Array{T,D}(undef, ntuple(_->2,D)...)
+    for t in Iterators.product(ntuple(_->1:2,D)...)
+        ids_act = SA[ntuple(j -> t[j]==1 ? idxlow[j] : idxup[j], D)...]
+        ids_pts[t...] = ids_act
+        pts[t...] = SA[ntuple(j -> ws[j][ids_act[j]], D)...]
+        values_pts[t...] = ht(ids_act...)
+    end
+    # trilinear interpolation from cube corners
+    return interpolate_trilinear(values_pts, pts, SA[w...] .- first(pts))
+end
+
+# function eval_interpol(ht::HierarchicalTucker{D,T}, ws::NTuple{D,LinRange{Float64}}, w::Vararg{Float64,D}) where {D,T}
+#     # surrounding indices
+#     idxup = ntuple(i -> min(searchsortedfirst(ws[i], w[i]), length(ws[i])), D)
+#     idxlow = ntuple(i -> max(idxup[i]-1, 1), D)
+#     # corners of enclosing cube
+#     pts = Vector{SVector{D,Float64}}(undef, 2^D)
+#     ids_pts = Vector{SVector{D,Int}}(undef, 2^D)
+#     for (i,t) in enumerate(Iterators.product(ntuple(_->1:2,D)...))
+#         ids_pts[i] = SA[ntuple(j -> t[j]==1 ? idxlow[j] : idxup[j], D)...]
+#         pts[i] = SA[ntuple(j -> ws[j][ids_pts[i][j]], D)...]
+#     end
+#     # D+1 closest points
+#     perm = sortperm(pts, by = p -> norm(p-SA[w...]))
+#     simplex_pts = pts[perm[1:D+1]] 
+#     # interpolate from simplex
+#     a = interpolate_simplex_coeffs(Tuple(simplex_pts), SA[w...])
+#     ret = a[1] * ht(ids_pts[perm[1]]...)
+#     for i in 2:D+1
+#         ret += a[i] * ht(ids_pts[perm[i]]...)
+#     end
+#     return ret
+# end
+
+# function eval_interpol(ht::HierarchicalTucker{D,T}, ws::NTuple{D,LinRange{Float64}}, w::Vararg{Float64,D}) where {D,T}
+#     # surrounding indices
+#     idxup = ntuple(i -> min(searchsortedfirst(ws[i], w[i]), length(ws[i])), D)
+#     idxlow = ntuple(i -> max(idxup[i]-1, 1), D)
+
+#     matrix_idslow, legs_idxlow = find_legs(ht, idxlow)
+
+#     matrix_idsup, legs_idxup = find_legs(ht, idxup)
+
+#     da = ntuple(i -> w[i]-ws[i][idxlow[i]], D)
+#     db = ntuple(i -> ws[i][idxup[i]]-w[i], D)
+#     weights = ntuple(i -> da[i]/(da[i]+db[i]), D)
+#     println("---- eval_interpol")
+#     println("     weights: $(da) $(db) $(weights)")
+#     println("     ids: $(idxup) $(idxlow) $(matrix_idslow) $(matrix_idsup) $(legs_idxlow) $(legs_idxup)")
+#     if matrix_idslow==matrix_idsup
+#         # interpolate kernel onto requested frequency
+#         legs = ntuple(i -> legs_idxup[i] * weights[i] + legs_idxlow[i] * (1.0-weights[i]), D)
+#         ret = eval_tucker(ht.center[matrix_idsup...], legs) 
+#         println("     general")
+#         display(ret)
+#         return ret
+#     else
+#         # special treatment if lower and upper frequencies correspond to different blocks
+#         # LEAVE LINEAR INTERPOLATION FOR NOW
+#             # interp_vals = zeros(T, ntuple(_->2,D))
+#             # for ii in Iterators.product(ntuple(_->1:2,D))
+#             #     matrix_ids = locate_block(ht, ntuple(j -> ii[j]==1 ? idxlow[j] : idxup[j], 3))
+#             #     legs = find_legs_blockbased(ht, matrix_ids)
+#             #     interp_vals = eval_tucker(ht.center[matrix_ids...], legs)
+#             # end
+#         idx_next = ntuple(i -> weights[i]<0.5 ? idxlow[i] : idxup[i], D)
+#         _, legs = find_legs(ht, idx_next)
+#         println("     special (idx_next: $(idx_next))")
+#         ret = eval_tucker(ht.center[matrix_idsup...], legs)
+#         display(ret)
+#         return ret
+#     end
+# end
+
 function precompute_all_values(ht::HierarchicalTucker{D,T}) where {D,T}
     ret = zeros(T, ntuple(d -> sum(size.(ht.kernels[d], 2)),D))
     for ic in CartesianIndices(ht.center)
@@ -198,6 +320,21 @@ function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) where {D}
     return vec(ret)
 end
 
+function eval_interpol(ev::MultipoleKFCEvaluator{D}, ws::Vector{NTuple{D,LinRange{Float64}}}, w::Vararg{Float64,D}) where {D}
+    ret = zeros(ComplexF64, 1, 2^(D+1))
+    for ip in axes(ev.Gps,2)    
+        retarded = zeros(ComplexF64, D+1)
+        w_int = ev.ωconvMats[ip] * SA[w...]
+        for id in 1:D
+            retarded[id] = eval_interpol(ev.Gps[id,ip], ws[ip], w_int...)
+        end
+        retarded[end] = conj(retarded[1])
+        # transform to Keldysh
+        ret += transpose(retarded) * ev.GR_to_GK[:,:,ip]
+    end
+    return vec(ret)
+end
+
 function truncatable_matrix(sz::Tuple{Int,Int})
     URV = randn(Float64,sz)
     U,_,V = svd(URV)
@@ -254,6 +391,51 @@ function test_MultipoleKFCEvaluator_largeR()
     @btime $Gev(rand(1:2^$R,3)...)
     @btime $Gref(rand(1:2^$R,3)...)
 end
+
+function speedup_MultipoleKFCEvaluator()
+
+    npt = 4
+    D = npt-1
+    basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt")
+    channel = "p"
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    ommax = 0.65
+    R = 14
+    ωs_ext = TCI4Keldysh.KF_grid(ommax, R, D)
+    G = TCI4Keldysh.FullCorrelator_KF(
+        PSFpath,
+        Ops;
+        T=TCI4Keldysh.dir_to_T(PSFpath),
+        ωconvMat=ωconvMat,
+        ωs_ext=ωs_ext,
+        flavor_idx=1,
+        γ=γ,
+        sigmak=sigmak,
+        emax=max(20.0, 3*ommax),
+        emin=2.5*1.e-5,
+        estep=20
+    )
+
+    # time full correlator
+    w = ntuple(i -> rand(1:length(ωs_ext[i])), 3)
+    res1 = @benchmark evaluate_all_iK($G, $w...)
+    display(res1)
+
+    # for R=12, nlevel=4->5 yields a threefold speedup in evaluations
+    Gev = MultipoleKFCEvaluator(G; nlevel=4, cutoff=1.e-6)
+    # time hierarchical tuckers
+    function __f()
+        w = ntuple(i -> rand(1:length(ωs_ext[i])), 3)
+        return Gev(w...)
+    end
+
+    res2 = @benchmark $__f()
+    display(res2)
+end
+
 
 function test_MultipoleKFCEvaluator()
 

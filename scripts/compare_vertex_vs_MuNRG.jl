@@ -259,7 +259,7 @@ end
 Comparison to MuNRG
 K1 is independent of the bosonic frequency in all channels.
 
-NOTE: In MuNRG, G^K=G^(22) is computed via the bosonic fluctuation-dissipation relation (cf. Util/getAcont2GKel.m, Util/KKi2r.m).
+NOTE: In MuNRG, G^K=G^(22) is computed via the bosonic fluctuation-dissipation relation (cf. Util/Acont2GKel.m, Util/KKi2r.m).
 The latter is therefore satisfied to high accuracy (<1.e-8). In Julia, we just compute each component of the
 2-point correlator independently.
 
@@ -305,25 +305,22 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
         K13Dref = K13D[1,1,i]
         @assert all(abs.(K13D[:,:,i] .- K13Dref) .<= 1.e-16) "K13D slice no. $i nonconstant"
     end
+    reverse!(K1D)
 
     broadening_kwargs = read_broadening_settings(mpNRGpath ;channel=channel)
     # broadening_kwargs[:emax] += 20.0
     # broadening_kwargs[:emin] /= 100.0
     if !haskey(broadening_kwargs, :estep)
-        broadening_kwargs[:estep] = 100
+        broadening_kwargs[:estep] = 200
     end
 
 
     # TCI4Keldysh
     ωs_ext = vec(grid[end])
-    K1_test_alliK = TCI4Keldysh.precompute_K1r(PSFpath, flavor, "KF"; channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)
-    # for ik in Iterators.product(ntuple(_->[1,2], 2)...)
-    #     @show (ik, norm(K1_test_alliK[:,ik...]))
-    # end
+    K1_test_alliK = TCI4Keldysh.precompute_K1r(PSFpath, flavor, "KF"; mode=:fdt, channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)
 
-    # TODO: translate_K1_iK does not seem to be correct -> probably iKtuple should be permuted somehow...
-    # ik = translate_K1_iK(iKtuple, channel)
-    ik = (2,2)
+    # TODO WHY need to reverse here???
+    ik = TCI4Keldysh.merge_iK_K1(iKtuple, channel)
     K1_test = K1_test_alliK[:,ik...]
 
     # REASON FOR PREFACTOR: Eq. (100) SIE paper (Lihm et. al), factors P^k1k2k12 and P^k3k4k34 introduce two times 1/√2
@@ -354,9 +351,12 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
     savefig("K1_comparison.pdf")
 
     # diff
-    diff = K1D .- K1_test * fac
+    maxref = maximum(abs.(K1D))
+    diff = (K1D .- K1_test * fac) ./ maxref
     p = TCI4Keldysh.default_plot()
-    plot!(p, omgrid, abs.(diff); label="diff", yscale=:log10)
+    plot!(p, omgrid, abs.((diff)); label="diff", yscale=:log10)
+    @show maximum(abs.(real.(diff)))
+    @show maximum(abs.(imag.(diff)))
     # ratio = K1D ./ (fac * K1_test)
     # plot!(p, abs.(ratio); label="ratio")
     title!(p, "K1@$(channel)-channel: abs(MuNRG-Julia)")
@@ -366,6 +366,13 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
     printstyled("   Max error at frequency: $(ωs_ext[amaxdiff])\n\n"; color=:blue)
     @show K1D[mid_id-2:mid_id+2]
     @show fac*K1_test[mid_id-2:mid_id+2]
+
+    # reldiff
+    reldiff = (K1D .- K1_test * fac) ./ abs.(K1D)
+    p = TCI4Keldysh.default_plot()
+    plot!(p, omgrid, abs.(reldiff); label="reldiff", yscale=:log10)
+    title!(p, "K1@$(channel)-channel: abs(MuNRG-Julia)/abs(MuNRG)")
+    savefig("K1_reldiff.pdf")
 
     # plot FDT for Julia result
     p = TCI4Keldysh.default_plot()
@@ -840,20 +847,21 @@ function check_Σ_KF(; channel="t")
     T = TCI4Keldysh.dir_to_T(PSFpath)
     (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
     broadening_kwargs = read_broadening_settings(joinpath(TCI4Keldysh.datadir(), base_path); channel=channel)
+    broadening_kwargs[:estep] = 20
     omsig = grids[1]
 
     # asymmetric estimators, should be closer to MuNRG
-    # (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, omsig; flavor_idx=flavor, sigmak, γ, broadening_kwargs...)
-    (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, omsig; T=T, flavor_idx=flavor, sigmak, γ, broadening_kwargs...)
+    (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, omsig; mode=:normal, flavor_idx=flavor, sigmak, γ, broadening_kwargs...)
+    # (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, omsig; T=T, flavor_idx=flavor, sigmak, γ, broadening_kwargs...)
+     
     # inverting matrices vs. computing aIE via retarded component does make a difference
     # @show maximum(abs.(Σ_L_ .- Σ_L))
     # @show maximum(abs.(Σ_R_ .- Σ_R))
 
-    Σ_test = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, omsig; T=T, flavor_idx=flavor, sigmak, γ, broadening_kwargs...)
-    sig_id = 2
+    # Σ_test = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, omsig; T=T, flavor_idx=flavor, sigmak, γ, broadening_kwargs...)
+    sig_id = 1
     Σ_test_aIE = isodd(sig_id) ? Σ_L : Σ_R
 
-    @show size(Σ_test)
     # check out in plots
     p = TCI4Keldysh.default_plot()
     for ik in [(1,1),(2,1),(1,2),(2,2)]
@@ -877,7 +885,8 @@ function check_Σ_KF(; channel="t")
     for i in 1:4
         Σ_ref = Σs[sig_id][(i-1)*length(omsig)+1 : i*length(omsig)]
         ik = d[i]
-        diff = Σ_test_aIE[:,ik...] .- Σ_ref
+        maxref = maximum(abs.(Σ_ref))
+        diff = (Σ_test_aIE[:,ik...] .- Σ_ref) ./ maxref
         plot!(p, omsig, abs.(real.(diff)); label=L"|\Re(\Delta\Sigma)|%$ik")
         plot!(p, omsig, abs.(imag.(diff)); label=L"|\Im(\Delta\Sigma)|%$ik", linestyle=:dot)
     end

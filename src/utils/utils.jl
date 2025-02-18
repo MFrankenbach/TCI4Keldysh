@@ -89,6 +89,54 @@ function insert_vec!(vec::Vector{T}, ids::Vector{Int}, vals::Vector{T}) where {T
     end
 end
 
+function interpolate_simplex_coeffs(simplex::NTuple{D1, SVector{D,Float64}}, point::SVector{D,Float64}) where {D1,D}
+    y = SA[point..., 1.0]
+    M = hcat([SA[s..., 1.0] for s in simplex]...)
+    return pinv(M)*y
+    # return dot(a, SA[vals...])
+end
+
+function interpolate_simplex(simplex::NTuple{D1, SVector{D,Float64}}, vals::SVector{D1,T}, point::SVector{D,Float64}) where {D1,D,T}
+    a = interpolate_simplex_coeffs(simplex, point)
+    return dot(a, vals)
+end
+
+function test_interpolate_simplex()
+    simplex = (SA[2.0,0.0], SA[0.0,2.0], SA[0.0,0.0])
+    point = SA[1.0,1.0]
+    vals = SA[-1.0, 1.5, 1.0]
+    res = 0.25
+    res_test = interpolate_simplex(simplex, vals, point)
+    @assert isapprox(res, res_test, atol=1.e-10)
+end
+
+function interpolate_trilinear(vals::Vector{T}, corners::Vector{SVector{D,Float64}}, point::SVector{D,Float64}) where {T,D}
+    return interpolate_trilinear(reshape(vals, ntuple(_->2,D)), reshape(corners, ntuple(_->2,D)), point)
+end
+
+function zero2n(::Type{Array{T,D}}) where {T<:Number, D}
+    return zeros(T,ntuple(_->2,D)...)
+end
+
+function zero2n(::Type{T}) where {T<:Number}
+    zero(T)    
+end
+
+"""
+point: coordinates of the point when the cuboid has been shifted to the origin.
+T::Array of number
+"""
+function interpolate_trilinear(vals::Array{T,D}, corners::Array{SVector{D,Float64},D}, point::SVector{D,Float64}) where {T,D}
+    ret = zero2n(T)
+    wt_tot = 0.0
+    for ic in CartesianIndices(vals)
+        opposed = ntuple(i -> ifelse(ic[i]==1, 2,1), D)
+        wt = abs(prod(corners[opposed...] .- point))
+        ret += vals[ic] * wt
+        wt_tot += wt
+    end
+    return ret / wt_tot
+end
 
 """
 for a function `i::Int -> f(i)::Array{T,D}` with a given range of indices,
@@ -233,6 +281,9 @@ function compactAdisc(
     # Sanity check
     sz = size(Adisc)
     if !all(sz .== (length(ωdisc) * ones(Int, nO)))
+        @show sz
+        @show nO
+        @show length(ωdisc)
         error("ERR: size of Adisc is inconsistent with the size of odisc.")
     end
 
@@ -756,6 +807,10 @@ function parse_Ops_to_filename(ops)
     return "PSF_(("*temp[1:end-1]*")).mat"
 end
 
+function isBosonic(Op::AbstractString)
+    return Op[1]=='Q' && length(Op)==3
+end
+
 """
 Return symmetric 1D Matsubara grid.
 """
@@ -822,6 +877,34 @@ function KF_idx(K::NTuple{N, Int}, D::Int) :: Int where {N}
     K_it = collect(Iterators.product(fill(1:2, D+1)...))
     c_idx = findfirst(k -> k==K, K_it)
     return LinearIndices(K_it)[c_idx]
+end
+
+"""
+Frequency transformation from external to internal frequencies of a partial correlator.
+"""
+function Gp_trafo(mat::Matrix{T}, perm) where {T}
+    D = size(mat,2)
+    return cumsum(mat[perm[1:D],:], dims=1)
+end
+
+function _to_LinRange(v::AbstractVector{Float64})
+    return LinRange(first(v), last(v), length(v))     
+end
+
+"""
+Construct the frequency grids of all (D+1)! partial correlators based on the
+external frequency grid.
+"""
+function Gp_grids(ωs_ext::NTuple{D, Vector{Float64}}, ωconvMat::Matrix{Int}) where {D}
+    pp = permutations(1:D+1)
+    grids = Vector{NTuple{D,LinRange{Float64}}}(undef, length(pp))
+    for (ip,p) in enumerate(pp)
+        # DxD matrix
+        mat_p = Gp_trafo(ωconvMat, p)
+        ωs_int,_,_ = _trafo_ω_args(ωs_ext, mat_p)
+        grids[ip] = ntuple(i -> _to_LinRange(ωs_int[i]), D)
+    end
+    return grids
 end
 
 function ids_KF(npt::Int)
@@ -1321,9 +1404,12 @@ function dir_to_T(PSFpath::String) :: Float64
         "SIAM_u=1.00"=>1.0/2000.0,
         "SIAM_u=0.50"=>1.0/2000.0,
         "SIAM_u=1.50"=>1.0/2000.0,
+        "SIAM_u3_U0.05_T0.0005_Delta0.0053052" => 1.0/2000.0,
+        "SIAM_u5_U0.05_T0.0005_Delta0.0031831" => 1.0/2000.0,
         "siam05_U0.05_T0.005_Delta0.0318"=>1.0/200.0,
         "SIAM_strong2_U0.2_T0.0001"=>1.0/10000.0,
-        "siam05_U0.05_T0.05_Delta0.0318"=>1.0/20.0
+        "siam05_U0.05_T0.05_Delta0.0318"=>1.0/20.0,
+        "unittest_PSF"=>1.0/2000.0
         )
     for (key, val) in d
         if contains(PSFpath, key)
@@ -1398,6 +1484,18 @@ function channel_translate(channel::String)
         return "pht"
     elseif channel=="p" || channel=="pNRG"
         return "pp"
+    else
+        error("Invalid channel $channel")
+    end
+end
+
+function foreign_channels(channel::String)
+    if channel=="a"
+        return ("p","t")
+    elseif channel in ["p", "pNRG"]
+        return ("a","t")
+    elseif channel=="t"
+        return ("a","p")
     else
         error("Invalid channel $channel")
     end
@@ -1610,6 +1708,25 @@ function merge_iK_K2(ik::NTuple{4,Int}, channel::String, prime::Bool; merged_idx
 end
 
 """
+Get tensor that implements Keldysh index merging for K1
+    ret[ik4,ik2]=1 means that ik4 merges to ik2
+"""
+function iK_K2_trafo(channel::String, prime::Bool)
+    ret = zeros(Int, ntuple(_->2,7))
+    for ik in ids_KF(4)
+        ret[ik..., merge_iK_K2(ik, channel, prime)] = 1
+    end
+end
+
+function unfold_K2(K2val::Array{ComplexF64,3}, channel::String, prime::Bool)
+    ret = zeros(eltype(K2val), 2,2,2,2)    
+    for ik in ids_KF(4)
+        ret[ik...] = K2val[merge_iK_K2(ik,channel,prime)...]
+    end
+    return ret
+end
+
+"""
 Assign 4-component Keldysh index to 2-component Keldysh index of K1r
 """
 function merge_iK_K1(ik::NTuple{4,Int}, channel::String)::NTuple{2,Int}
@@ -1619,6 +1736,24 @@ function merge_iK_K1(ik::NTuple{4,Int}, channel::String)::NTuple{2,Int}
     return (ik1, ik2)
 end
 
+"""
+Get tensor that implements Keldysh index merging for K1
+    ret[ik4,ik2]=1 means that ik4 merges to ik2
+"""
+function iK_K1_trafo(channel::String)
+    ret = zeros(Int, ntuple(_->2,6))
+    for ik in ids_KF(4)
+        ret[ik..., merge_iK_K1(ik, channel)] = 1
+    end
+end
+
+function unfold_K1(K1val::Array{ComplexF64,2}, channel::String)
+    ret = zeros(eltype(K1val), 2,2,2,2)    
+    for ik in ids_KF(4)
+        ret[ik...] = K1val[merge_iK_K1(ik,channel)...]
+    end
+    return ret
+end
 
 """
 Get Keldysh 4-indices that coincide in ik1 component of K1
@@ -1799,6 +1934,7 @@ end
 Group set into orbits w.r.t. operations in ops. Each op∈ops should map op:set->set
 """
 function group_orbits(set::Set{T}, ops::Vector{<:Function}) where {T}
+    error("NOT TESTED")
     orbits = Vector{Set{T}}()
     not_assigned = copy(set)
     while !isempty(not_assigned)

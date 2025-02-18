@@ -854,9 +854,12 @@ function triptych_vertex_plot(h5files; folder="")
 
     # CHANGE MANUALLY
     tolerances = fill(0.001, nrows)
+    # annotate_topleft(axs[1,2], L"\chi=96"; color="white")
     annotate_topleft(axs[1,2], L"\chi=96"; color="white")
-    annotate_topleft(axs[2,2], L"\chi=96"; color="white")
-    annotate_topleft(axs[3,2], L"\chi=111"; color="white")
+    annotate_topleft(axs[2,2], L"\chi=111"; color="white")
+    
+    # parameters, CHANGE MANUALLY
+    annotate_topleft(axs[1,1], L"\beta=2000"*"\n"*L"u=0.5"*"\n"*L"tol=$10^{-3}$"; color="white")
 
     # assume the same sizes everywhere
     xsz, ysz = size(refvals[1])
@@ -873,8 +876,8 @@ function triptych_vertex_plot(h5files; folder="")
     yticks_label = copy(xticks_label)
     yticks = yticks_label .- xvals[1]
 
-    xlabel = L"n_{\omega'}"
-    ylabel = L"n_{\omega}"
+    xlabel = L"n_{\nu'}"
+    ylabel = L"n_{\nu}"
 
     scfun(x) = log10(abs(x))
     # cols
@@ -932,13 +935,13 @@ end
 # PSFpath = joinpath(TCI4Keldysh.datadir(), "siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/")
 PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
 
-folder="MF_pch_rankdata"
+folder="triptych_data"
 
-h5file1 = "vertex_MF_slice_beta=2000.0_slices=(0,256,256,)_tol=-2_upup.h5"
+# h5file1 = "vertex_MF_slice_beta=2000.0_slices=(0,256,256,)_tol=-2_upup.h5"
 h5file2 = "vertex_MF_slice_beta=2000.0_slices=(5,256,256,)_tol=-3_upup.h5"
 h5file3 = "vertex_MF_slice_beta=2000.0_slices=(5,256,256,)_tol=-3_updown.h5"
+triptych_vertex_plot([h5file2, h5file3]; folder=folder)
 h5filecorr = "corrMF_slice_beta=2000.0_slices=(1, 256, 256)_tol=-4.h5"
-# triptych_vertex_plot([h5file1, h5file2, h5file3]; folder=folder)
 # triptych_corr_plot([h5filecorr]; folder=folder)
 
 # plot_vertex_ranks_both(10.0 .^ collect(-5:-2); folder=folder, subdir_str="pch")

@@ -3,7 +3,7 @@ using BenchmarkTools
 Compute interection vertex with symmetric improved estimators and TCI
 =#
 
-DEBUG_TCI_KF_RAM() = true
+DEBUG_TCI_KF_RAM() = false
 
 # ========== MATSUBARA
 
@@ -231,7 +231,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
         refval[idx...] = gev_ref(w...)
     end
 
-    # approximate values
+    # approximate value4
     println("Computing test values...")
     flush(stdout)
     testval = zeros(ComplexF64, ntuple(_->Neval, D))
@@ -613,6 +613,38 @@ end
 
 # ==== Lower-dim. asymptotic contributions K1r and K2r(')
 
+function K2_TCI_KF(
+    PSFpath,
+    R::Int;
+    channel::String,
+    prime::Bool,
+    flavor_idx::Int=1,
+    ik::NTuple{3,Int},
+    estep::Int=nothing,
+    ommax::Float64,
+    qtcikwargs...
+)
+    basepath = dirname(rstrip(PSFpath, '/'))
+    broadening_kwargs = read_all_broadening_params(basepath; channel=channel)
+    ωs_ext = KF_grid(ommax, R, 2)
+    if !isnothing(estep)
+        broadening_kwargs[:estep] = estep
+    end
+    K2ev = K2Evaluator_KF(
+        PSFpath,
+        ωs_ext,
+        flavor_idx,
+        channel,
+        prime;
+        broadening_kwargs...
+        )
+    function _f(i::Int,j::Int)
+        return K2ev(i,j)[ik...]
+    end
+    qtt,_,_ = quanticscrossinterpolate(ComplexF64, _f, ntuple(_->2^R,2); qtcikwargs...)
+    return qtt
+end
+
 """
 Second+third row in Fig 13, Lihm et. al., split in 6 terms in a, p, t channels
 Return 2*R bit quantics tensor train (2D function)
@@ -677,7 +709,7 @@ function K2_TCI(
     end
 
     pivots = [[2^(R-1) + 1, 2^(R-1)]]
-    qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_K2, ntuple(i -> 2^R, 2), pivots; qtcikwargs...)
+    qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_K2, ntuple(i -> 2^R, 2), pivots; qtcikwargs...);
 
     return qtt
 end
@@ -794,11 +826,11 @@ function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; mode=:
             T=T, flavor_idx=flavor_idx, ωs_ext=(ωs_ext,), ωconvMat=reshape([ 1; -1], (2,1)), γ=γ, sigmak=sigmak, name="K1$channel",
             broadening_kwargs...);
     end
-    sign = TCI4Keldysh.channel_K1_sign(channel)
+    sign = channel_K1_sign(channel)
     if mode==:normal
         return sign * precompute_all_values(G)
     elseif mode==:fdt
-        return sign * precompute_all_values_FDT(G, T, false)
+        return sign * precompute_all_values_FDT(PSFpath, ops, ωs_ext; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
     else
         error("Invalid mode $mode")
     end
@@ -819,6 +851,7 @@ function K1_TCI(
     T::Float64,
     flavor_idx::Int=1,
     ωmax::Float64=1.0,
+    estep=nothing,
     # do_check_interpolation::Bool=true,
     qtcikwargs...
 )::Array{<:Union{<:QuanticsTCI.QuanticsTensorCI2, Nothing}}
@@ -849,6 +882,9 @@ function K1_TCI(
         basepath = dirname(rstrip(PSFpath, '/'))
         (γ, sigmak) = read_broadening_params(basepath; channel=channel)
         broadening_kwargs = read_broadening_settings(basepath; channel=channel)
+        if !isnothing(estep)
+            broadening_kwargs[:estep] = estep
+        end
         GF = FullCorrelator_KF(PSFpath, Ops; γ=γ, sigmak=sigmak, flavor_idx=flavor_idx, T=T, ωconvMat=ωconvMat, ωs_ext=(ωs_ext,), name="K1$channel", broadening_kwargs...)
         println("==== Computing $(GF.name)...")
         GFval = precompute_all_values(GF)
@@ -884,6 +920,16 @@ function (sev::SigmaEvaluator_KF)(row::Int, is_inc::Bool, w::Vararg{Int,N}) wher
     else
         return sev.Σ_L[w_int,:,:]
     end
+end
+
+function eval_interpol(sev::SigmaEvaluator_KF, row::Int, is_inc::Bool, ws::Vector{Float64}, w::Vararg{Float64,N}) where {N}
+    w_int = dot(sev.ΣωconvMat[row,:], SA[w...])    
+    idx_up = searchsortedfirst(ws, w_int)
+    idx_low = idx_up - 1
+    weight = (w_int - ws[idx_low]) / (ws[idx_up] - ws[idx_low])
+    val_low = is_inc ? sev.Σ_R[idx_low,:,:] : sev.Σ_L[idx_low,:,:]
+    val_up = is_inc ? sev.Σ_R[idx_up,:,:] : sev.Σ_L[idx_up,:,:]
+    return weight * val_up + (1-weight) * val_low
 end
 
 """
@@ -1100,6 +1146,7 @@ function K2_TCI_precomputed(
     T::Float64,
     flavor_idx::Int=1,
     ωmax::Float64=1.0,
+    estep=_ESTEP_DEFAULT(),
     # do_check_interpolation::Bool=true,
     qtcikwargs...
 )::Array{<:Union{<:QuanticsTCI.QuanticsTensorCI2, Nothing}}
@@ -1126,7 +1173,7 @@ function K2_TCI_precomputed(
         # basepath = dirname(rstrip(PSFpath, '/'))
         # (γ, sigmak) = read_broadening_params(basepath; channel=channel)
         # broadening_kwargs = read_broadening_settings(basepath; channel=channel)
-        K2 = precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext, channel=channel, prime=prime)
+        K2 = precompute_K2r(PSFpath, flavor_idx, formalism; ωs_ext=ωs_ext, channel=channel, prime=prime, estep=estep)
         # all Keldysh components
         qtts = Array{Union{QuanticsTCI.QuanticsTensorCI2{eltype(K2)}, Nothing}}(undef, 2,2,2)
         for id in Iterators.product([1,2],[1,2],[1,2]) 
@@ -1684,6 +1731,7 @@ struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
     is_incoming::NTuple{4,Bool}
     letter_combinations::Vector{String}
     sev::Function
+    ωs_ext::NTuple{3,Vector{Float64}}
 
     function ΓcoreEvaluator_KF(
         GFs::Vector{FullCorrelator_KF{3}},
@@ -1701,7 +1749,7 @@ struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
         X = get_PauliX()
         iK_tuple = KF_idx(iK,3)
 
-        return new{T,KEV_}(GFevs,length(GFs), iK_tuple, X, is_incoming, letter_combinations, sev)
+        return new{T,KEV_}(GFevs,length(GFs), iK_tuple, X, is_incoming, letter_combinations, sev, GFs[1].ωs_ext)
     end
 end
 
@@ -1752,7 +1800,9 @@ function ΓcoreEvaluator_KF(
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
         GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, broadening_kwargs...)
-        report_mem()
+        if DEBUG_TCI_KF_RAM()
+            report_mem()
+        end
     end
 
     # print out memory usage
@@ -1792,6 +1842,178 @@ function ΓcoreEvaluator_KF(
         KEV_;
         KEV_kwargs...
     )
+end
+
+"""
+* K1: evaluates K1 parametrized in channel
+"""
+function eval_K1_general(K1, trafo::Matrix{Int}, w::Vararg{Float64,3})
+    @warn "WIP; not tested"
+    w_int = dot(trafo[1,:], SA[w...])
+    return 0.5 * K1(w_int)
+end
+
+"""
+* sev: evaluates self-energy, returns 2x2 Complex Matrix
+* GFevs: evaluate full correlators, return 16-entry complex vectors (all Keldysh components)
+"""
+function eval_Γcore_general(GFevs, sev, is_incoming::NTuple{4,Bool}, letter_combinations, w::Vararg{T,3}) where {T<:Number}
+    addvals = Vector{Array{ComplexF64,4}}(undef, 16)
+    for i in 1:16
+        res = reshape(GFevs[i](w...), ntuple(_->2, 4))
+        # println("==== GF val no. $i:")
+        # display(res)
+        val_legs = Vector{Matrix{ComplexF64}}(undef, 4)
+        for il in 1:4
+            mat = if letter_combinations[i][il]==='F'
+                    -sev(il, is_incoming[il], w...)
+                else
+                    get_PauliX()
+                end
+            leg = if is_incoming[il]
+                    transpose(mat)
+                else
+                    mat
+                end
+            val_legs[il] = leg
+        end
+        res = contract_1D_Kernels_w_Adisc_mp(val_legs, res)
+        addvals[i] = res
+    end
+    return sum(addvals)
+end
+
+function test_eval_Γcore_general()
+    base_path = "SIAM_u=0.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    # base_path = "unittest_PSF"
+    # PSFpath = joinpath(TCI4Keldysh.datadir(), "unittest_PSF/PSF")
+    flavor_idx = 2
+    # all Keldysh components will be tested
+    iK = 2
+    channel = "p"
+    broadening_kwargs = read_all_broadening_params(base_path; channel=channel)
+    broadening_kwargs[:estep]=100
+    # reference
+    ωs_ext_ref = KF_grid(0.25, 3, 3)
+    Vref = compute_Γcore_symmetric_estimator(
+        "KF",
+        PSFpath,
+        ωs_ext_ref;
+        flavor_idx,
+        channel,
+        broadening_kwargs...
+    )
+
+    # evaluator
+    ωs_ext = KF_grid(1.11 * 0.25, 9, 3)
+    gev = ΓcoreEvaluator_KF(
+        PSFpath,
+        iK,
+        ωs_ext,
+        MultipoleKFCEvaluator;
+        channel=channel,
+        flavor_idx=flavor_idx,
+        KEV_kwargs=Dict([(:nlevel, 2), (:cutoff, 1.e-6)]),
+        broadening_kwargs...
+    )
+
+    gpgrids = Gp_grids(ωs_ext, channel_trafo(channel))
+
+    GFevs = [((w1,w2,w3) -> eval_interpol(G, gpgrids, w1,w2,w3)) for G in gev.GFevs]
+
+    omsig = Σ_grid(ωs_ext[1:2])
+
+    function sev_(il::Int, inc::Bool, w::Vararg{Float64,3})
+        return eval_interpol(gev.sev, il, inc, omsig, w...)
+    end
+
+    # test
+    maxref = maximum(abs.(Vref))
+    errs = Float64[]
+    for iw in Iterators.product(Base.OneTo.(length.(ωs_ext_ref))...)
+        ref = Vref[iw...,:,:,:,:]
+        w = ntuple(i -> ωs_ext_ref[i][iw[i]], 3)
+        val = eval_Γcore_general(
+            GFevs,
+            sev_,
+            gev.is_incoming,
+            gev.letter_combinations,
+            w...
+            )
+        push!(errs, norm(ref .- val)/maxref)
+    end
+    @show maxref
+    @show maximum(errs)
+end
+
+
+function compare_precomputed_eval_Γcore_general()
+    base_path = "SIAM_u=0.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    flavor_idx = 1
+    # reference
+    V_ref = h5read(joinpath("cluster_output/V_KF_conventional/V_KF_p_R=8.h5"), "V_KF")
+    om1 = h5read(joinpath("cluster_output/V_KF_conventional/V_KF_p_R=8.h5"), "omgrid1")
+    om2 = h5read(joinpath("cluster_output/V_KF_conventional/V_KF_p_R=8.h5"), "omgrid2")
+    om3 = h5read(joinpath("cluster_output/V_KF_conventional/V_KF_p_R=8.h5"), "omgrid3")
+    ωs_ext = KF_grid(1.11 * om1[end], 9, 3)
+    iK = 2
+    channel = "p"
+    broadening_kwargs = read_all_broadening_params(base_path; channel=channel)
+    broadening_kwargs[:estep]=200
+
+    gev = ΓcoreEvaluator_KF(
+        PSFpath,
+        iK,
+        ωs_ext,
+        MultipoleKFCEvaluator;
+        channel=channel,
+        flavor_idx=flavor_idx,
+        KEV_kwargs=Dict([(:nlevel, 2), (:cutoff, 1.e-6)]),
+        broadening_kwargs...
+    )
+
+    gpgrids = Gp_grids(ωs_ext, channel_trafo(channel))
+
+    GFevs = [((w1,w2,w3) -> eval_interpol(G, gpgrids, w1,w2,w3)) for G in gev.GFevs]
+
+    omsig = Σ_grid(ωs_ext[1:2])
+
+    function sev_(il::Int, inc::Bool, w::Vararg{Float64,3})
+        return eval_interpol(gev.sev, il, inc, omsig, w...)
+    end
+
+    maxref = maximum(abs.(V_ref))
+    omids = Base.OneTo.(length.((om1,om2,om3)))
+
+    abserrs = Float64[]
+    normederrs = Float64[]
+    for ic in Iterators.product(ntuple(i->omids[i][2:end-1], 3)...)
+        if rand()>1.e-4
+            continue
+        end
+        w = (om1[ic[1]], om2[ic[2]], om3[ic[3]])
+        val = eval_Γcore_general(
+            GFevs,
+            sev_,
+            gev.is_incoming,
+            gev.letter_combinations,
+            w...
+            )
+        ref = V_ref[ic...,:,:,:,:]
+        push!(abserrs, norm(ref.-val))
+        push!(normederrs, norm(ref.-val)/maxref)
+    end
+end
+
+function evaluate_all_iK(gev::ΓcoreEvaluator_KF{T}, w::Vararg{Int,3}) where {T}
+    return eval_Γcore_general(gev.GFevs, gev.sev, gev.is_incoming, gev.letter_combinations, w...)
+end
+
+function evaluate_all_iK(gev::ΓcoreEvaluator_KF{T}, w::Vararg{Float64,3}) where {T}
+    __f(ids::Vararg{Int,3}) = evaluate_all_iK(gev, ids...)
+    return eval_interpol(zeros(ComplexF64,2,2,2,2), __f, gev.ωs_ext, w...)
 end
 
 """
@@ -1842,6 +2064,7 @@ struct ΓEvaluator_KF
     K1s::NTuple{3, Array{ComplexF64, 3}}
     K1offsets::NTuple{2, Vector{Int}}
     K1changeMats::NTuple{2, Matrix{Int}}
+    K1grids::NTuple{3, Vector{Float64}}
     iKK1::NTuple{3, NTuple{2,Int}}
     Γbare::Float64
 
@@ -1903,6 +2126,7 @@ struct ΓEvaluator_KF
         K1offsets = Vector{Int}[]
         K1changeMats = Matrix{Int}[]
         iKK1 = NTuple{2,Int}[]
+        K1grids = Vector{Float64}[]
         ic = 1
         for ch in [channel, foreign_channels...]
             changeMat = reshape(channel_change(channel, ch)[1,:], 1,3)
@@ -1916,6 +2140,7 @@ struct ΓEvaluator_KF
                 broadening_kwargs...
                 )
             K1s[ic] = K1
+            push!(K1grids, only(ωs_extK1))
             if ic>1
                 push!(K1offsets, offset)
                 push!(K1changeMats, changeMat)
@@ -1942,6 +2167,7 @@ struct ΓEvaluator_KF
             Tuple(K1s),
             Tuple(K1offsets),
             Tuple(K1changeMats),
+            Tuple(K1grids),
             Tuple(iKK1),
             Γbare
             )
@@ -2000,6 +2226,135 @@ function (gev::ΓEvaluator_KF)(w::Vararg{Int,3})
 
     return ret + gev.Γbare
 end
+
+function eval_core(gev::ΓEvaluator_KF, w::Vararg{Float64,3})
+    return eval_interpol(gev.core, w...)
+end
+
+function eval_interpol(gev::ΓcoreEvaluator_KF, w::Vararg{Float64,3})
+    return eval_interpol(ComplexF64, gev, gev.ωs_ext, w...)    
+end
+
+"""
+Evaluate K2 by linear interpolation
+"""
+function eval_K2(gev::ΓEvaluator_KF, channel::String, prime::Bool, w::Vararg{Float64,3})
+    g_id = 1
+    w_ = [0.0,0.0]
+    # transform frequency
+    if channel==gev.channel
+        g_id = prime ? 2 : 1
+        w_[1] = w[1]
+        w_[2] = w[ifelse(prime, 3, 2)]
+    elseif channel==gev.foreign_channels[1]
+        g_id = prime ? 4 : 3
+        if prime
+            w_ = gev.K2primechangeMats[1]*SA[w...]
+        else
+            w_ = gev.K2changeMats[1]*SA[w...]
+        end
+    elseif channel==gev.foreign_channels[2]
+        g_id = prime ? 6 : 5
+        if prime
+            w_ = gev.K2primechangeMats[2]*SA[w...]
+        else
+            w_ = gev.K2changeMats[2]*SA[w...]
+        end
+    end
+    # evaluate/interpolate
+    return eval_interpol(zeros(ComplexF64,2,2,2),gev.K2s[g_id], gev.K2s[g_id].ωs_ext, w_...)/sqrt(2)
+end
+
+"""
+Evaluate K1 by linear interpolation
+"""
+function eval_K1(gev::ΓEvaluator_KF, channel::String, w::Vararg{Float64,3})
+    g_id = 1
+    w_ = 0.0
+    if channel==gev.channel
+        g_id = 1
+        w_ = w[1]
+    elseif channel==gev.foreign_channels[1]
+        g_id = 2
+        w_ = only(gev.K1changeMats[1] * SA[w...])
+    elseif channel==gev.foreign_channels[2]
+        g_id = 3
+        w_ = only(gev.K1changeMats[2] * SA[w...])
+    end
+
+    g = gev.K1grids[g_id]
+    wup = searchsortedfirst(g, w_)
+    wlow = wup - 1
+    dw = g[wup]-g[wlow]
+    wtup = (w_-g[wlow])/dw
+    wtlow = (g[wup]-w_)/dw
+    vallow = gev.K1s[g_id][wlow,:,:]
+    valup = gev.K1s[g_id][wup,:,:]
+    # 0.5 for K1 factor
+    return 0.5*(wtup * valup .+ wtlow * vallow)
+end
+
+function test_eval_K12_ΓEvaluator_KF()
+    # base_path = "SIAM_u=0.50"
+    # PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    base_path = "SIAM_u5_U0.05_T0.0005_Delta0.0031831"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u5_U0.05_T0.0005_Delta0.0031831/PSF_nz=2_conn_zavg")
+    # PSFpath = joinpath(TCI4Keldysh.datadir(), "unittest_PSF/PSF")
+    flavor_idx = 1
+    # all iK will be tested
+    iK = 2
+    channel = "t"
+    broadening_kwargs = read_all_broadening_params(base_path; channel=channel)
+    broadening_kwargs[:estep]=50
+
+    # reference
+    ωs_ext = ntuple(_ -> KF_grid_bos(0.26, 11), 3)
+    gev = ΓEvaluator_KF(
+        PSFpath,
+        iK,
+        MultipoleKFCEvaluator;
+        ωs_ext=ωs_ext,
+        flavor_idx=flavor_idx,
+        channel=channel,
+        foreign_channels=("a","p"),
+        KEV_kwargs=Dict(:nlevel => 2, :cutoff => 1.e-6),
+        broadening_kwargs...
+    )
+
+    # reference grid
+    ωs_ext_ref = ntuple(_ -> KF_grid_bos(0.25,3), 3)
+
+    Vtest = zeros(ComplexF64, length.(ωs_ext_ref)..., 2,2,2,2)
+    for iw in Iterators.product(Base.OneTo.(length.(ωs_ext_ref))...)
+        w = ntuple(i -> ωs_ext_ref[i][iw[i]], 3)
+        full = zeros(ComplexF64, 2,2,2,2)
+        for ch in ["a", "p", "t"]
+            k1 = eval_K1(gev, ch, w...)
+            full .+= unfold_K1(k1, ch)
+            for prime in [true, false]
+                k2 = eval_K2(gev, ch, prime, w...)
+                full .+= unfold_K2(k2, ch, prime)
+            end
+        end
+        full .+= evaluate_all_iK(gev.core, w...)
+        full .+= Γbare_KF(PSFpath, flavor_idx)
+        Vtest[iw...,:,:,:,:] .= full
+    end
+
+    # reference
+    Vref = compute_Γfull_symmetric_estimator(
+        "KF",
+        PSFpath;
+        T = dir_to_T(PSFpath),
+        flavor_idx=flavor_idx,
+        ωs_ext=ωs_ext_ref,
+        channel=channel,
+        broadening_kwargs...
+    )
+    h5write("foo_strong.h5", "V_KF_ref", Vref)
+    h5write("foo_strong.h5", "V_KF_test", Vtest)
+end
+
 
 abstract type CachedBatchEvaluator{T} <: TCI.BatchEvaluator{T} end
 

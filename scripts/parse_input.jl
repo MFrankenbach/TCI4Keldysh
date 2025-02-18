@@ -138,6 +138,8 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
         keldyshfull(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="conv_keldyshcore"
         keldyshcore_conv(outname; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="conv_keldyshfull"
+        keldyshfull_conv(outname; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     # Correlator jobs
     elseif jobtype=="corrkeldysh"
         corrkeldysh(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
@@ -145,6 +147,10 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
         corrmatsubara(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     # elseif jobtype=="keldyshaccuracy"
     #     keldyshaccuracy(outname, d)
+    elseif jobtype=="keldyshslice_conv"
+        keldyshslice_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="nonlin_keldyshfull"
+        nonlin_keldyshfull(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     else
         error("Invalid jobtype $jobtype")
     end
@@ -593,6 +599,234 @@ function keldyshcore(
     end
 end
 
+function nonlin_keldyshfull(
+    outname, d::Dict;
+    Rs,
+    PSFpath,
+    folder,
+    flavor_idx,
+    channel,
+    kwargs...)
+    
+    (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
+    TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
+    eval_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
+
+    d["broadening_kwargs"] = broadening_kwargs
+    d["numthreads"] = Threads.threadpoolsize()
+    d["sigmak"] = sigmak 
+    d["gamma"] = γ 
+    d["FullCorrEvaluator_kwargs"] = eval_kwargs
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    println("==== Initialize frequency grids")
+    gridfile = maybeparse(String, kwargs[:frequencygrid])
+    om1 = h5read(joinpath(TCI4Keldysh.pdatadir(), gridfile), "om1")
+    om2 = h5read(joinpath(TCI4Keldysh.pdatadir(), gridfile), "om2")
+    om3 = h5read(joinpath(TCI4Keldysh.pdatadir(), gridfile), "om3")
+    nonlin_grid = (om1,om2,om3)
+    # ωs_ext = TCI4Keldysh.KF_grid(1.01* om1[end], Rs[begin], 3)
+    ωs_ext = ntuple(_->TCI4Keldysh.KF_grid_bos(1.01*om1[end], Rs[begin]), 3)
+
+    println("==== Creating ΓcoreEvaluator_KF...")
+    iK = 1 # value does not matter
+    gev = TCI4Keldysh.ΓEvaluator_KF(
+        PSFpath,
+        iK,
+        eval_kwargs[:KEV];
+        ωs_ext=ωs_ext,
+        flavor_idx=flavor_idx,
+        channel=channel,
+        foreign_channels=TCI4Keldysh.foreign_channels(channel),
+        KEV_kwargs=eval_kwargs[:coreEvaluator_kwargs],
+        sigmak=sigmak,
+        γ=γ,
+        broadening_kwargs...
+    )
+    core = gev.core
+
+    # correlator interpolation
+    gpgrids = TCI4Keldysh.Gp_grids(ωs_ext, TCI4Keldysh.channel_trafo(channel))
+    GFevs = [((w1,w2,w3) -> TCI4Keldysh.eval_interpol(G, gpgrids, w1,w2,w3)) for G in core.GFevs]
+    # self-energy interpolation
+    omsig = TCI4Keldysh.Σ_grid(ωs_ext[1:2])
+    function sev_(il::Int, inc::Bool, w::Vararg{Float64,3})
+        return TCI4Keldysh.eval_interpol(core.sev, il, inc, omsig, w...)
+    end
+
+    h5name = joinpath(TCI4Keldysh.pdatadir(), folder, "V_KF.h5")
+    println("==== Evaluate K1 on nonlinear grid...")
+    for ch in ["a","p","t"]
+        res = zeros(ComplexF64, 2,2,2,2, length.(nonlin_grid)...)
+        @time begin
+            Threads.@threads for ic in collect(Iterators.product(Base.OneTo.(length.(nonlin_grid))...))
+                w = ntuple(i -> nonlin_grid[i][ic[i]], 3)
+                val = TCI4Keldysh.eval_K1(gev, ch, w...)
+                res[:,:,:,:,Tuple(ic)...] .= TCI4Keldysh.unfold_K1(val, ch)
+            end
+        end
+        h5write(h5name, "K1"*ch, res)
+    end
+    println("==== Evaluate K2 on nonlinear grid...")
+    for ch in ["a","p","t"]
+        for prime in [true, false]
+            res = zeros(ComplexF64, 2,2,2,2, length.(nonlin_grid)...)
+            @time begin
+                Threads.@threads for ic in collect(Iterators.product(Base.OneTo.(length.(nonlin_grid))...))
+                    w = ntuple(i -> nonlin_grid[i][ic[i]], 3)
+                    val = TCI4Keldysh.eval_K2(gev, ch, prime, w...)
+                    res[:,:,:,:,Tuple(ic)...] .= TCI4Keldysh.unfold_K2(val, ch, prime)
+                end
+            end
+            h5write(h5name, "K2"*ch*"_$(ifelse(prime,"prime","noprime"))", res)
+        end
+    end
+    println("==== Evaluate core vertex on nonlinear grid...")
+    res = zeros(ComplexF64, 2,2,2,2, length.(nonlin_grid)...)
+    @time begin
+        Threads.@threads for ic in collect(Iterators.product(Base.OneTo.(length.(nonlin_grid))...))
+            w = ntuple(i -> nonlin_grid[i][ic[i]], 3)
+            val = TCI4Keldysh.eval_Γcore_general(
+                GFevs,
+                sev_,
+                core.is_incoming,
+                core.letter_combinations,
+                w...
+                )
+            res[:,:,:,:,Tuple(ic)...] .= val
+        end
+    end
+    h5write(h5name, "core", res)
+end
+
+function keldyshslice_conv(
+    outname, d; 
+    Rs,
+    ik,
+    sliceidx,
+    slicedim,
+    folder,
+    PSFpath,
+    flavor_idx,
+    channel,
+    ommax = 0.3183098861837907,
+    kwargs...)
+
+    iK = maybeparse(Int, ik)
+    sliceidx = maybeparse(Int, sliceidx)
+    slicedim = maybeparse(Int, slicedim)
+    (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
+    TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
+    eval_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
+
+    ommax = maybeparse(Float64, ommax)
+    d["ommax"] = ommax
+    d["iK"] = iK
+    d["broadening_kwargs"] = broadening_kwargs
+    d["numthreads"] = Threads.threadpoolsize()
+    d["sigmak"] = sigmak 
+    d["gamma"] = γ 
+    d["FullCorrEvaluator_kwargs"] = eval_kwargs
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    for R in Rs
+        res = zeros(ComplexF64, 2^R,2^R)
+        ωs_ext = TCI4Keldysh.KF_grid(ommax, R, 3)
+        gev = TCI4Keldysh.ΓcoreEvaluator_KF(
+            PSFpath,
+            iK,
+            ωs_ext,
+            eval_kwargs[:KEV];
+            channel=channel,
+            flavor_idx=flavor_idx,
+            KEV_kwargs=eval_kwargs[:coreEvaluator_kwargs],
+            γ=γ,
+            sigmak=sigmak,
+            broadening_kwargs...
+        )
+        nonslice = [1,2,3]
+        nonslice[slicedim:end] .-= 1
+        # evaluate
+        Threads.@threads for ic in collect(Iterators.product(1:2^R, 1:2^R))
+            w = ntuple(n -> n==slicedim ? sliceidx : ic[nonslice[n]], 3)
+            # println("evaluate at w=$(w)")
+            res[Tuple(ic)...] = gev(ntuple(n -> n==slicedim ? sliceidx : ic[nonslice[n]], 3)...)
+        end
+
+        # store as h5
+        h5name = "V_KF_dim$(slicedim)_slice$(sliceidx)_R$(R)_iK$(iK).h5"
+        h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "V_KF", res)
+    end
+end
+
+"""
+Conventional computation of full keldysh vertex
+"""
+function keldyshfull_conv(outname; 
+    Rs,
+    folder,
+    PSFpath,
+    flavor_idx,
+    channel,
+    ommax = 0.3183098861837907,
+    kwargs...)
+
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    ommax = maybeparse(Float64, ommax)
+    (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
+    # can overwrite broadening params to test influence of broadening on vertex
+    if haskey(Dict(kwargs), :sigmak)
+        sigmak = [maybeparse(Float64, kwargs[:sigmak])]
+    end
+    if haskey(Dict(kwargs), :gamma)
+        γ = maybeparse(Float64, kwargs[:gamma])
+    end
+    # overwrite other explicitly given broadening parameters
+    @show (γ, sigmak)
+    TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
+
+    d = Dict()
+    d["PSFpath"] = PSFpath
+    d["flavor_idx"] = flavor_idx
+    d["channel"] = channel
+    d["gamma"] = γ 
+    d["sigmak"] = sigmak
+    d["broadening_kwargs"] = broadening_kwargs 
+    d["Rs"] = Rs 
+    d["ommax"] = ommax 
+    TCI4Keldysh.logJSON(d, outname, folder)
+    
+    for R in Rs
+        if R>9
+            error("This calculation (R=$R) is doomed.")
+        end
+        ωs_ext = TCI4Keldysh.KF_grid(ommax, R, 3)
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+        gamcore = TCI4Keldysh.compute_Γfull_symmetric_estimator(
+            "KF",
+            PSFpath;
+            T,
+            flavor_idx,
+            ωs_ext,
+            channel=channel,
+            sigmak=sigmak,
+            γ=γ,
+            broadening_kwargs...
+            )
+
+        # store
+        h5name = "V_KF_$(channel)_R=$(R).h5"
+        h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "V_KF", gamcore)
+        for i in eachindex(ωs_ext)
+            h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "omgrid$i", ωs_ext[i])
+        end
+        println("==== R=$R DONE")
+        flush(stdout)
+        flush(stderr)
+    end
+end
+
+
 """
 Conventional computation of keldysh core vertex
 """
@@ -739,6 +973,8 @@ function corrkeldysh(
     unfoldingscheme=:fused,
     serialize_tts=true,
     kwargs...)
+
+    @show kwargs
 
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
     Ops = ["F1", "F1dag", "F3", "F3dag"]

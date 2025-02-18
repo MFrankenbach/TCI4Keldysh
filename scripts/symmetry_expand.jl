@@ -1,7 +1,7 @@
 using Revise
 using TCI4Keldysh
 
-data_dir = "data/SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt";
+data_dir = "/scratch/m/M.Frankenbach/tci4keldysh/data/SIAM_u5_U0.05_T0.0005_Delta0.0031831/PSF_nz=2_conn_zavg/4pt";
 
 symmred_correlators = [
     ["F1", "F1dag", "F3", "F3dag"], # 1 FFFF
@@ -47,3 +47,4 @@ end
 # keys(f)
 # read(f, "Adisc")[1]
 # read(f, "PSF")
+# close(f)

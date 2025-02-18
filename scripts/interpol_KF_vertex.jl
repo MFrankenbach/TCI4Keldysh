@@ -262,7 +262,7 @@ function hierarchical_Gp(;R=5, ommax=0.5, do_profile=false)
         sigmak=sigmak,
         emax=max(20.0, 3*ommax),
         emin=2.5*1.e-5,
-        estep=50
+        estep=10
     )
 
     center = G.Gps[1].tucker.center

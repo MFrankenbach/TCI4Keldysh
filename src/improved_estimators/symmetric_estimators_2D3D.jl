@@ -182,6 +182,40 @@ function compute_Γcore_symmetric_estimator(
     return Γcore_data
 end
 
+function compute_Γcore_symmetric_estimator(
+    formalism::String,
+    PSFpath::String,
+    ωs_ext::NTuple{3,Vector{Float64}};
+    flavor_idx::Int,
+    channel::String,
+    broadening_kwargs...
+)
+    PSFpath_Σ = PSFpath
+    if !contains(PSFpath, "4pt")
+        PSFpath = joinpath(PSFpath, "4pt")
+    end
+    ωconvMat = channel_trafo(channel)
+    T = dir_to_T(PSFpath)
+
+    omsig = Σ_grid(ωs_ext[1:2])
+    (ΣL,ΣR) = if formalism=="MF"
+            calc_Σ_MF_aIE(PSFpath_Σ, omsig; flavor_idx=flavor_idx, T=T)
+        else
+            calc_Σ_KF_aIE_viaR(PSFpath_Σ, omsig; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+        end
+
+    return compute_Γcore_symmetric_estimator(
+        formalism,
+        PSFpath,
+        ΣR;
+        Σ_calcL=ΣL,
+        flavor_idx=flavor_idx,
+        T=T,
+        ωs_ext=ωs_ext,
+        ωconvMat=ωconvMat,
+        broadening_kwargs...
+    )
+end
 
 
 function _mult_Σ_KF(G_data::Array{ComplexF64,N}, Σ::Array{ComplexF64,NΣ}; idim::Int, is_incoming::Bool) where{N,NΣ}
@@ -234,7 +268,7 @@ function compute_Γfull_symmetric_estimator(
     (ΣL, ΣR) = if formalism=="MF"
             calc_Σ_MF_aIE(PSFpath, omsig; flavor_idx=flavor_idx, T=T)
         else
-            calc_Σ_KF_aIE(PSFpath, omsig; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+            calc_Σ_KF_aIE_viaR(PSFpath, omsig; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
         end
 
     # Γcore
@@ -252,7 +286,7 @@ function compute_Γfull_symmetric_estimator(
 
     channels = ["a","t","pNRG"]
     if !(channel in channels)
-        error("Channel $channels not supported")
+        error("Channel $channel not supported")
     end
 
     @show maximum(abs.(Γfull))
@@ -405,4 +439,27 @@ function compute_Γfull_symmetric_estimator(
     end
     
     return Γfull
+end
+
+function compute_Γcore_pointwise(
+    formalism ::String,
+    PSFpath::String,
+    R::Int=2^12
+    ;
+    T::Float64=dir_to_T(PSFpath),
+    flavor_idx::Int,
+    ωs_nonlin::Vector{Float64},
+    channel::String,
+    broadening_kwargs...
+)
+    if formalism=="MF"    
+        error("NYI")
+    else
+        # formalism=="KF"
+        # determine linear grid
+        ommax = maximum(abs.(ωs_nonlin))
+        ωs_ext = KF_grid(ommax, R, 3)
+        # TODO need to evaluate vertex on arbitrary frequencies
+        # by interpolation
+    end
 end

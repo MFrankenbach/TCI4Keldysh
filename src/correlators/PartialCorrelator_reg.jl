@@ -98,8 +98,8 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
             tucker.legs = if hilbert_method=="linear_interpolation"
                 # check that frequency grid is smaller than Acont grid to interpolate real part
                 for i in 1:D
-                    @assert (maximum(ωs_int[i]) <= maximum(Acont.ωs_legs[i])) "Cannot interpolate real part of kernel"
-                    @assert (minimum(ωs_int[i]) >= minimum(Acont.ωs_legs[i])) "Cannot interpolate real part of kernel"
+                    @assert (maximum(ωs_int[i]) <= maximum(Acont.ωs_legs[i])) "Cannot interpolate real part of kernel: $(maximum.(Acont.ωs_legs)) vs $(maximum.(ωs_int))"
+                    @assert (minimum(ωs_int[i]) >= minimum(Acont.ωs_legs[i])) "Cannot interpolate real part of kernel: $(minimum.(Acont.ωs_legs)) vs $(minimum.(ωs_int))"
                 end
                 # [-im * π * my_hilbert_trafo(ωs_int[i], Acont.ωs_legs[i], Acont.legs[i]) for i in 1:D]
                 hts = Vector{Matrix{ComplexF64}}(undef,D)

@@ -80,7 +80,7 @@ mutable struct FullCorrelator_MF{D}
 
         perms = permutations(collect(1:D+1))
         Gp_to_G = _get_Gp_to_G(D, isBos)
-        Gps = [PartialCorrelator_reg(T, "MF", Gp_to_G[i].*Adiscs[i], ωdisc, ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1); is_compactAdisc) for (i,p) in enumerate(perms)]        
+        Gps = [PartialCorrelator_reg(T, "MF", Gp_to_G[i].*Adiscs[i], ωdisc, ωs_ext, Gp_trafo(ωconvMat, p); is_compactAdisc) for (i,p) in enumerate(perms)]        
 
         return new{D}(name, Gps, Gp_to_G, [perms...], ωs_ext, ωconvMat)
     end
@@ -561,6 +561,44 @@ function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
     return nothing
 end
 
+using BenchmarkTools
+function speedup_FullCorrelator_MF()
+    npt = 4
+    D = npt-1
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/4pt")
+    channel = "p"
+    Ops = TCI4Keldysh.dummy_operators(npt)
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    R = 10
+    T=TCI4Keldysh.dir_to_T(PSFpath)
+    ωs_ext = MF_npoint_grid(T, 2^(R-1), 3)
+    G = TCI4Keldysh.FullCorrelator_MF(
+        PSFpath,
+        Ops;
+        ωconvMat=ωconvMat,
+        T=T,
+        ωs_ext=ωs_ext,
+        flavor_idx=1,
+    )
+
+    # time naive evaluation
+    println("Time naive")
+    w = ntuple(i -> rand(1:length(ωs_ext[i])), 3)
+    res = @benchmark $G($w...)
+    display(res)
+
+    G2 = deepcopy(G)
+    println("Time MFCEvaluator")
+    mev = MFCEvaluator(G) 
+    res2 = @benchmark $mev($w...)
+    display(res2)
+
+    gev = FullCorrEvaluator_MF(G2, true; cutoff=1.e-5)
+    println("Time FullCorrEvaluator_MF")
+    res3 = @benchmark $gev($w...)
+    display(res3)
+end
+
 
 
 """
@@ -638,7 +676,7 @@ struct FullCorrelator_KF{D}
         print("Loading stuff: ")
         @time begin
         perms = permutations(collect(1:D+1))
-        isBos = (o -> o[1] == 'Q' && length(o) == 3).(Ops)
+        isBos = isBosonic.(Ops)
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
         end
@@ -747,7 +785,9 @@ struct FullCorrelator_KF{D}
         Gps = Vector{PartialCorrelator_reg{D}}(undef, length(collect(perms)))
         for (i,p) in enumerate(perms)
             Gps[i] = PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1))
-            GC.gc(true)
+            if DEBUG_TCI_KF_RAM()
+                GC.gc(true)
+            end
         end
         # Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
         GR_to_GK = get_GR_to_GK(D)
@@ -1146,23 +1186,78 @@ end
 
 """
 Replace Keldysh component G^22 by FDT-computed G^22: 
+G22(ω) = coth(ω/(2T)) * (G^21 - G^12) = coth(ω/(2T)) * 2i * Im(G^21)(ω)
 """
-function precompute_all_values_FDT(G::FullCorrelator_KF{1}, T::Float64, isFermionic=true)
+function precompute_all_values_replaceFDT(G::FullCorrelator_KF{1}, T::Float64, isFermionic=true)
     vals = precompute_all_values(G)    
     om = only(G.ωs_ext)
     if isFermionic
         G22 = tanh.(om./(2T)) .* (vals[:,2,1] .- vals[:,1,2])
     else    
         # treat divergence of coth at 0
-        omtmp = abs.(om) .> T * 1.e-6
+        omtmp = abs.(om) .> 1.e-12
         nonomtmp = .!omtmp
         G22 = zeros(ComplexF64, size(vals,1))
         G22[omtmp] .= coth.(om[omtmp]./(2T)) .* (vals[omtmp,2,1] .- vals[omtmp,1,2])
-        interp = linear_interpolation(om[omtmp], G22[omtmp])
+        ompos = om .> 0.0
+        interp = linear_interpolation(om[ompos], G22[ompos]; extrapolation_bc=Line())
         G22[nonomtmp] .= interp.(om[nonomtmp])
     end
     vals[:,2,2] .= G22
     return vals
+end
+
+"""
+Compute G^22 by FDT, imitating MuNRG code.
+G22(ω) = coth(ω/(2T)) * (G^21 - G^12) = coth(ω/(2T)) * 2i * Im(G^21)(ω)
+
+Im(G^21) = -Acont/π
+"""
+function precompute_all_values_FDT(PSFpath, Ops::Vector{String}, ωs_ext::Vector{Float64}; flavor_idx::Int, T::Float64, sigmak, γ::Float64, broadening_kwargs...)
+    G = zeros(ComplexF64, length(ωs_ext), 2, 2)
+    @assert length(Ops)==2 "Only suitable for 2pt functions"
+    perms = [[1,2],[2,1]]
+    isBos = isBosonic.(Ops)
+    @assert !(xor(isBos[1], isBos[2])) "Need both operators fermionic or both bosonic"
+    # compute spectral function
+    ωdisc = load_ωdisc(PSFpath, Ops)
+    Adiscs = [load_Adisc(PSFpath, Ops[p], flavor_idx) for p in perms]
+    ωcont = get_Acont_grid(;broadening_kwargs...)
+    println("Broaden...")
+    Aconts::Vector{TuckerDecomposition{Float64,1}} = 
+        [
+        BroadenedPSF(
+        ωdisc, Adisc, sigmak, γ;
+        ωconts=(ωcont,), broadening_kwargs...
+        ) for Adisc in Adiscs
+        ]
+    println("Compute Aconts...")
+    Aconts_vec = [only(Acont.legs) * Acont.center for Acont in Aconts]
+    zeta = isBos[1] ? 1 : -1
+    Acont_std = Aconts_vec[1] .- zeta * reverse(Aconts_vec[2])
+    ImG21 = -π * Acont_std 
+    # deduce G^22
+    println("Compute G^K...")
+    if isBos[1] 
+        # bosonic
+        omnonzero = abs.(ωcont) .> 0.0
+        G22_cont = zeros(ComplexF64, length(ωcont))
+        G22_cont[omnonzero] .= coth.(ωcont[omnonzero]./(2T)) .* (2*im*ImG21[omnonzero])
+        # treat ω=0
+        interp = linear_interpolation(ωcont[omnonzero], G22_cont[omnonzero])
+        G22_cont[.!(omnonzero)] .= interp.(ωcont[.!omnonzero])
+    else
+        # fermionic
+        G22_cont = tanh.(ωcont./(2T)) .* (2*im*ImG21)
+    end
+    println("Compute G^R and G^A...")
+    interp = linear_interpolation(ωcont, G22_cont)
+    G[:,2,2] .= interp.(ωs_ext)
+    # G^21
+    G[:,2,1] .= -im * π * my_hilbert_trafo(ωs_ext, ωcont, Acont_std)
+    # G^12
+    G[:,1,2] .= conj.(G[:,2,1])
+    return G
 end
 
 
