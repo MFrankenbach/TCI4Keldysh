@@ -45,6 +45,11 @@ end
 
 # macro to unlock timing of function evaluations
 VERBOSE() = false
+# from very little (0) to a lot of (3) output
+const VERBOSITY = Ref(2)
+function SET_VERBOSITY(level::Int)
+    VERBOSITY[] = level
+end
 
 macro VERBOSE(msgs)
     esc(:(if $(@__MODULE__).VERBOSE() print($msgs...) end))

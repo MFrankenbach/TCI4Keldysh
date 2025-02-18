@@ -86,7 +86,6 @@ mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
         end
 
         ωs_int, ωconvOff, isFermi = _trafo_ω_args(ωs_ext, ωconvMat)
-        #println("ωconvMat, ωconvOff: ", ωconvMat, ωconvOff)
         δωcont = get_ω_binwidths(Acont.ωs_legs[1])
         tucker = TuckerDecomposition(Acont.center .+ 0im, Acont.legs; ωs_center=Acont.ωs_center, ωs_legs=ωs_int)#deepcopy(Acont)
         if formalism == "MF"
@@ -479,7 +478,6 @@ function evaluate_without_ωconversion_KF(Gp::PartialCorrelator_reg{D}, idx::Var
     res = Gp.tucker.center
     sz_Adisc = size(res)
     for i in 1:D
-        #println("i: ", i)
         #res = view(psf.Kernels[i], idx[i]:idx[i], :) * reshape(res, (psf.sz[i], prod(psf.sz[i+1:D])))
         res = view(Gp.tucker.legs[i], idx[i]:idx[i], :) * reshape(res, (sz_Adisc[i], prod(sz_Adisc[i+1:D])*i))    # version for Kernels[idx_ext, idx_int]
         res = reshape(res, (prod(sz_Adisc[i+1:D]), i))
@@ -488,7 +486,6 @@ function evaluate_without_ωconversion_KF(Gp::PartialCorrelator_reg{D}, idx::Var
         #res = reshape(res, (prod(psf.sz[1:j-1]), psf.sz[j])) * view(psf.Kernels[j], idx[j], :)
         #res = reshape(res, (prod(sz_Adisc[1:j-1]), sz_Adisc[j])) * view(Gp.Kernels[j], idx[j], :)    # version for Kernels[idx_int, idx_ext]
     end
-    #println("length(res): ", length(res))
     return reshape(res, D+1)
 end
 
@@ -918,7 +915,6 @@ function partial_fraction_decomp(Gp_in::PartialCorrelator_reg{D}; idx1::Int, idx
         diff = vals_pfd1+vals_pfd2-vals_orig
         maxdev = maximum(abs.(diff))
         println("Sup-norm deviation of original to decomposed Gps: \t", maxdev)
-        
     end
 
     return Gp_out1, Gp_out2

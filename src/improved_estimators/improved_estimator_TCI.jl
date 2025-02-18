@@ -113,13 +113,13 @@ function read_GFs_Γcore!(
     # Threads.@threads for l in 1:Ncorrs # can two threads try to read the same file here?
     for l in 1:length(GFs)
         letts = letter_combinations[l]
-        println("letts: ", letts)
+        vprintln("letts: $letts", 2)
         ops = [letts[i]*op_labels[i] for i in 1:4]
         if !any(parse_Ops_to_filename(ops) .== filelist)
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
         GFs[l] = TCI4Keldysh.FullCorrelator_MF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat);
-        printstyled("== Memory usage [GB] of $(l)-th full correlator: $(Base.summarysize(GFs[l]) / 1024^3)\n"; color=:blue)
+        vprintstyled("== Memory usage [GB] of $(l)-th full correlator: $(Base.summarysize(GFs[l]) / 1024^3)\n", 2; color=:blue)
     end
 end
 
@@ -174,7 +174,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     filelist = readdir(PSFpath_4pt)
     for l in 1:Ncorrs
         letts = letter_combinations[l]
-        println("letts: ", letts)
+        vprintln("letts: $letts", 2)
         ops = [letts[i]*op_labels[i] for i in 1:4]
         if !any(parse_Ops_to_filename(ops) .== filelist)
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
@@ -394,10 +394,12 @@ function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullC
     end
     =#
 
-    printstyled("==== Using $(length(pivots)) initial pivots:\n"; color=:blue)
-    # display([p .- [div(length(GFs[1].ωs_ext[i]), 2) for i in 1:D] for p in pivots])
-    display(pivots)
-    printstyled("====\n"; color=:blue)
+    if VERBOSITY[]>=2
+        printstyled("==== Using $(length(pivots)) initial pivots:\n"; color=:blue)
+        # display([p .- [div(length(GFs[1].ωs_ext[i]), 2) for i in 1:D] for p in pivots])
+        display(pivots)
+        printstyled("====\n"; color=:blue)
+    end
     return pivots
 end
 
@@ -439,7 +441,7 @@ function Γ_core_TCI_MF_batched(
     initpivots_ω = initpivots_Γcore([gev.GFevs[i].GF for i in eachindex(gev.GFevs)])
     initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
 
-    printstyled("Memory usage [GB] of ΓcoreBatchEvaluator_MF: $(Base.summarysize(gbev) / (1024^3))\n"; color=:blue)
+    vprintln("Memory usage [GB] of ΓcoreBatchEvaluator_MF: $(Base.summarysize(gbev) / (1024^3))", 2)
 
     @info "BATCHED"
     t = @elapsed begin
@@ -1276,7 +1278,7 @@ function Γ_core_TCI_KF(
     filelist = readdir(PSFpath_4pt)
     for l in 1:Ncorrs
         letts = letter_combinations[l]
-        println("letts: ", letts)
+        vprintln("letts: $letts", 2)
         ops = [letts[i]*op_labels[i] for i in 1:4]
         if !any(parse_Ops_to_filename(ops) .== filelist)
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
@@ -1794,7 +1796,7 @@ function ΓcoreEvaluator_KF(
     filelist = readdir(PSFpath_4pt)
     for l in 1:Ncorrs
         letts = letter_combinations[l]
-        println("letts: ", letts)
+        vprintln("letts: $letts", 2)
         ops = [letts[i]*op_labels[i] for i in 1:4]
         if !any(parse_Ops_to_filename(ops) .== filelist)
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
@@ -2570,7 +2572,6 @@ If qf(x) is not cached, cache it into d_write.
 Intended to use CachedFunction with multiple threads.
 """
 function (cf::TCI.CachedFunction{ValueType, K})(x::Vector{T}, d_write::Dict{K,ValueType}) where {ValueType, K, T<:Number}
-    # printstyled("  tid: $(Threads.threadid())\n"; color=:gray)
     xkey = TCI._key(cf, x)
     return get(cf.cache, xkey) do
         # returns cf.f(x)

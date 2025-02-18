@@ -137,9 +137,9 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
     elseif jobtype=="keldyshfull"
         keldyshfull(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="conv_keldyshcore"
-        keldyshcore_conv(outname; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+        keldyshcore_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="conv_keldyshfull"
-        keldyshfull_conv(outname; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+        keldyshfull_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     # Correlator jobs
     elseif jobtype=="corrkeldysh"
         corrkeldysh(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
@@ -762,7 +762,7 @@ end
 """
 Conventional computation of full keldysh vertex
 """
-function keldyshfull_conv(outname; 
+function keldyshfull_conv(outname, d; 
     Rs,
     folder,
     PSFpath,
@@ -785,14 +785,10 @@ function keldyshfull_conv(outname;
     @show (γ, sigmak)
     TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
 
-    d = Dict()
-    d["PSFpath"] = PSFpath
-    d["flavor_idx"] = flavor_idx
     d["channel"] = channel
     d["gamma"] = γ 
     d["sigmak"] = sigmak
     d["broadening_kwargs"] = broadening_kwargs 
-    d["Rs"] = Rs 
     d["ommax"] = ommax 
     TCI4Keldysh.logJSON(d, outname, folder)
     
@@ -830,7 +826,7 @@ end
 """
 Conventional computation of keldysh core vertex
 """
-function keldyshcore_conv(outname; 
+function keldyshcore_conv(outname, d::Dict; 
     Rs,
     folder,
     PSFpath,
@@ -853,14 +849,10 @@ function keldyshcore_conv(outname;
     @show (γ, sigmak)
     TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
 
-    d = Dict()
-    d["PSFpath"] = PSFpath
-    d["flavor_idx"] = flavor_idx
     d["channel"] = channel
     d["gamma"] = γ 
     d["sigmak"] = sigmak
     d["broadening_kwargs"] = broadening_kwargs 
-    d["Rs"] = Rs 
     d["ommax"] = ommax 
     TCI4Keldysh.logJSON(d, outname, folder)
     

@@ -284,7 +284,7 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
         ωconvOffs = Vector{SVector{D,Int}}(undef, nGps)
         ωconvMats = Vector{SMatrix{D,D,Int}}(undef, nGps)
         Threads.@threads for ip in eachindex(GF.Gps)
-            println(" Processing partial correlator no. $ip/$nGps")
+            vprintln(" Processing partial correlator no. $ip/$nGps")
             Gp = GF.Gps[ip]
             for id in 1:D
                 kernels_act = ntuple(
@@ -298,9 +298,11 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
             ωconvOffs[ip] = copy(Gp.ωconvOff)
             ωconvMats[ip] = copy(Gp.ωconvMat)
         end
-        println("==== COMBINED HIERARCHICAL TUCKER: MEMORY")
-        @show Base.summarysize(Gps_) / 1.e9
-        println("==== MEMORY END")
+        if VERBOSITY[]>=2
+            println("==== COMBINED HIERARCHICAL TUCKER: MEMORY")
+            @show Base.summarysize(Gps_) / 1.e9
+            println("==== MEMORY END")
+        end
         return new{D}(Gps_, ωconvOffs, ωconvMats, deepcopy(GF.ωs_ext), copy(GF.GR_to_GK))
     end
 end

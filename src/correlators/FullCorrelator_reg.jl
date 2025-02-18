@@ -59,7 +59,7 @@ mutable struct FullCorrelator_MF{D}
 
     function FullCorrelator_MF(Adiscs::Vector{Array{Float64,D}}, ωdisc::Vector{Float64}; T::Float64, isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[], is_compactAdisc::Bool=false) where{D}
         if DEBUG()
-            println("Constructing FullCorrelator_MF.")
+            println("Constructing FullCorrelator_MF.", 2)
         end
         ##########################################################################
         ############################## check inputs ##############################
@@ -189,7 +189,7 @@ struct FullCorrEvaluator_MF{T,D,N}
 
         # svd kernels if requested
         if svd_kernel
-            println("  SVD-decompose kernels with cut=$cutoff...")
+            vprintln("  SVD-decompose kernels with cut=$cutoff...", 2)
             for Gp in GF.Gps
                 # if any(size(Gp.tucker.legs[1]) .> 1000) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
                 size_old = size(Gp.tucker.center)
@@ -197,7 +197,7 @@ struct FullCorrEvaluator_MF{T,D,N}
                 GC.gc(true)
                 # GC.enable_logging(true)
                 size_new = size(Gp.tucker.center)
-                println(" Reduced tucker center from $size_old to $size_new")
+                vprintln(" Reduced tucker center from $size_old to $size_new", 2)
             end
         end
 
@@ -673,14 +673,14 @@ struct FullCorrelator_KF{D}
         end
         ##########################################################################
         
-        print("Loading stuff: ")
+        vprint("Loading stuff: ")
         @time begin
         perms = permutations(collect(1:D+1))
         isBos = isBosonic.(Ops)
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
         end
-        print("Creating Broadened PSFs: ")
+        vprint("Creating Broadened PSFs: ")
         function get_Acont_p(i, p)
             # ωconts, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
             ωcont = get_Acont_grid(;broadening_kwargs...)
@@ -775,7 +775,7 @@ struct FullCorrelator_KF{D}
             return GR_to_GK
         end
 
-        print("All the rest: ")
+        vprint("All the rest: ")
         @time begin
         perms = permutations(collect(1:D+1))
         Gp_to_G = _get_Gp_to_G(D, isBos)
@@ -895,7 +895,7 @@ struct FullCorrEvaluator_KF{D,T} <: AbstractCorrEvaluator_KF{D,T}
             for it in 1:N_tucker
                 legs = [ifelse(il+1>it, tmp_legs[il], conj.(tmp_legs[il])) for il in 1:D]
                 tucker_centers[p][it] = contract_1D_Kernels_w_Adisc_mp(legs, Gp.tucker.center)
-                println("Reduced tucker center from $(old_size) to $(size(tucker_centers[p][it]))")
+                vprintln("Reduced tucker center from $(old_size) to $(size(tucker_centers[p][it]))", 2)
             end
 
             # compute tucker cuts, one for each retarded component
@@ -1095,7 +1095,7 @@ struct FullCorrEvaluator_KF_single{D, T}
             for iR in iRs_required[p]
                 iR_legs = [i+1<=iR ? conj.(tmp_legs[i]) : tmp_legs[i] for i in eachindex(tmp_legs)]
                 push!(tucker_centers[p], contract_1D_Kernels_w_Adisc_mp(iR_legs, Gp.tucker.center))
-                println("Reduced tucker center from $(old_size) to $(size(tucker_centers[p][end]))")
+                vprintln("Reduced tucker center from $(old_size) to $(size(tucker_centers[p][end]))", 2)
             end
         end
         return new{D,T}(KFC, iK, iRs_required, iso_kernels, tucker_centers)
@@ -1291,7 +1291,7 @@ function get_GR(
     end
     ##########################################################################
     
-    print("Loading stuff: ")
+    vprint("Loading stuff: ")
     @time begin
     #perms = permutations(collect(1:D+1))
     isBos = (o -> o[1] == 'Q' && length(o) == 3).(Ops)

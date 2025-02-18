@@ -1961,3 +1961,21 @@ function override_dict!(src::Dict, dst::Dict)
         end
     end
 end
+
+function vprintln(msg::AbstractString, minlevel::Int=1)
+    if VERBOSITY[]>=minlevel
+        println(msg)
+    end
+end
+
+function vprint(msg::AbstractString, minlevel::Int=1)
+    if VERBOSITY[]>=minlevel
+        print(msg)
+    end
+end
+
+function vprinstyled(msg::AbstractString, minlevel::Int=1; kwargs...)
+    if VERBOSITY[]>=minlevel
+        printstyled(msg; kwargs...)
+    end
+end
