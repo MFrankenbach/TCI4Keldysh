@@ -612,12 +612,18 @@ function nonlin_keldyshfull(
     TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
     eval_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
 
+    if haskey(Dict(kwargs), :sigmak)
+        sigmak = [maybeparse(Float64, kwargs[:sigmak])]
+    end
+    if haskey(Dict(kwargs), :gamma)
+        γ = maybeparse(Float64, kwargs[:gamma])
+    end
+
     d["broadening_kwargs"] = broadening_kwargs
     d["numthreads"] = Threads.threadpoolsize()
     d["sigmak"] = sigmak 
     d["gamma"] = γ 
     d["FullCorrEvaluator_kwargs"] = eval_kwargs
-    TCI4Keldysh.logJSON(d, outname, folder)
 
     println("==== Initialize frequency grids")
     gridfile = maybeparse(String, kwargs[:frequencygrid])
@@ -627,8 +633,26 @@ function nonlin_keldyshfull(
     nonlin_grid = (om1,om2,om3)
     # ωs_ext = TCI4Keldysh.KF_grid(1.01* om1[end], Rs[begin], 3)
     ωs_ext = ntuple(_->TCI4Keldysh.KF_grid_bos(1.01*om1[end], Rs[begin]), 3)
+    foreign_channels = if !(haskey(kwargs, :foreign_channels))
+            TCI4Keldysh.foreign_channels(channel)
+        else
+            # TODO make code accept "pnrg" channel as well...
+            fc = kwargs[:foreign_channels]
+            ip = findfirst(x -> x=="pnrg" || x=="pqft", fc)
+            if !isnothing(ip)
+                if fc[ip]=="pnrg"
+                    fc[ip] = "pNRG"
+                elseif fc[ip]=="pqft"
+                    fc[ip] = "pQFT"
+                end
+            end
+            Tuple(fc)
+        end
+    d["foreign_channels"] = foreign_channels
+    TCI4Keldysh.logJSON(d, outname, folder)
 
     println("==== Creating ΓcoreEvaluator_KF...")
+    k2cutoff = haskey(kwargs, :k2cutoff) ? maybeparse(Float64, kwargs[:k2cutoff]) : 1.e-20 
     iK = 1 # value does not matter
     gev = TCI4Keldysh.ΓEvaluator_KF(
         PSFpath,
@@ -637,8 +661,9 @@ function nonlin_keldyshfull(
         ωs_ext=ωs_ext,
         flavor_idx=flavor_idx,
         channel=channel,
-        foreign_channels=TCI4Keldysh.foreign_channels(channel),
+        foreign_channels=foreign_channels,
         KEV_kwargs=eval_kwargs[:coreEvaluator_kwargs],
+        K2cutoff=k2cutoff,
         sigmak=sigmak,
         γ=γ,
         broadening_kwargs...
@@ -656,7 +681,7 @@ function nonlin_keldyshfull(
 
     h5name = joinpath(TCI4Keldysh.pdatadir(), folder, "V_KF.h5")
     println("==== Evaluate K1 on nonlinear grid...")
-    for ch in ["a","p","t"]
+    for ch in [gev.channel, gev.foreign_channels...]
         res = zeros(ComplexF64, 2,2,2,2, length.(nonlin_grid)...)
         @time begin
             Threads.@threads for ic in collect(Iterators.product(Base.OneTo.(length.(nonlin_grid))...))
@@ -667,8 +692,9 @@ function nonlin_keldyshfull(
         end
         h5write(h5name, "K1"*ch, res)
     end
+    flush(stdout)
     println("==== Evaluate K2 on nonlinear grid...")
-    for ch in ["a","p","t"]
+    for ch in [gev.channel, gev.foreign_channels...]
         for prime in [true, false]
             res = zeros(ComplexF64, 2,2,2,2, length.(nonlin_grid)...)
             @time begin
@@ -681,6 +707,7 @@ function nonlin_keldyshfull(
             h5write(h5name, "K2"*ch*"_$(ifelse(prime,"prime","noprime"))", res)
         end
     end
+    flush(stdout)
     println("==== Evaluate core vertex on nonlinear grid...")
     res = zeros(ComplexF64, 2,2,2,2, length.(nonlin_grid)...)
     @time begin
@@ -696,6 +723,7 @@ function nonlin_keldyshfull(
             res[:,:,:,:,Tuple(ic)...] .= val
         end
     end
+    flush(stdout)
     h5write(h5name, "core", res)
 end
 
@@ -797,6 +825,11 @@ function keldyshfull_conv(outname, d;
             error("This calculation (R=$R) is doomed.")
         end
         ωs_ext = TCI4Keldysh.KF_grid(ommax, R, 3)
+        if haskey(kwargs, :bosgrid)
+            if maybeparse(Bool, kwargs[:bosgrid])
+                ωs_ext = ntuple(_->TCI4Keldysh.KF_grid_bos(ommax, R), 3)
+            end
+        end
         T = TCI4Keldysh.dir_to_T(PSFpath)
         gamcore = TCI4Keldysh.compute_Γfull_symmetric_estimator(
             "KF",
@@ -806,6 +839,7 @@ function keldyshfull_conv(outname, d;
             ωs_ext,
             channel=channel,
             sigmak=sigmak,
+            store_dir = joinpath(TCI4Keldysh.pdatadir(), folder),
             γ=γ,
             broadening_kwargs...
             )

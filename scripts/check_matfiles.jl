@@ -1,6 +1,7 @@
 using MAT
-ddir::String = "/scratch/m/M.Frankenbach/tci4keldysh/data/SIAM_u5_U0.05_T0.0005_Delta0.0031831/PSF_nz=2_conn_zavg/"
+ddir::String = "/scratch/m/M.Frankenbach/tci4keldysh/data/PRX_jae-mo_PSF/PSF_nz=4_conn_zavg/"
 failcount = 0
+missingcount = 0
 failfiles = String[]
 nullfiles = String[]
 for f in readdir(ddir)
@@ -19,6 +20,7 @@ for f in readdir(ddir)
         for k in keys(f)
             val = read(f, k)
             if ismissing(val)
+                global missingcount += 1
                 @info "Key $k missing in file $fname"
             end
         end
@@ -32,6 +34,7 @@ for f in readdir(ddir)
     end
 end
 
+println("missing-valued keys: $missingcount")
 println("FAILED to read $failcount files:")
 for f in failfiles
     println(f)
