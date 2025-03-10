@@ -67,6 +67,9 @@ else
     if "SIE" in args
         include(joinpath(test_dir, "test_improved_estimators.jl"))     
     end
+    if "CORRELATORS" in args
+        test_correlators()
+    end
 end
 
 println("==== tests for $args DONE")

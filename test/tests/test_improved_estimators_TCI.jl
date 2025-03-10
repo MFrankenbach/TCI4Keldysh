@@ -401,19 +401,17 @@ end
         @test maximum(reldiff) < 3.0*tolerance
     end
 
-    function test_ΓEvaluator_KF()
+    function test_ΓEvaluator_KF(;flavor_idx::Int=1, iK::Int=2)
         base_path = "SIAM_u=0.50"
         PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
-        flavor_idx = 1
         ωs_ext = TCI4Keldysh.KF_grid(0.5, 3, 3)
         omsz = length.(ωs_ext)
         maxerr = 0.0
         maxerrs = []
-        iK = 2
         iKtuple = TCI4Keldysh.KF_idx(iK,3)
 
         channel = "t"
-        foreign_channels = ("a", "p")
+        foreign_channels = ("a", "pNRG")
         broadening_kwargs = TCI4Keldysh.read_all_broadening_params(base_path; channel=channel)
         broadening_kwargs[:estep] = 5
         gev = TCI4Keldysh.ΓEvaluator_KF(
