@@ -761,6 +761,7 @@ struct FullCorrelator_KF{D}
             throw(ArgumentError("isBos must contain an even number of 'false' (fermions)."))
         end
         ##########################################################################
+        # cf. Kugler PRX 2021, eq. 63
         function get_GR_to_GK(D) ::Array{Float64,3}
             perms = permutations(collect(1:D+1))
             GR_to_GK = zeros(D+1, (ones(Int, D+1).*2)..., factorial(D+1))

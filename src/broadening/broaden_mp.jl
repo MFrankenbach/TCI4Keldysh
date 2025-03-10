@@ -49,6 +49,16 @@ function getAcont_mp(
 end
 
 """
+Similar to get_Acont_grid, but no floor and ceil
+"""
+function get_loggrid(;estep, emin, emax)
+    ndecade = Int(ceil(log10(emax/emin)))
+    xs = collect(range(log10(emin), log10(emax); length=estep*ndecade))
+    xlog = 10.0 .^ xs
+    return vcat(-reverse(xlog), [0.0], xlog)
+end
+
+"""
 Logarithmic grid with estep points
 """
 # function Acont_grid(ωdisc::VectorArray{Float64}, sigmak::Vector{Float64}, γ::Float64)

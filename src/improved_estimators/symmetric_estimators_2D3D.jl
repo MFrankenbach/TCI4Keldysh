@@ -247,9 +247,6 @@ function Γbare_KF(PSFpath::String, flavor_idx::Int)
     end
 end
 
-_DEBUG_FULLVERTEX_SIE() = false
-_DEBUG_FULLVERTEX_SIE_DIR() = joinpath(TCI4Keldysh.pdatadir(), "V_KF_JULIA")
-
 function compute_Γfull_symmetric_estimator(
     formalism ::String,
     PSFpath::String,
@@ -258,6 +255,7 @@ function compute_Γfull_symmetric_estimator(
     flavor_idx::Int,
     ωs_ext  ::NTuple{3,Vector{Float64}},
     channel::String,
+    store_dir=nothing,
     broadening_kwargs...
 )
 
@@ -283,6 +281,10 @@ function compute_Γfull_symmetric_estimator(
         ωconvMat=ωconvMat4pt,
         broadening_kwargs...
     )
+
+    if !isnothing(store_dir)
+        h5write(joinpath(store_dir, "V_KF_U4.h5"), "core", Γfull)
+    end
 
     channels = ["a","t","pNRG"]
     if !(channel in channels)
@@ -322,10 +324,9 @@ function compute_Γfull_symmetric_estimator(
                             end
                         end
                     end
-                    if _DEBUG_FULLVERTEX_SIE()
+                    if !isnothing(store_dir)
                         outdata = Γfull .- before
-                        outdir = joinpath(_DEBUG_FULLVERTEX_SIE_DIR(), "V_KF_$(channel_translate(channel))")
-                        h5write(joinpath(outdir, "V_KF_U3_$(channel_translate(ch))_$(prime).h5"), "K2", collect(outdata))
+                        h5write(joinpath(store_dir, "V_KF_U3_$(channel_translate(ch))_$(prime).h5"), "K2", collect(outdata))
                     end
                 end
             else
@@ -357,10 +358,9 @@ function compute_Γfull_symmetric_estimator(
                             Γfull[:,:,:,iK...] .+= collect(sv)
                         end
                     end
-                    if _DEBUG_FULLVERTEX_SIE()
+                    if !isnothing(store_dir)
                         outdata = Γfull .- before
-                        outdir = joinpath(_DEBUG_FULLVERTEX_SIE_DIR(), "V_KF_$(channel_translate(channel))")
-                        h5write(joinpath(outdir, "V_KF_U3_$(channel_translate(ch))_$(prime).h5"), "K2", collect(outdata))
+                        h5write(joinpath(store_dir, "V_KF_U3_$(channel_translate(ch))_$(prime).h5"), "K2", collect(outdata))
                     end
                 end
             end
@@ -384,10 +384,9 @@ function compute_Γfull_symmetric_estimator(
                         Γfull[:,:,:,iK...] .+= reshape(K1[:,ik1...], (size(K1,1),1,1)) 
                     end
                 end
-                if _DEBUG_FULLVERTEX_SIE()
+                if !isnothing(store_dir)
                     outdata = Γfull .- before
-                    outdir = joinpath(_DEBUG_FULLVERTEX_SIE_DIR(), "V_KF_$(channel_translate(channel))")
-                    h5write(joinpath(outdir, "V_KF_U2_$(channel_translate(ch)).h5"), "K1", collect(outdata))
+                    h5write(joinpath(store_dir, "V_KF_U2_$(channel_translate(ch)).h5"), "K1", collect(outdata))
                 end
             end
         else
@@ -412,10 +411,9 @@ function compute_Γfull_symmetric_estimator(
                     end
                 end
                 printstyled("==== NORM AFTER: $(norm(Γfull))\n"; color=:magenta)
-                if _DEBUG_FULLVERTEX_SIE()
+                if !isnothing(store_dir)
                     outdata = Γfull .- before
-                    outdir = joinpath(_DEBUG_FULLVERTEX_SIE_DIR(), "V_KF_$(channel_translate(channel))")
-                    h5write(joinpath(outdir, "V_KF_U2_$(channel_translate(ch)).h5"), "K1", collect(outdata))
+                    h5write(joinpath(store_dir, "V_KF_U2_$(channel_translate(ch)).h5"), "K1", collect(outdata))
                 end
             end
         end
@@ -436,6 +434,10 @@ function compute_Γfull_symmetric_estimator(
                 end
             end
         end
+    end
+
+    if !isnothing(store_dir)
+        h5write(joinpath(store_dir, "V_KF_symm.h5"), "V_KF", Γfull)
     end
     
     return Γfull

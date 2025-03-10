@@ -110,6 +110,50 @@ function test_interpolate_simplex()
     @assert isapprox(res, res_test, atol=1.e-10)
 end
 
+
+"""Currently just test whether it runs"""
+function test_interpolate_trilinear()
+    block = reshape(1.1im .* collect(1:(5*2*2*5)), (5,2,2,5))
+    interpol_dims = [1,4]
+    b1 = 0.3 .* collect(-2:2)
+    i1 = 0.2 .* collect(-2:2)
+    block_grid = (b1,b1)
+    interpol_grid = (i1,i1)
+
+    _ = interpolate_trilinear(block, block_grid, interpol_grid, interpol_dims)
+end
+
+function interpolate_trilinear(
+    block::Array{T,D2},
+    block_grid::NTuple{D,Vector{Float64}},
+    interpol_grid::NTuple{D,Vector{Float64}},
+    interpol_dims::Vector{Int}
+    ) where {T,D2,D}
+
+    @assert length(interpol_dims)==D
+    outsize = collect(size(block))    
+    gridsize = length.(interpol_grid)
+    outsize[interpol_dims] .= gridsize
+    outdata = zeros(T, Tuple(outsize)...)
+    where_interpol = fill(0, D2)
+    where_interpol[interpol_dims] .= collect(1:length(interpol_dims))
+    val_sz = size(block)[where_interpol.==0]
+    @assert all(val_sz .== 2) "Only possible for 2x2x...x2 blocks atm"
+    val_zero = zeros(T, val_sz...)
+
+    # iterate over interpolation grid points
+    function _f(w::Vararg{Int,D})
+        idx = ntuple(i -> where_interpol[i]==0 ? Colon() : w[where_interpol[i]] , D2)
+        return block[idx...]
+    end
+    for ic in Iterators.product(Base.OneTo.(gridsize)...)
+        point = ntuple(i -> interpol_grid[i][ic[i]], D)
+        out_idx = ntuple(i -> where_interpol[i]==0 ? Colon() : ic[where_interpol[i]], D2)
+        outdata[out_idx...] .= eval_interpol(val_zero, _f, block_grid, point...)
+    end
+    return outdata
+end
+
 function interpolate_trilinear(vals::Vector{T}, corners::Vector{SVector{D,Float64}}, point::SVector{D,Float64}) where {T,D}
     return interpolate_trilinear(reshape(vals, ntuple(_->2,D)), reshape(corners, ntuple(_->2,D)), point)
 end
@@ -1409,6 +1453,7 @@ function dir_to_T(PSFpath::String) :: Float64
         "siam05_U0.05_T0.005_Delta0.0318"=>1.0/200.0,
         "SIAM_strong2_U0.2_T0.0001"=>1.0/10000.0,
         "siam05_U0.05_T0.05_Delta0.0318"=>1.0/20.0,
+        "PRX_jae-mo_PSF"=>1.e-4,
         "unittest_PSF"=>1.0/2000.0
         )
     for (key, val) in d
@@ -1457,7 +1502,7 @@ function channel_K1_Ops(channel::String)
         return ["Q12", "Q34"]
     elseif channel=="a"
         return ["Q14", "Q23"]
-    elseif channel=="p" || channel=="pNRG"
+    elseif channel in p_conventions()
         return ["Q13", "Q24"]
     else
         error("Invalid channel $channel")
@@ -1467,7 +1512,7 @@ end
 function channel_K1_sign(channel::String)
     return if channel=="t"
         1
-    elseif channel in ["p", "pNRG"]
+    elseif channel in p_conventions()
         # ζ=-1 in symmetric estimators
         1
     elseif channel=="a"
@@ -1482,7 +1527,7 @@ function channel_translate(channel::String)
         return "ph"
     elseif channel=="a"
         return "pht"
-    elseif channel=="p" || channel=="pNRG"
+    elseif channel in p_conventions()
         return "pp"
     else
         error("Invalid channel $channel")
@@ -1492,7 +1537,7 @@ end
 function foreign_channels(channel::String)
     if channel=="a"
         return ("p","t")
-    elseif channel in ["p", "pNRG"]
+    elseif channel in p_conventions()
         return ("a","t")
     elseif channel=="t"
         return ("a","p")
@@ -1542,6 +1587,13 @@ function channel_trafo(channel::String)
             -1  1  0; # ω-ν
             0  0  1; # -ν'
         ]
+    elseif channel == "pQFT"
+        [
+            0 -1  0; # ν
+            -1  0 -1; # -ω+ν'
+            1  1  0; # ω-ν
+            0  0  1; # -ν'
+        ]
     # NRG convention (cf. eq. 138 Lihm et al symmetric estimators)
     elseif channel == "pNRG"
         [
@@ -1558,9 +1610,13 @@ function channel_trafo(channel::String)
             0  0  1; # -ν'
         ]
     else
-        error("Invalid frequency convention")
+        error("Invalid frequency convention $channel")
     end
     return ωconvMat
+end
+
+function p_conventions()
+    return ["p", "pNRG", "pQFT"]
 end
 
 function channel_change(from::String, to::String)
@@ -1572,8 +1628,10 @@ end
 function merged_legs_K2(channel::String, prime::Bool)
     noprime_dict = Dict("a" => (2,3), "p" => (2,4), "t" => (3,4))
     noprime_dict["pNRG"] = noprime_dict["p"]
+    noprime_dict["pQFT"] = noprime_dict["p"]
     prime_dict = Dict("a" => (1,4), "p" => (1,3), "t" => (1,2))
     prime_dict["pNRG"] = prime_dict["p"]
+    prime_dict["pQFT"] = prime_dict["p"]
     if !prime
         return noprime_dict[channel]
     else
@@ -1584,7 +1642,7 @@ end
 function merged_legs_K1(channel::String)
     if channel=="t"
         return [(1,2), (3,4)]
-    elseif channel in ["p", "pNRG"]
+    elseif channel in p_conventions()
         return [(1,3), (2,4)]
     elseif channel=="a"
         return [(1,4), (2,3)]
@@ -1607,7 +1665,7 @@ Which sign belongs to which K2 contribution (cf. Lihm et. al. Fig. 13)
 function channel_K2_sign(channel::String, prime::Bool)
     if channel=="a"
         return ifelse(prime, 1, -1)
-    elseif channel in ["p", "pNRG"]
+    elseif channel in p_conventions()
         return ifelse(prime, 1, -1)
     elseif channel=="t"
         return 1
@@ -1624,7 +1682,7 @@ function channel_trafo_K2(channel::String, prime::Bool)
                 sum(view(ωconvMat, [2,3], [1,2]), dims=1);
                 view(ωconvMat, [1,4], [1,2])
             ]
-        elseif channel in ["p","pNRG"]
+        elseif channel in p_conventions()
             return [
                 sum(view(ωconvMat, [2,4], [1,2]), dims=1);
                 view(ωconvMat, [1,3], [1,2])
@@ -1641,7 +1699,7 @@ function channel_trafo_K2(channel::String, prime::Bool)
                 sum(view(ωconvMat, [1,4], [1,3]), dims=1);
                 view(ωconvMat, [2,3], [1,3])
             ]
-        elseif channel in ["p","pNRG"]
+        elseif channel in p_conventions()
             return [
                 sum(view(ωconvMat, [1,3], [1,3]), dims=1);
                 view(ωconvMat, [2,4], [1,3])
@@ -1974,7 +2032,7 @@ function vprint(msg::AbstractString, minlevel::Int=1)
     end
 end
 
-function vprinstyled(msg::AbstractString, minlevel::Int=1; kwargs...)
+function vprintstyled(msg::AbstractString, minlevel::Int=1; kwargs...)
     if VERBOSITY[]>=minlevel
         printstyled(msg; kwargs...)
     end
