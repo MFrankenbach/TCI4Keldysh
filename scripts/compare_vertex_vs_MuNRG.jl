@@ -317,9 +317,8 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
 
     # TCI4Keldysh
     ωs_ext = vec(grid[end])
-    K1_test_alliK = TCI4Keldysh.precompute_K1r(PSFpath, flavor, "KF"; mode=:fdt, channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)
+    K1_test_alliK = TCI4Keldysh.precompute_K1r(PSFpath, flavor, "KF"; mode=:normal, channel=channel, ωs_ext=ωs_ext, broadening_kwargs...)
 
-    # TODO WHY need to reverse here???
     ik = TCI4Keldysh.merge_iK_K1(iKtuple, channel)
     K1_test = K1_test_alliK[:,ik...]
 
@@ -354,7 +353,8 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
     maxref = maximum(abs.(K1D))
     diff = (K1D .- K1_test * fac) ./ maxref
     p = TCI4Keldysh.default_plot()
-    plot!(p, omgrid, abs.((diff)); label="diff", yscale=:log10)
+    plot!(p, omgrid, abs.(real.((diff))) .+ 1.e-12; label="Re(diff)", yscale=:log10)
+    plot!(p, omgrid, abs.(imag.((diff))) .+ 1.e-12; label="Im(diff)", linestyle=:dot, yscale=:log10)
     @show maximum(abs.(real.(diff)))
     @show maximum(abs.(imag.(diff)))
     # ratio = K1D ./ (fac * K1_test)
