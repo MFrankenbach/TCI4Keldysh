@@ -1,3 +1,5 @@
+# whether to use fluctuation-dissipation theorem in asymmetric estimators of self-energy (relevant for core vertex, K2)
+USE_FDR_SE() = false
 # 2d
 function compute_K2r_symmetric_estimator(
     formalism ::String,
@@ -256,6 +258,7 @@ function compute_Γfull_symmetric_estimator(
     ωs_ext  ::NTuple{3,Vector{Float64}},
     channel::String,
     store_dir=nothing,
+    useFDR::Bool=USE_FDR_SE(),
     broadening_kwargs...
 )
 
@@ -266,7 +269,11 @@ function compute_Γfull_symmetric_estimator(
     (ΣL, ΣR) = if formalism=="MF"
             calc_Σ_MF_aIE(PSFpath, omsig; flavor_idx=flavor_idx, T=T)
         else
-            calc_Σ_KF_aIE_viaR(PSFpath, omsig; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+            if useFDR
+                calc_Σ_KF_aIE_viaR(PSFpath, omsig; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+            else
+                calc_Σ_KF_aIE(PSFpath, omsig; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+            end
         end
 
     # Γcore

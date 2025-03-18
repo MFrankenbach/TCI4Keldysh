@@ -18,6 +18,10 @@ function maybeparse(T::Type, val)
     return isa(val,T) ? val : parse(T, val)
 end
 
+function maybeparse(_::Type{Symbol}, val::String)
+    return Symbol(val)
+end
+
 function _to_type(s::Symbol)
     return TCI4Keldysh.eval(s)
 end
@@ -149,6 +153,8 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
     #     keldyshaccuracy(outname, d)
     elseif jobtype=="keldyshslice_conv"
         keldyshslice_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="matsubaraslice_conv"
+        matsubaraslice_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="nonlin_keldyshfull"
         nonlin_keldyshfull(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     else
@@ -239,10 +245,14 @@ function matsubaracore(
     svd_kernel = true
     @show svd_kernel
     @show batched_eval
+    npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 2
+    unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol, kwargs[:unfoldingscheme]) : :interleaved 
 
     # prepare output
     tcikwargs = filter_tcikwargs(Dict(kwargs))
     d["tcikwargs"] = tcikwargs
+    d["unfoldingscheme"] = unfoldingscheme
+    d["npivot"] = npivot
     d["times"] = times
     d["ranks"] = qttranks
     d["bonddims"] = qttbonddims
@@ -265,6 +275,8 @@ function matsubaracore(
                 tolerance=tolerance,
                 verbosity=2,
                 cache_center=cache_center,
+                npivot=npivot,
+                unfoldingscheme=unfoldingscheme,
                 tcikwargs...
                 )
             else
@@ -275,9 +287,10 @@ function matsubaracore(
                 ωconvMat=ωconvMat,
                 flavor_idx=flavor_idx,
                 tolerance=tolerance,
-                unfoldingscheme=:interleaved,
                 verbosity=2,
                 cache_center=cache_center,
+                npivot=npivot,
+                unfoldingscheme=unfoldingscheme,
                 tcikwargs...
                 )
             end
@@ -317,7 +330,11 @@ function matsubarafull(
 
     T = TCI4Keldysh.dir_to_T(PSFpath)
     tcikwargs = filter_tcikwargs(Dict(kwargs))
+    npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 2
+    unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol ,kwargs[:unfoldingscheme]) : :interleaved 
     d["tcikwargs"] = tcikwargs
+    d["unfoldingscheme"] = unfoldingscheme
+    d["npivot"] = npivot
     times = []
     qttranks = []
     qttbonddims = []
@@ -336,11 +353,12 @@ function matsubarafull(
                     channel=channel,
                     T=T,
                     flavor_idx=flavor_idx,
-                    foreign_channels=Tuple(foreign_channels)
+                    foreign_channels=Tuple(foreign_channels),
+                    unfoldingscheme=unfoldingscheme
                 )
 
                 # collect initial pivots
-                initpivots_ω = TCI4Keldysh.initpivots_Γcore([gbev.gev.core.GFevs[i].GF for i in eachindex(gbev.gev.core.GFevs)])
+                initpivots_ω = TCI4Keldysh.initpivots_Γcore([gbev.gev.core.GFevs[i].GF for i in eachindex(gbev.gev.core.GFevs)]; npivot=npivot)
                 initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
 
                 tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tolerance, tcikwargs...)
@@ -386,7 +404,7 @@ function keldyshfull(
     ommax=0.3183098861837907,
     Rs,
     npivot=5,
-    pivot_steps=[div(2^R, maybeparse(Int,npivot) - 1) for R in Rs],
+    pivot_steps=nothing,
     unfoldingscheme=:fused,
     PSFpath,
     tolerance,
@@ -400,7 +418,13 @@ function keldyshfull(
     T = TCI4Keldysh.dir_to_T(PSFpath)
     ik = maybeparse(Int, ik)
     npivot = maybeparse(Int, npivot)
-    if !isa(pivot_steps, Vector{Int})
+    if isnothing(pivot_steps)
+        if npivot==1
+            pivot_steps = [0 for R in Rs]
+        else
+            pivot_steps = [div(2^R, maybeparse(Int,npivot) - 1) for R in Rs]
+        end
+    elseif !isa(pivot_steps, Vector{Int})
         pivot_steps = [maybeparse(Int, ps) for ps in pivot_steps]
     end
     ommax = maybeparse(Float64, ommax)
@@ -446,7 +470,7 @@ function keldyshfull(
                 )
 
                 # collect initial pivots
-                initpivots_ω = TCI4Keldysh.initpivots_general(ntuple(_->2^R, 3), npivot, pivot_steps[ir]; verbose=true)
+                initpivots_ω = TCI4Keldysh.initpivots_general(ntuple(_->2^R+1, 3), npivot, pivot_steps[ir]; verbose=true)
                 initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
 
                 tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tolerance, tcikwargs...)
@@ -507,7 +531,7 @@ function keldyshcore(
     ommax = 0.3183098861837907,
     unfoldingscheme=:fused,
     npivot=5,
-    pivot_steps=[div(2^R, maybeparse(Int,npivot) - 1) for R in Rs],
+    pivot_steps=nothing,
     serialize_tts=true,
     dump_path=nothing,
     resume_path=nothing,
@@ -525,7 +549,13 @@ function keldyshcore(
     ik = maybeparse(Int, ik)
     npivot = maybeparse(Int, npivot)
     ommax = maybeparse(Float64, ommax)
-    if !isa(pivot_steps, Vector{Int})
+    if isnothing(pivot_steps)
+        if npivot==1
+            pivot_steps = [0 for R in Rs]
+        else
+            pivot_steps = [div(2^R, maybeparse(Int,npivot) - 1) for R in Rs]
+        end
+    elseif !isa(pivot_steps, Vector{Int})
         pivot_steps = [maybeparse(Int, ps) for ps in pivot_steps]
     end
 
@@ -727,6 +757,49 @@ function nonlin_keldyshfull(
     h5write(h5name, "core", res)
 end
 
+function matsubaraslice_conv(
+    outname, d; 
+    Rs,
+    sliceshift,
+    slicedim,
+    folder,
+    PSFpath,
+    flavor_idx,
+    channel,
+    kwargs...)
+
+    sliceshift = maybeparse(Int, sliceshift)
+    slicedim = maybeparse(Int, slicedim)
+
+    # cutoff = haskey(kwargs, :cutoff) ? maybeparse(Float64, kwargs[:cutoff]) : 1.e-20
+    d["slicedim"] = slicedim
+    d["numthreads"] = Threads.threadpoolsize()
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    for R in Rs
+        res = zeros(ComplexF64, 2^R,2^R)
+        gev = TCI4Keldysh.ΓcoreEvaluator_MF(
+            PSFpath,
+            R;
+            ωconvMat = TCI4Keldysh.channel_trafo(channel),
+            T = TCI4Keldysh.dir_to_T(PSFpath),
+            flavor_idx=flavor_idx,
+            # cutoff=cutoff
+        )
+        nonslice = [1,2,3]
+        nonslice[slicedim:end] .-= 1
+        # evaluate
+        println("SLICE IDX: $(2^(R-1)+sliceshift)")
+        Threads.@threads for ic in collect(Iterators.product(1:2^R, 1:2^R))
+            res[Tuple(ic)...] = gev(ntuple(n -> n==slicedim ?  2^(R-1)+sliceshift : ic[nonslice[n]], 3)...)
+        end
+
+        # store as h5
+        h5name = "V_MF_dim$(slicedim)_slice$(sliceshift)_R$(R).h5"
+        h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "V_MF", res)
+    end
+end
+
 function keldyshslice_conv(
     outname, d; 
     Rs,
@@ -813,6 +886,12 @@ function keldyshfull_conv(outname, d;
     @show (γ, sigmak)
     TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
 
+    useFDR = if haskey(Dict(kwargs), :usefdr)
+        maybeparse(Bool, kwargs[:usefdr])
+    else
+        TCI4Keldysh.USE_FDR_SE()
+    end
+
     d["channel"] = channel
     d["gamma"] = γ 
     d["sigmak"] = sigmak
@@ -841,6 +920,7 @@ function keldyshfull_conv(outname, d;
             sigmak=sigmak,
             store_dir = joinpath(TCI4Keldysh.pdatadir(), folder),
             γ=γ,
+            useFDR=useFDR,
             broadening_kwargs...
             )
 
@@ -897,7 +977,11 @@ function keldyshcore_conv(outname, d::Dict;
         ωs_ext = TCI4Keldysh.KF_grid(ommax, R, 3)
         T = TCI4Keldysh.dir_to_T(PSFpath)
         om_sig = TCI4Keldysh.Σ_grid(ntuple(i -> ωs_ext[i],2))
-        (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=flavor_idx, sigmak, γ, broadening_kwargs...)
+        (Σ_L, Σ_R) = if TCI4Keldysh.USE_FDR_SE()
+            TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=flavor_idx, sigmak, γ, broadening_kwargs...)
+        else
+            TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, om_sig; T=T, flavor_idx=flavor_idx, sigmak, γ, broadening_kwargs...)
+        end
         gamcore = TCI4Keldysh.compute_Γcore_symmetric_estimator(
             "KF",
             joinpath(PSFpath, "4pt"),
@@ -1078,108 +1162,110 @@ function corrkeldysh(
     end
 end
 
-# function keldyshaccuracy(
-#     outname::AbstractString, d::Dict;
-#     refpath::String,
-#     Rs,
-#     ik::Int,
-#     PSFpath,
-#     KEV::Type=TCI4Keldysh.MultipoleKFCEvaluator,
-#     coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6, :nlevel=>4)
-#     )
+#=
+function keldyshaccuracy(
+    outname::AbstractString, d::Dict;
+    refpath::String,
+    Rs,
+    ik::Int,
+    PSFpath,
+    KEV::Type=TCI4Keldysh.MultipoleKFCEvaluator,
+    coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6, :nlevel=>4)
+    )
 
-#     iK = ik
-#     R = only(Rs)
-#     # load settings
-#     refjson = only(
-#         filter(f -> endswith(f, ".json"), readdir(refpath))
-#     )
-#     refsettings = TCI4Keldysh.readJSON(refjson, refpath)
-#     ωmax = refsettings["ommax"]
-#     broadening_kwargs_ = refsettings["broadening_kwargs"]
-#     broadening_kwargs = Dict{Symbol,Any}()
-#     for (key,val) in pairs(broadening_kwargs_)
-#         broadening_kwargs[Symbol(key)] = val
-#     end
-#     γ = refsettings["gamma"]
-#     sigmak = Vector{Float64}(refsettings["sigmak"])
-#     channel = refsettings["channel"]
-#     flavor_idx = refsettings["flavor_idx"]
-#     if !(R in refsettings["Rs"])
-#         error("Requested grid size is not available")
-#     end
+    iK = ik
+    R = only(Rs)
+    # load settings
+    refjson = only(
+        filter(f -> endswith(f, ".json"), readdir(refpath))
+    )
+    refsettings = TCI4Keldysh.readJSON(refjson, refpath)
+    ωmax = refsettings["ommax"]
+    broadening_kwargs_ = refsettings["broadening_kwargs"]
+    broadening_kwargs = Dict{Symbol,Any}()
+    for (key,val) in pairs(broadening_kwargs_)
+        broadening_kwargs[Symbol(key)] = val
+    end
+    γ = refsettings["gamma"]
+    sigmak = Vector{Float64}(refsettings["sigmak"])
+    channel = refsettings["channel"]
+    flavor_idx = refsettings["flavor_idx"]
+    if !(R in refsettings["Rs"])
+        error("Requested grid size is not available")
+    end
 
-#     T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
 
-#     # prepare core evaluator
-#     ωconvMat = TCI4Keldysh.channel_trafo(channel)
-#     # make frequency grid
-#     D = size(ωconvMat, 2)
-#     @assert D==3
-#     ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
+    # prepare core evaluator
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    # make frequency grid
+    D = size(ωconvMat, 2)
+    @assert D==3
+    ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
 
-#     # all 16 4-point correlators
-#     letters = ["F", "Q"]
-#     letter_combinations = kron(kron(letters, letters), kron(letters, letters))
-#     op_labels = ("1", "1dag", "3", "3dag")
-#     op_labels_symm = ("3", "3dag", "1", "1dag")
-#     is_incoming = (false, true, false, true)
+    # all 16 4-point correlators
+    letters = ["F", "Q"]
+    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
+    op_labels = ("1", "1dag", "3", "3dag")
+    op_labels_symm = ("3", "3dag", "1", "1dag")
+    is_incoming = (false, true, false, true)
 
-#     # create correlator objects
-#     Ncorrs = length(letter_combinations)
-#     GFs = Vector{TCI4Keldysh.FullCorrelator_KF{D}}(undef, Ncorrs)
-#     PSFpath_4pt = joinpath(PSFpath, "4pt")
-#     filelist = readdir(PSFpath_4pt)
-#     for l in 1:Ncorrs
-#         letts = letter_combinations[l]
-#         println("letts: ", letts)
-#         ops = [letts[i]*op_labels[i] for i in 1:4]
-#         if !any(TCI4Keldysh.parse_Ops_to_filename(ops) .== filelist)
-#             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
-#         end
-#         GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...)
-#     end
+    # create correlator objects
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{TCI4Keldysh.FullCorrelator_KF{D}}(undef, Ncorrs)
+    PSFpath_4pt = joinpath(PSFpath, "4pt")
+    filelist = readdir(PSFpath_4pt)
+    for l in 1:Ncorrs
+        letts = letter_combinations[l]
+        println("letts: ", letts)
+        ops = [letts[i]*op_labels[i] for i in 1:4]
+        if !any(TCI4Keldysh.parse_Ops_to_filename(ops) .== filelist)
+            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
+        end
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...)
+    end
 
-#     # evaluate self-energy
-#     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
-#     @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
-#     ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
-#     Σω_grid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
-#     (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
+    # evaluate self-energy
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+    ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
+    Σω_grid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
+    (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
 
-#     # frequency grid offset for self-energy
-#     ΣωconvMat = incoming_trafo * ωconvMat
-#     corner_low = [first(ωs_ext[i]) for i in 1:D]
-#     corner_idx = ones(Int, D)
-#     corner_image = ΣωconvMat * corner_low
-#     idx_image = ΣωconvMat * corner_idx
-#     desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
-#     ωconvOff = desired_idx .- idx_image
+    # frequency grid offset for self-energy
+    ΣωconvMat = incoming_trafo * ωconvMat
+    corner_low = [first(ωs_ext[i]) for i in 1:D]
+    corner_idx = ones(Int, D)
+    corner_image = ΣωconvMat * corner_low
+    idx_image = ΣωconvMat * corner_idx
+    desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
+    ωconvOff = desired_idx .- idx_image
 
-#     sev = TCI4Keldysh.SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
+    sev = TCI4Keldysh.SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
 
-#     gev = TCI4Keldysh.ΓcoreEvaluator_KF(GFs, iK, sev, KEV; coreEvaluator_kwargs...)
+    gev = TCI4Keldysh.ΓcoreEvaluator_KF(GFs, iK, sev, KEV; coreEvaluator_kwargs...)
 
-#     # load reference
-#     refdatafile = joinpath(refpath, "V_KF_$(channel)_R=$(R).h5")
-#     refdata = h5read(refdatafile, "V_KF")[:,:,:,TCI4Keldysh.KF_idx(iK,3)...]
-#     # SETUP DONE
+    # load reference
+    refdatafile = joinpath(refpath, "V_KF_$(channel)_R=$(R).h5")
+    refdata = h5read(refdatafile, "V_KF")[:,:,:,TCI4Keldysh.KF_idx(iK,3)...]
+    # SETUP DONE
 
-#     # check
-#     N = 10^4
-#     errs = Vector{Float64}(undef, N)
-#     vals = Vector{ComplexF64}(undef, N)
-#     idx_range = Base.OneTo.(size(refdata))
-#     Threads.@threads for n in 1:N
-#         idx = ntuple(i -> rand(idx_range[i]), 3)
-#         val = gev(idx...)
-#         errs[n] = abs(val - refdata[idx...])
-#         vals[n] = val
-#     end
+    # check
+    N = 10^4
+    errs = Vector{Float64}(undef, N)
+    vals = Vector{ComplexF64}(undef, N)
+    idx_range = Base.OneTo.(size(refdata))
+    Threads.@threads for n in 1:N
+        idx = ntuple(i -> rand(idx_range[i]), 3)
+        val = gev(idx...)
+        errs[n] = abs(val - refdata[idx...])
+        vals[n] = val
+    end
 
-#     h5write(joinpath(refpath, "errs.h5"), "vals", vals)
-#     h5write(joinpath(refpath, "errs.h5"), "errs", errs)
-# end
+    h5write(joinpath(refpath, "errs.h5"), "vals", vals)
+    h5write(joinpath(refpath, "errs.h5"), "errs", errs)
+end
+=#
 
 # ==== JOBTYPES END
 
@@ -1254,6 +1340,9 @@ function main(args)
         else
             kwargs_dict[Symbol(k)] = v
         end
+    end
+    if haskey(kwargs_dict, :verbosity)
+        TCI4Keldysh.SET_VERBOSITY(maybeparse(Int, kwargs_dict[:verbosity]))
     end
     run_job(jobtype;
         PSFpath=PSFpath,

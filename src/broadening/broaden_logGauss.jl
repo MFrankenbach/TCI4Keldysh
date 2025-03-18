@@ -88,7 +88,7 @@ function getAcont_logBroaden(
         # printstyled("\n  Grid extension: log10(emin)=$(log10(emin)), xmin=$xmin\n"; color=:magenta)
 
         # temporary frequency grid
-        logωcont = collect((xmin):1/estep:(log10(emax)))   # exponents of frequencies (base 10); increasing, column vector
+        logωcont = collect((xmin * estep):(log10(emax)*estep)) ./ estep   # exponents of frequencies (base 10); increasing, column vector
         return okA, logωcont, widthx
     end
     okA, log10ωcont, widthx = get_log10ωs_cont()

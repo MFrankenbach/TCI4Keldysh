@@ -143,6 +143,7 @@ convenience overload
 Compute Σ by ASYMMETRIC estimator of retarded self-energy and fluctuation-dissipation relation
 """
 function calc_Σ_KF_aIE_viaR(PSFpath, ω_fer::Vector{Float64}; flavor_idx::Int, T::Float64, sigmak::Vector{Float64}, γ::Float64, broadening_kwargs...)
+    @warn "using FDR in self energy"
     G_FF_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
     G_FQ_R = TCI4Keldysh.get_GR(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)
     G_QF_R = TCI4Keldysh.get_GR(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=ω_fer, sigmak=sigmak, γ, broadening_kwargs...)

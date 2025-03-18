@@ -328,14 +328,14 @@ function initpivots_general(gridsize::NTuple{D,Int}, npivot::Int, pivot_step::In
     return initpivots
 end
 
-function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullCorrelator_KF{D}}}) where {D}
+function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullCorrelator_KF{D}}}; npivot::Int=2) where {D}
 
     pivots = Vector{Int}[]
 
     # central shell
     ωs_ext = first(GFs).ωs_ext
     centre_ids = ntuple(i -> ifelse(isodd(length(ωs_ext[i])), div(length(ωs_ext[i]),2)+1, div(length(ωs_ext[i]),2)), D)
-    centre_block = ntuple(i -> centre_ids[i]-2:centre_ids[i]+2, D)
+    centre_block = ntuple(i -> centre_ids[i]-npivot:centre_ids[i]+npivot, D)
     for c in Iterators.product(centre_block...)
         if any([c[ic] in [first(centre_block[ic]), last(centre_block[ic])] for ic in 1:D])
             push!(pivots,  collect(c))
@@ -418,6 +418,8 @@ function Γ_core_TCI_MF_batched(
     flavor_idx::Int=1,
     use_ΣaIE::Bool=true,
     do_check_interpolation::Bool=true,
+    npivot::Int=2,
+    unfoldingscheme=:interleaved,
     tcikwargs...
 )
 
@@ -434,11 +436,11 @@ function Γ_core_TCI_MF_batched(
     )
 
     # create batch evaluator
-    gbev = ΓcoreBatchEvaluator_MF(gev; use_ΣaIE=use_ΣaIE)
+    gbev = ΓcoreBatchEvaluator_MF(gev; use_ΣaIE=use_ΣaIE, unfoldingscheme=unfoldingscheme)
 
     GC.gc(true)
 
-    initpivots_ω = initpivots_Γcore([gev.GFevs[i].GF for i in eachindex(gev.GFevs)])
+    initpivots_ω = initpivots_Γcore([gev.GFevs[i].GF for i in eachindex(gev.GFevs)]; npivot=npivot)
     initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
 
     vprintln("Memory usage [GB] of ΓcoreBatchEvaluator_MF: $(Base.summarysize(gbev) / (1024^3))", 2)
@@ -481,6 +483,7 @@ function Γ_core_TCI_MF(
     T::Float64,
     flavor_idx::Int=1,
     use_ΣaIE::Bool=false,
+    npivot::Int=2,
     qtcikwargs...
 )
     if use_ΣaIE
@@ -529,7 +532,7 @@ function Γ_core_TCI_MF(
     flush(stdout)
 
     # search initial pivots
-    initpivots_ω = initpivots_Γcore([GFevs[i].GF for i in eachindex(GFevs)])
+    initpivots_ω = initpivots_Γcore([GFevs[i].GF for i in eachindex(GFevs)]; npivot=npivot)
 
     GC.gc(true)
     if cache_center > 0
@@ -624,6 +627,7 @@ function K2_TCI_KF(
     ik::NTuple{3,Int},
     estep::Int=nothing,
     ommax::Float64,
+    useFDR::Bool=USE_FDR_SE(),
     qtcikwargs...
 )
     basepath = dirname(rstrip(PSFpath, '/'))
@@ -638,6 +642,7 @@ function K2_TCI_KF(
         flavor_idx,
         channel,
         prime;
+        useFDR=useFDR,
         broadening_kwargs...
         )
     function _f(i::Int,j::Int)
@@ -954,6 +959,7 @@ struct K2Evaluator_KF
         channel::String,
         prime::Bool;
         cutoff::Float64=1.e-20,
+        useFDR::Bool=USE_FDR_SE(),
         broadening_kwargs...
         )
 
@@ -976,12 +982,21 @@ struct K2Evaluator_KF
             @show trafo_act
             @show (first(only(ωs_Σ)), last(only(ωs_Σ)))
             @show (first.(ωs_ext), last.(ωs_ext))
-            (ΣL, ΣR) = calc_Σ_KF_aIE(
-                PSFpath, only(ωs_Σ);
-                flavor_idx=flavor_idx,
-                T=T,
-                broadening_kwargs...
-                )
+            (ΣL, ΣR) = if useFDR
+                calc_Σ_KF_aIE_viaR(
+                    PSFpath, only(ωs_Σ);
+                    flavor_idx=flavor_idx,
+                    T=T,
+                    broadening_kwargs...
+                    )
+            else
+                calc_Σ_KF_aIE(
+                    PSFpath, only(ωs_Σ);
+                    flavor_idx=flavor_idx,
+                    T=T,
+                    broadening_kwargs...
+                    )
+            end
             sev = SigmaEvaluator_KF(
                 ΣR,
                 ΣL,
@@ -1247,6 +1262,7 @@ function Γ_core_TCI_KF(
     resume_path=nothing,
     batched=true,
     do_check_interpolation=true,
+    useFDR::Bool=USE_FDR_SE(),
     npivot::Int=5,
     pivot_step::Int=div(2^R, npivot-1),
     unfoldingscheme=:interleaved,
@@ -1306,7 +1322,11 @@ function Γ_core_TCI_KF(
     ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
     Σω_grid = KF_grid_fer(2*ωmax, R+1)
     # Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
-    (Σ_L,Σ_R) = calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
+    (Σ_L,Σ_R) = if useFDR
+        calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
+    else
+        calc_Σ_KF_aIE(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
+    end
 
     if DEBUG_TCI_KF_RAM()
         println("==== SELF-ENERGIES: MEMORY")
@@ -1341,7 +1361,7 @@ function Γ_core_TCI_KF(
         GFs = nothing
     end
     # determine initial pivots
-    tcigridsize = ntuple(i -> 2 ^ TCI4Keldysh.grid_R(length(ωs_ext[i])),D)
+    tcigridsize = ntuple(i -> 2^TCI4Keldysh.grid_R(length(ωs_ext[i])) + 1,D)
     initpivots_ω = initpivots_general(tcigridsize, npivot, pivot_step; verbose=true)
     GC.gc(true)
 
@@ -1489,6 +1509,7 @@ struct ΓcoreEvaluator_MF{T}
 
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
+        # GFevs = [FullCorrEvaluator_MF(GFs[i], true; cutoff=cutoff) for i in eachindex(GFs)]
         GFevs = [MFCEvaluator(GFs[i]) for i in eachindex(GFs)]
 
         return new{T}(GFevs,length(GFs), is_incoming, letter_combinations, sev)
@@ -1779,6 +1800,7 @@ function ΓcoreEvaluator_KF(
     channel::String,
     flavor_idx::Int,
     KEV_kwargs::Dict=Dict(),
+    useFDR::Bool=USE_FDR_SE(),
     broadening_kwargs...
 )
     
@@ -1822,7 +1844,11 @@ function ΓcoreEvaluator_KF(
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
     @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
     Σω_grid = Σ_grid(ωs_ext[1:2])
-    (Σ_L,Σ_R) = calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+    (Σ_L,Σ_R) = if useFDR
+        calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+    else
+        calc_Σ_KF_aIE(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, broadening_kwargs...)
+    end
 
     if DEBUG_TCI_KF_RAM()
         println("==== SELF-ENERGIES: MEMORY")
@@ -2082,10 +2108,18 @@ struct ΓEvaluator_KF
         foreign_channels::Tuple{String,String},
         KEV_kwargs::Dict=Dict(),
         K2cutoff::Float64=1.e-20,
+        useFDR::Bool=USE_FDR_SE(),
         broadening_kwargs...
     )
         iK_tuple = KF_idx(iK, 3)
-        core = ΓcoreEvaluator_KF(PSFpath, iK, ωs_ext, KEV_; KEV_kwargs=KEV_kwargs, flavor_idx=flavor_idx, channel=channel, broadening_kwargs...)
+        core = ΓcoreEvaluator_KF(
+            PSFpath, iK, ωs_ext, KEV_; 
+            KEV_kwargs=KEV_kwargs,
+            flavor_idx=flavor_idx,
+            channel=channel,
+            useFDR=useFDR,
+            broadening_kwargs...
+            )
 
         # K2
         K2s = Vector{K2Evaluator_KF}(undef, 6)
@@ -2110,11 +2144,13 @@ struct ΓEvaluator_KF
             # K2r and K2r'
             K2 = K2Evaluator_KF(
                 PSFpath, omK2, flavor_idx, ch, false;
+                useFDR=useFDR,
                 cutoff=K2cutoff,
                 broadening_kwargs...
             )
             K2p = K2Evaluator_KF(
                 PSFpath, omK2p, flavor_idx, ch, true;
+                useFDR=useFDR,
                 cutoff=K2cutoff,
                 broadening_kwargs...
             )
@@ -2490,14 +2526,15 @@ struct ΓBatchEvaluator_MF <: CachedBatchEvaluator{ComplexF64}
     gev::ΓEvaluator_MF
 
     function ΓBatchEvaluator_MF(
-        gev::ΓEvaluator_MF
+        gev::ΓEvaluator_MF;
+        unfoldingscheme=:interleaved
     )
         # set up grid
         GFs = [gev.core.GFevs[i].GF for i in eachindex(gev.core.GFevs)]
         D = 3
         R = grid_R(GFs[1])
         @assert all(R .== grid_R.(GFs[2:end])) "Full correlator objects have different grid sizes"
-        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
         localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
 
         # cached function
@@ -2515,7 +2552,8 @@ function ΓBatchEvaluator_MF(
     T::Float64,
     flavor_idx::Int,
     channel::String,
-    foreign_channels::Tuple{String,String}
+    foreign_channels::Tuple{String,String},
+    unfoldingscheme=:interleaved
 )
     gev = ΓEvaluator_MF(
         PSFpath,
@@ -2525,7 +2563,7 @@ function ΓBatchEvaluator_MF(
         channel=channel,
         foreign_channels=foreign_channels
     )
-    return ΓBatchEvaluator_MF(gev)
+    return ΓBatchEvaluator_MF(gev; unfoldingscheme=unfoldingscheme)
 end
 
 struct ΓBatchEvaluator_KF <: CachedBatchEvaluator{ComplexF64}
@@ -2589,13 +2627,13 @@ struct ΓcoreBatchEvaluator_MF{T} <: CachedBatchEvaluator{T}
     localdims::Vector{Int}
     gev::ΓcoreEvaluator_MF{T} # to access information
 
-    function ΓcoreBatchEvaluator_MF(GFs::Vector{FullCorrelator_MF{3}}, sev; cutoff=1.e-20, use_ΣaIE::Bool=false)
+    function ΓcoreBatchEvaluator_MF(GFs::Vector{FullCorrelator_MF{3}}, sev; cutoff=1.e-20, use_ΣaIE::Bool=false, unfoldingscheme=:interleaved)
         # set up grid
         D = 3
         R = grid_R(GFs[1])
         @assert all(R .== grid_R.(GFs[2:end])) "Full correlator objects have different grid sizes"
         T = eltype(GF.Gps[1].tucker.center)
-        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
         localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
 
         gev = ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
@@ -2611,14 +2649,14 @@ struct ΓcoreBatchEvaluator_MF{T} <: CachedBatchEvaluator{T}
         return new{T}(grid, qf, localdims, gev)
     end
 
-    function ΓcoreBatchEvaluator_MF(gev::ΓcoreEvaluator_MF{T}; use_ΣaIE::Bool=false) where {T}
+    function ΓcoreBatchEvaluator_MF(gev::ΓcoreEvaluator_MF{T}; use_ΣaIE::Bool=false, unfoldingscheme=:interleaved) where {T}
         # set up grid
         D = 3
         R = grid_R(gev.GFevs[1].GF)
         for i in eachindex(gev.GFevs)
             @assert R == grid_R(gev.GFevs[i].GF) "Full correlator objects have different grid sizes"
         end
-        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=:interleaved)
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
         localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
 
         # cached function
