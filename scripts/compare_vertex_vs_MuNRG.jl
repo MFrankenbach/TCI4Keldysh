@@ -310,8 +310,10 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
     broadening_kwargs = read_broadening_settings(mpNRGpath ;channel=channel)
     # broadening_kwargs[:emax] += 20.0
     # broadening_kwargs[:emin] /= 100.0
+    # in parameter file estep=200; but it seems this was not used for K1; estep 500 matches much better!
+    # also using fdt for K1 gives much better agreement at 0 frequency
     if !haskey(broadening_kwargs, :estep)
-        broadening_kwargs[:estep] = 200
+        broadening_kwargs[:estep] = 500
     end
 
 
@@ -360,6 +362,7 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
     # ratio = K1D ./ (fac * K1_test)
     # plot!(p, abs.(ratio); label="ratio")
     title!(p, "K1@$(channel)-channel: abs(MuNRG-Julia)")
+    ylims!(p, (1.e-7,1.e-3))
     savefig("K1_diff.pdf")
     amaxdiff = argmax(abs.(diff))
     printstyled("-- Largest errors iK=$(iKtuple): $(sort(abs.(diff); rev=true)[1:5])\n"; color=:blue)

@@ -684,8 +684,8 @@ NOTE ON PERFORMANCE / CONVERGENCE:
 function my_hilbert_trafo(
     xs_out::Vector{Float64},    # real output frequencies xs_out[o]
     xs_in::Vector{Float64},     # real  input frequencies xs_in[i]
-    ys::Array{Float64,d}        # piecewisely linear signal ys[i,j] where dim=1 is sampled on frequencies xs_in
-                                # and j represents the trailing dimensions in ys
+    ys::Array{Float64,d};       # piecewisely linear signal ys[i,j] where dim=1 is sampled on frequencies xs_in
+    interpolation=:linear                           # and j represents the trailing dimensions in ys
                                 # assume 1/x-decay outside of the box
     ) where {d}
     # As y(x) is piecewise linear we compute h(xs_out[o]) piecewisely, giving h(xs_out[o]) = ∑_i H[o,i,j] with
@@ -750,16 +750,32 @@ function my_hilbert_trafo(
     # mid_id = div(length(xs_in),2) + 1
     # printstyled("\nCentral grid points: $(xs_in[mid_id-2:mid_id+2])\n"; color=:red)
     if d==1
-        interp_linear = linear_interpolation(xs_in, ys)
-        ys_interp = interp_linear.(xs_out)
+        interp = if interpolation==:linear
+            linear_interpolation(xs_in, ys)
+        elseif interpolation==:spline
+            error("NYI")
+            # extrapolate(scale(xs_in, interpolate(ys, BSpline(Cubic(Line(OnGrid()))))), Throw())
+            # interpolate((xs_in,), ys, Gridded(Cubic(Line())))
+        else
+            error("Interpolation $(interoplation) invalid!")
+        end
+        ys_interp = interp.(xs_out)
         # result will be type matrix
         return ys_interp .+ im .* vec(result)
     elseif d==2
         # interpolate for each ϵ individually
         ys_interp = zeros(size(result))
         for i in axes(ys, 2)
-            interp_linear = linear_interpolation(xs_in, ys[:,i])
-            ys_interp[:,i] .= interp_linear.(xs_out)
+            interp = if interpolation==:linear
+                linear_interpolation(xs_in, ys[:,i])
+            elseif interpolation==:spline
+                # interpolate((xs_in,), ys[:,i], Gridded(Cubic(Line())))
+                error("NYI")
+                # extrapolate(scale(xs_in, interpolate(ys[:,i], BSpline(Cubic(Line(OnGrid()))))), Throw())
+            else
+                error("Interpolation $(interoplation) invalid!")
+            end
+            ys_interp[:,i] .= interp.(xs_out)
         end
 
         # check out ys_interp vs ys
