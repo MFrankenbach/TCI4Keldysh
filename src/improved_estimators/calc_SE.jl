@@ -86,37 +86,33 @@ function calc_Σ_KF_aIE(PSFpath::String, ω_fer::Vector{Float64}; mode::Symbol=:
     ωconvMat = ωconvMat_K1()
     # precompute correlators
     if mode==:normal
-        G = FullCorrelator_KF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
-        G_aux_L = FullCorrelator_KF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
-        G_aux_R = FullCorrelator_KF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ, broadening_kwargs...)
-        G_data = precompute_all_values(G)
+        GL = FullCorrelator_KF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ=[γ, 3γ], broadening_kwargs...)
+        GR = FullCorrelator_KF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ=[3γ, γ], broadening_kwargs...)
+        G_aux_L = FullCorrelator_KF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ=[γ, 3γ], broadening_kwargs...)
+        G_aux_R = FullCorrelator_KF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=flavor_idx, ωs_ext=(ω_fer,), ωconvMat=ωconvMat, sigmak=sigmak, γ=[3γ, γ], broadening_kwargs...)
+        GL_data = precompute_all_values(GL)
+        GR_data = precompute_all_values(GR)
         G_aux_L_data = precompute_all_values(G_aux_L)
         G_aux_R_data = precompute_all_values(G_aux_R)
     elseif mode==:fdt
-        G_data = precompute_all_values_FDT(PSFpath, ["F1", "F1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
-        G_aux_L_data = precompute_all_values_FDT(PSFpath, ["F1", "Q1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
-        G_aux_R_data = precompute_all_values_FDT(PSFpath, ["Q1", "F1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+        error("Mode $mode deprecated")
+        # G_data = precompute_all_values_FDT(PSFpath, ["F1", "F1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+        # G_aux_L_data = precompute_all_values_FDT(PSFpath, ["F1", "Q1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
+        # G_aux_R_data = precompute_all_values_FDT(PSFpath, ["Q1", "F1dag"], ω_fer; flavor_idx=flavor_idx, T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
     else
         error("Invalid mode $mode")
     end
 
-    # p = default_plot()
-    # for k in [(1,2),(2,1),(2,2)]
-    #     plot!(p, real.(G_data[:,k...]); label="Re,$k")
-    #     plot!(p, imag.(G_data[:,k...]); linestyle=:dash, label="Im,$k")
-    # end
-    # savefig(p, "Gffdag.pdf")
-
     # deduce self-energies
     X = get_PauliX()
     I = diagm([1.0,1.0])
-    Σ_L = zeros(ComplexF64, size(G_data))
+    Σ_L = zeros(ComplexF64, size(GL_data))
     for i in axes(Σ_L,1)
-        Σ_L[i,:,:] .= X*G_aux_L_data[i,:,:]/G_data[i,:,:]
+        Σ_L[i,:,:] .= X*G_aux_L_data[i,:,:]/GL_data[i,:,:]
     end
-    Σ_R = zeros(ComplexF64, size(G_data))
+    Σ_R = zeros(ComplexF64, size(GR_data))
     for i in axes(Σ_R,1)
-        Σ_R[i,:,:] .= (I/G_data[i,:,:]) * G_aux_R_data[i,:,:] * X
+        Σ_R[i,:,:] .= (I/GR_data[i,:,:]) * G_aux_R_data[i,:,:] * X
     end
     return (Σ_L, Σ_R)
 end

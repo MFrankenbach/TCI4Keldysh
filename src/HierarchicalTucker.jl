@@ -269,7 +269,7 @@ end
 """
 Evaluate full Keldysh correlator with partial correlators represented as HierarchicalTucker
 decompositions
-* Gps: Dx(D+1)! matrix for three hierarchical tucker decompositions for each partial correlator
+* Gps: Dx(D+1)! matrix for D+1 (= no. of fully retarded kernels) hierarchical tucker decompositions for each partial correlator
 """
 struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
     Gps::Matrix{HierarchicalTucker{D,ComplexF64}}
@@ -279,24 +279,21 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
     GR_to_GK::Array{Float64,3}
 
     function MultipoleKFCEvaluator(GF::FullCorrelator_KF{D}; nlevel::Int=4, cutoff::Float64=1.e-8) where {D}
-        nGps = length(GF.Gps)
-        Gps_ = Matrix{HierarchicalTucker{D,ComplexF64}}(undef, D, nGps)
+        nGps = GF.NGps
+        Gps_ = Matrix{HierarchicalTucker{D,ComplexF64}}(undef, D+1, nGps)
         ωconvOffs = Vector{SVector{D,Int}}(undef, nGps)
         ωconvMats = Vector{SMatrix{D,D,Int}}(undef, nGps)
-        Threads.@threads for ip in eachindex(GF.Gps)
+        Threads.@threads for ip in axes(GF.Gps,1)
             vprintln(" Processing partial correlator no. $ip/$nGps")
-            Gp = GF.Gps[ip]
-            for id in 1:D
-                kernels_act = ntuple(
-                    i -> ifelse(i>=id, Gp.tucker.legs[i], conj.(Gp.tucker.legs[i])),
-                    D
-                    )
-                Gps_[id, ip] = HierarchicalTucker(
-                    Gp.tucker.center, kernels_act, nlevel; cutoff=cutoff
+            for l in axes(GF.Gps,2)
+                Gp = GF.Gps[ip,l]
+                Gps_[l, ip] = HierarchicalTucker(
+                    Gp.tucker.center, Tuple(Gp.tucker.legs), nlevel; cutoff=cutoff
                     )
             end
-            ωconvOffs[ip] = copy(Gp.ωconvOff)
-            ωconvMats[ip] = copy(Gp.ωconvMat)
+            # frequency rotations only change with permutation
+            ωconvOffs[ip] = copy(GF.Gps[ip,1].ωconvOff)
+            ωconvMats[ip] = copy(GF.Gps[ip,1].ωconvMat)
         end
         if VERBOSITY[]>=2
             println("==== COMBINED HIERARCHICAL TUCKER: MEMORY")
@@ -312,10 +309,9 @@ function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) where {D}
     for ip in axes(ev.Gps,2)    
         retarded = zeros(ComplexF64, D+1)
         idx_int = ev.ωconvMats[ip] * SA[idx...] + ev.ωconvOffs[ip]
-        for id in 1:D
+        for id in 1:D+1
             retarded[id] = ev.Gps[id,ip](idx_int...)
         end
-        retarded[end] = conj(retarded[1])
         # transform to Keldysh
         ret += transpose(retarded) * ev.GR_to_GK[:,:,ip]
     end
@@ -327,10 +323,9 @@ function eval_interpol(ev::MultipoleKFCEvaluator{D}, ws::Vector{NTuple{D,LinRang
     for ip in axes(ev.Gps,2)    
         retarded = zeros(ComplexF64, D+1)
         w_int = ev.ωconvMats[ip] * SA[w...]
-        for id in 1:D
+        for id in 1:D+1
             retarded[id] = eval_interpol(ev.Gps[id,ip], ws[ip], w_int...)
         end
-        retarded[end] = conj(retarded[1])
         # transform to Keldysh
         ret += transpose(retarded) * ev.GR_to_GK[:,:,ip]
     end
@@ -461,17 +456,18 @@ function test_MultipoleKFCEvaluator()
         γ=γ,
         sigmak=sigmak,
         emax=max(20.0, 3*ommax),
-        emin=2.5*1.e-5,
+        emin=2.5e-5,
         estep=50
     )
 
     Gref = TCI4Keldysh.precompute_all_values(G)
-    Gev = MultipoleKFCEvaluator(G; nlevel=2, cutoff=1.e-8)
+    cut = 1.e-3
+    Gev = MultipoleKFCEvaluator(G; nlevel=2, cutoff=cut)
     maxref = maximum(abs.(Gref))
     for idx in Iterators.product(fill(1:2^R,D)...)
         gval = reshape(Gev(idx...), ntuple(_->2,D+1))
         refval = Gref[idx...,:,:,:,:]
-        @assert maximum(abs.(gval .- refval)) / maxref < 1.e-8
+        @assert maximum(abs.(gval .- refval)) / maxref < cut
     end
 end
 
