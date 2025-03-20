@@ -341,7 +341,7 @@ end
 
 using BenchmarkTools
 """
-Test against KFCEvaluator for R=10.
+Test against KFCEvaluator.
 """
 function test_MultipoleKFCEvaluator_largeR()
 
@@ -369,7 +369,7 @@ function test_MultipoleKFCEvaluator_largeR()
         estep=50
     )
 
-    Gev = MultipoleKFCEvaluator(G; nlevel=3, cutoff=1.e-6)
+    Gev = MultipoleKFCEvaluator(G; nlevel=4, cutoff=1.e-6)
     Gref = KFCEvaluator(G)
     printstyled("== Test\n"; color=:blue)
     for _ in 1:1000
@@ -377,6 +377,7 @@ function test_MultipoleKFCEvaluator_largeR()
         gval = Gev(idx...)
         refval = Gref(idx...)
         if maximum(abs.(gval .- refval)) / norm(gval) > 1.e-4
+            @show idx
             @show norm(gval .- refval) / norm(gval)
             @warn "Large error from SVD truncations"
         end
