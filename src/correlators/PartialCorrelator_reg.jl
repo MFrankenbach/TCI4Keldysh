@@ -646,7 +646,26 @@ function precompute_all_values_MF_noano(
     Gp::PartialCorrelator_reg{D}
     )::Array{ComplexF64,D} where {D}
     
-    @assert Gp.formalism == "MF"
+    @assert intact(Gp) "TuckerDecomposition has been modified"
+    data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
+
+    # perform frequency rotation:
+    strides_internal = [stride(data_unrotated, i) for i in 1:D]'
+    strides4rot = ((strides_internal * Gp.ωconvMat)...,)
+    offset4rot = sum(strides4rot) - sum(strides_internal) + strides_internal * Gp.ωconvOff
+    sv = StridedView(data_unrotated, (length.(Gp.ωs_ext)...,), strides4rot, offset4rot)
+    res = Array{ComplexF64,D}(sv[[Colon() for _ in 1:D]...])
+
+    return res
+end
+
+"""
+Precompute values (kernel contraction and frequency rotation)
+"""
+function precompute_all_values(
+    Gp::PartialCorrelator_reg{D}
+    )::Array{ComplexF64,D} where {D}
+    
     @assert intact(Gp) "TuckerDecomposition has been modified"
     data_unrotated = contract_1D_Kernels_w_Adisc_mp(Gp.tucker.legs, Gp.tucker.center)
 

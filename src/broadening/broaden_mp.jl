@@ -111,7 +111,7 @@ function _prepare_broadening_mp(
                                 # weight to z-shift, i.e. |d[log(|omega|)]/dz|. These values will
                                 # be used to broaden discrete data. (\sigma_{ij} or \sigma_k in
                                 # Lee2016.)
-    γ       ::Float64           # Parameter for secondary linear broadening kernel. (\gamma
+    gamvec  ::Vector{Float64}           # Parameter for secondary linear broadening kernel. (\gamma
                                 # in Lee2016.)
     ; 
     ωconts  ::NTuple{D,Vector{Float64}},
@@ -120,6 +120,9 @@ function _prepare_broadening_mp(
     # Check if sigmak is a single number
     if length(sigmak) != 1
         error("ERR: Logarithmic broadening width parameter 'sigmak' should be a single number.")
+    end
+    if !(length(gamvec) in [1,D])
+        error("Invalid number $(length(gamvec)) of broadening parameters instead of 1 or $(D+1)")
     end
     # remove singleton dimensions
     Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
@@ -133,13 +136,18 @@ function _prepare_broadening_mp(
     ωcont_lengths = length.(ωconts)
     ωcont_largest = ωconts[argmax(ωcont_lengths)]
     # Broadening kernels, obtained by creating Acont with identity matrix Adisc
-    ωcont, Kernel = getAcont(ωdisc, Matrix{Float64}(LinearAlgebra.I, (ones(Int, 2).*length(ωdisc))...), sigmak .+ zeros(length(ωdisc)), γ; ωcont=ωcont_largest, kwargs...)
+    Ks_largest = Matrix{Float64}[]
+    ωcont = Float64[]
+    for γ in gamvec
+        ωcont, Kernel = getAcont(ωdisc, Matrix{Float64}(LinearAlgebra.I, (ones(Int, 2).*length(ωdisc))...), sigmak .+ zeros(length(ωdisc)), γ; ωcont=ωcont_largest, kwargs...)
+        push!(Ks_largest, Kernel)
+    end
     
     # Delete rows/columns that contain only zeros
     AdiscIsZero_oks, ωdiscs, Adisc = compactAdisc(ωdisc, Adisc)
     # AdiscIsZero_oks, ωdiscs, Adisc = compactAdisc(ωdisc, ones(Float64, size(Adisc)))
     ishifts = ntuple(i -> div(length(ωcont_largest) - length(ωconts[i]), 2), D)
-    Kernels = [Kernel[1+ishifts[i]:end-ishifts[i], .!AdiscIsZero_oks[i]] for i in 1:D]
+    Kernels = [Ks_largest[i][1+ishifts[i]:end-ishifts[i], .!AdiscIsZero_oks[i]] for i in 1:D]
     return D, ωdiscs, Adisc, Kernels, ωcont
 end
 
@@ -162,13 +170,14 @@ function BroadenedPSF(
                                 # weight to z-shift, i.e. |d[log(|omega|)]/dz|. These values will
                                 # be used to broaden discrete data. (\sigma_{ij} or \sigma_k in
                                 # Lee2016.)
-    γ       ::Float64           # Parameter for secondary linear broadening kernel. (\gamma
+    γ       ::Union{Float64,Vector{Float64}} # Parameter for secondary linear broadening kernel. (\gamma
                                 # in Lee2016.)
     ; 
     ωconts  ::NTuple{D,Vector{Float64}},
     kwargs...
 ) where{D}
-    @TIME _, ωdiscs, Adisc, Kernels, _ = _prepare_broadening_mp(ωdisc, Adisc, sigmak, γ; ωconts, kwargs...) "Prepare broadening."
+    γ_ = isa(γ,Float64) ? [γ] : γ
+    @TIME _, ωdiscs, Adisc, Kernels, _ = _prepare_broadening_mp(ωdisc, Adisc, sigmak, γ_; ωconts, kwargs...) "Prepare broadening."
     # omdisc = ωdiscs[1]
     # println("KKKKKKKKKKKKKKKKKKKKKK")
     # zomid = findfirst(om -> abs(om)<1.e-12, omdisc)

@@ -599,7 +599,23 @@ function speedup_FullCorrelator_MF()
     display(res3)
 end
 
+"""
+Determine linear broadening widths for all 1D kernels of a partial correlator.
+"""
+function broadening_widths(gamvec::Vector{Float64}, perm::Vector{Int})
+    ell = length(gamvec)
+    gammat = zeros(Float64, ell, ell-1)
+    gamvec_p = gamvec[perm]
+    for it1 in 1:ell
+        gammat[it1,it1:end] = reverse(cumsum(reverse(gamvec_p[it1+1:end])))
+        gammat[it1,1:it1-1] = cumsum(gamvec_p[1:it1-1])
+    end
+    return gammat
+end
 
+function broadening_widths(γ::Float64, perm::Vector{Int})
+    return broadening_widths(fill(γ, length(perm)), perm)
+end
 
 """
     FullCorrelator_KF{D}
@@ -639,7 +655,8 @@ MxNx8 Matrix{ComplexF64}
 """
 struct FullCorrelator_KF{D}
     name    ::Vector{String}                    # list of operators to distinguish the objects
-    Gps     ::Vector{PartialCorrelator_reg}     # list of partial correlators
+    Gps     ::Matrix{PartialCorrelator_reg}     # list of partial correlators: NGps x (D+1) matrix
+    NGps    ::Int                               # how many partial correlators we have (currently NGps=(D+1)!)
     Gp_to_G ::Vector{Float64}                   # prefactors for Gp's (currently this coefficient is applied to Adisc => no need to apply it during evaluation.)
     GR_to_GK::Array{Float64,3}                  # Matrix of size (D+1, 2^{D+1}) mapping fully-retarded Gp to Keldysh Gp
 
@@ -662,7 +679,7 @@ struct FullCorrelator_KF{D}
                                                 # weight to z-shift, i.e. |d[log(|omega|)]/dz|. These values will
                                                 # be used to broaden discrete data. (\sigma_{ij} or \sigma_k in
                                                 # Lee2016.)
-        γ       ::Float64,                      # Parameter for secondary linear broadening kernel. (\gamma
+        γ       ::Union{Float64, Vector{Float64}}, # Parameter for secondary linear broadening kernel. (\gamma
                                                 # in Lee2016.)
         broadening_kwargs...                    # other broadening kwargs (see documentation for BroadenedPSF)
         ) where{D}
@@ -676,23 +693,25 @@ struct FullCorrelator_KF{D}
         vprint("Loading stuff: ")
         @time begin
         perms = permutations(collect(1:D+1))
+        perms_vec = collect(perms)
         isBos = isBosonic.(Ops)
         ωdisc = load_ωdisc(path, Ops)
-        Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (i,p) in enumerate(perms)]
+        Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (_,p) in enumerate(perms)]
         end
         vprint("Creating Broadened PSFs: ")
-        function get_Acont_p(i, p)
-            # ωconts, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+        function get_Acont_p(i::Int, p, l::Int)
+            # D broadening widths
+            gamvec = broadening_widths(γ, p)[l,:]
             ωcont = get_Acont_grid(;broadening_kwargs...)
             ωconts = ntuple(_->ωcont, D)
-            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωconts...,), broadening_kwargs...)
+            return BroadenedPSF(ωdisc, Adiscs[i], sigmak, gamvec; ωconts=(ωconts...,), broadening_kwargs...)
         end
-        perms_vec = collect(perms)
-        Aconts = Vector{TuckerDecomposition{Float64,D}}(undef, length(perms_vec))
-        # @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
-        @time begin Threads.@threads for i in eachindex(Aconts)
+        Aconts = Matrix{TuckerDecomposition{Float64,D}}(undef, length(perms_vec), D+1)
+        @time begin Threads.@threads for i in axes(Aconts, 1)
                 p = perms_vec[i]
-                Aconts[i] = get_Acont_p(i,p)
+                for l in 1:D+1
+                    Aconts[i,l] = get_Acont_p(i, p, l)
+                end
             end
         end
 
@@ -745,7 +764,7 @@ struct FullCorrelator_KF{D}
     end
 
 
-    function FullCorrelator_KF(Aconts::Vector{<:AbstractTuckerDecomp{D}}; T::Float64, isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
+    function FullCorrelator_KF(Aconts::Matrix{<:AbstractTuckerDecomp{D}}; T::Float64, isBos::BitVector, ωs_ext::NTuple{D,Vector{Float64}}, ωconvMat::Matrix{Int}, name::Vector{String}=[]) where{D}
         ##########################################################################
         ############################## check inputs ##############################
         if size(ωconvMat) != (D+1, D)
@@ -754,7 +773,7 @@ struct FullCorrelator_KF{D}
         if maximum(abs.(sum(ωconvMat, dims=1))) != 0
             throw(ArgumentError("The columns in ωconvMat must add up to zero."))
         end
-        if length(Aconts) != factorial(D+1)
+        if size(Aconts, 1) != factorial(D+1)
             throw(ArgumentError("Aconts must contain all "*string(D+1)*"! permutations."))
         end
         if (D+1-sum(isBos))%2 != 0
@@ -780,23 +799,38 @@ struct FullCorrelator_KF{D}
         @time begin
         perms = permutations(collect(1:D+1))
         Gp_to_G = _get_Gp_to_G(D, isBos)
-        for (i,sp) in enumerate(Aconts)
-            sp.center .*= Gp_to_G[i]
+        for i in axes(Aconts,1)
+            # Acont centers (== Adisc) are SHARED between retarded components λ
+            for l in 1:D+1
+                Aconts[i,l].center .*= Gp_to_G[i]
+            end
         end
-        Gps = Vector{PartialCorrelator_reg{D}}(undef, length(collect(perms)))
+        # create partial correlators by Hilbert-transforming kernels
+        Gps = Matrix{PartialCorrelator_reg{D}}(undef, length(collect(perms)), D+1)
         for (i,p) in enumerate(perms)
-            Gps[i] = PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1))
+            for l in axes(Gps,2)
+                Gps[i,l] = PartialCorrelator_reg(T, "KF", Aconts[i,l], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1))
+            end
+            # adjust signs of imaginary shfits; l=1 is already fine
+            for l in 2:size(Gps,2)
+                conj!.(Gps[i,l].tucker.legs[1:l-1])
+            end
             if DEBUG_TCI_KF_RAM()
                 GC.gc(true)
             end
         end
-        # Gps = [PartialCorrelator_reg(T, "KF", Aconts[i], ntuple(i->ωs_ext[i], D), cumsum(ωconvMat[p[1:D],:], dims=1)) for (i,p) in enumerate(perms)]        
         GR_to_GK = get_GR_to_GK(D)
         end
-        return new{D}(name, Gps, Gp_to_G, GR_to_GK, ωs_ext, ωconvMat, isBos)
+        return new{D}(name, Gps, factorial(D+1), Gp_to_G, GR_to_GK, ωs_ext, ωconvMat, isBos)
     end
 end
 
+"""
+All partial correlators that have only negative imaginary shifts
+"""
+function first_Gps(KFC::FullCorrelator_KF{D}) where {D}
+    return KFC.Gps[1:KFC.NGps]  
+end
 
 """
     evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D})
@@ -807,7 +841,7 @@ iK ∈ 1:2^D is the linear index for the 2x...x2 Keldysh structure.
 """
 function evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D}) where{D}
     result = transpose(evaluate_with_ωconversion_KF(G.Gps[1], idx...)) * view(G.GR_to_GK, :, :, 1)# .* G.Gp_to_G[1]
-    for i in 2:length(G.Gps)
+    for i in 2:G.NGps
         result .+= transpose(evaluate_with_ωconversion_KF(G.Gps[i], idx...)) * view(G.GR_to_GK, :, :, i)# .* G.Gp_to_G[i]
     end
     return result
@@ -871,14 +905,14 @@ struct FullCorrEvaluator_KF{D,T} <: AbstractCorrEvaluator_KF{D,T}
         cutoff=1.e-20, tucker_cutoff::Union{Nothing,Float64}=nothing
         ) where {D}
         T = eltype(KFC.Gps[1].tucker.center)
-        N_Gps = length(KFC.Gps)
+        N_Gps = KFC.NGps
         iso_kernels = Matrix{Matrix{T}}(undef, 2*D-1, N_Gps)
         N_tucker = D
         tucker_centers = [Vector{Array{T,D}}(undef, N_tucker) for _ in 1:N_Gps]
         tucker_cuts = Matrix{Int}(undef, N_Gps, D+1)
 
         @time KFC_max = lowerbound(KFC)
-        for (p, Gp) in enumerate(KFC.Gps)
+        for (p, Gp) in enumerate(first_Gps(KFC))
             tmp_legs = Vector{eltype(Gp.tucker.legs)}(undef, D)
             # decompose legs, get iso_kernels
             old_size = size(Gp.tucker.center)
@@ -933,10 +967,10 @@ struct KFCEvaluator <: AbstractCorrEvaluator_KF{3,ComplexF64}
 
     # kwargs for compatibility with AbstractCorrEvaluator_KF
     function KFCEvaluator(KFC::FullCorrelator_KF{3}; kwargs...)
-        np = length(KFC.Gps)
+        np = KFC.NGps
         omPSFs = Vector{Array{ComplexF64,3}}(undef, 2*np)
         remLegs = Matrix{Matrix{ComplexF64}}(undef, np,2)
-        for (p,Gp) in enumerate(KFC.Gps)
+        for (p,Gp) in enumerate(first_Gps(KFC))
             k = Gp.tucker.legs[1]
             censz = size(Gp.tucker.center)
             ompsf = k * reshape(Gp.tucker.center, censz[1], censz[2]*censz[3])
@@ -957,7 +991,7 @@ NOT faster standard call...
 """
 function evalKFC_BLAS(fev::KFCEvaluator, idx::Vararg{Int,3})
     res = zeros(ComplexF64, 1, 2^4)
-    for (p,Gp) in enumerate(fev.KFC.Gps)
+    for (p,Gp) in enumerate(first_Gps(fev.KFC))
         # rotate frequency
         retarded = zeros(ComplexF64,4)
         idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
@@ -981,7 +1015,7 @@ end
 
 function (fev::KFCEvaluator)(idx::Vararg{Int,3})
     res = zeros(ComplexF64, 1, 2^4)
-    for (p,Gp) in enumerate(fev.KFC.Gps)
+    for (p,Gp) in enumerate(first_Gps(fev.KFC))
         # rotate frequency
         retarded = zeros(ComplexF64,4)
         idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
@@ -1005,7 +1039,7 @@ Generic evaluation method
 """
 function (fev::FullCorrEvaluator_KF{D,T})(::Val{:nocut}, idx::Vararg{Int,D}) where {D,T}
     res = zeros(T, 1, 2^(D+1))
-    for (p,Gp) in enumerate(fev.KFC.Gps)
+    for (p,Gp) in enumerate(first_Gps(fev.KFC))
         # rotate frequency
         retarded = zeros(T,D+1)
         idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
@@ -1030,7 +1064,7 @@ end
 function (fev::FullCorrEvaluator_KF{3,T})(idx::Vararg{Int,3}) where {T}
     D = 3
     res = zeros(T, 1, 2^(D+1))
-    for (p,Gp) in enumerate(fev.KFC.Gps)
+    for (p,Gp) in enumerate(first_Gps(fev.KFC))
         # rotate frequency
         retarded = zeros(T,D+1)
         idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
@@ -1081,7 +1115,7 @@ struct FullCorrEvaluator_KF_single{D, T}
         T = eltype(KFC.Gps[1].tucker.center)
         iso_kernels = Matrix{Matrix{T}}(undef, D, factorial(D+1))
         tucker_centers = [Vector{Array{T,D}}(undef, 0) for _ in 1:factorial(D+1)]
-        for (p, Gp) in enumerate(KFC.Gps)
+        for (p, Gp) in enumerate(first_Gps(KFC))
             tmp_legs = Vector{eltype(Gp.tucker.legs)}(undef, D)
             # decompose legs
             old_size = size(Gp.tucker.center)
@@ -1105,7 +1139,7 @@ end
 
 function (fev::FullCorrEvaluator_KF_single{D})(idx::Vararg{Int,D}) where {D}    
     ret = zero(ComplexF64)
-    for (p,Gp) in enumerate(fev.KFC.Gps)
+    for (p,Gp) in enumerate(first_Gps(fev.KFC))
         # rotate frequency
         idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
 
@@ -1164,7 +1198,7 @@ function evaluate(G::FullCorrelator_KF{D},  idx::Vararg{Int,D}; iK::Int) where{D
     #eval_gps(gp) = evaluate_with_ωconversion_KF(gp, idx...)
     #Gp_values = eval_gps.(G.Gps)
     result = transpose(evaluate_with_ωconversion_KF(G.Gps[1], idx...)) * G.GR_to_GK[:, iK, 1]# .* G.Gp_to_G[1]
-    for i in 2:length(G.Gps)
+    for i in 2:G.NGps
         result += transpose(evaluate_with_ωconversion_KF(G.Gps[i], idx...)) * G.GR_to_GK[:, iK, i]# .* G.Gp_to_G[i]
     end
     return result
@@ -1172,17 +1206,20 @@ function evaluate(G::FullCorrelator_KF{D},  idx::Vararg{Int,D}; iK::Int) where{D
 end
 
 
+"""
+Precompute full Keldysh correlator, yielding 2D+1 dimensional array (D frequencies, D+1 Keldysh indices)
+"""
 function precompute_all_values(G :: FullCorrelator_KF{D}) where{D}
-    
-#    @assert false # Not tested at all!
-    p = 1
-    temp = precompute_all_values_KF(G.Gps[p])
-    result = reshape(temp, (prod(size(temp)[1:end-1]),D+1)) * view(G.GR_to_GK, :, :, p)
-    for p in 2:length(G.Gps)
-        temp = precompute_all_values_KF(G.Gps[p])
-        result += reshape(temp, (prod(size(temp)[1:end-1]),D+1)) * view(G.GR_to_GK, :, :, p)
+    result = zeros(ComplexF64, length.(G.ωs_ext)..., size(G.GR_to_GK, 2))
+    for p in axes(G.Gps,1)
+        for l in axes(G.Gps, 2) 
+            temp = precompute_all_values(G.Gps[p,l])
+            for K in 1:size(G.GR_to_GK, 2)
+                result[ntuple(_->Colon(),D)...,K] += temp * G.GR_to_GK[l, K, p]
+            end
+        end
     end
-    return reshape(result, (length.(G.ωs_ext)..., (2*ones(Int, D+1))...))
+    return reshape(result, (length.(G.ωs_ext)..., ntuple(_->2,D+1)...))
 end
 
 """
@@ -1264,7 +1301,7 @@ end
 
 function propagate_ωs_ext!(G::Union{FullCorrelator_MF{D}, FullCorrelator_MF{D}}, ωs_ext_new::NTuple{D,Vector{Float64}}=G.ωs_ext) where{D}
     G.ωs_ext = ωs_ext_new
-    for (ip, Gp) in enumerate(G.Gps)
+    for (ip, Gp) in enumerate(G)
         G.Gps[ip].ωs_ext = ωs_ext_new
         update_frequency_args!(G.Gps[ip])
     end
