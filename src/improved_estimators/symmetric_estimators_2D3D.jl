@@ -12,6 +12,7 @@ function compute_K2r_symmetric_estimator(
     flavor_idx::Int,
     ωs_ext  ::NTuple{2,Vector{Float64}},
     ωconvMat::Matrix{Int},
+    γ=nothing, # need to assign for Matsubara
     broadening_kwargs...
     ) where{N}
     if formalism == "MF"
@@ -55,7 +56,10 @@ function compute_K2r_symmetric_estimator(
                 end
             end
         else
-            K2a_tmp      = TCI4Keldysh.FullCorrelator_KF(PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]]; T, flavor_idx, ωs_ext, ωconvMat, broadening_kwargs...);
+            K2a_tmp      = TCI4Keldysh.FullCorrelator_KF(
+                            PSFpath, [op_labels[1], letts[1]*op_labels[2], letts[2]*op_labels[3]];
+                            T, flavor_idx, ωs_ext, ωconvMat, γ=[2γ,γ,γ], broadening_kwargs...
+                            );
 
             K2a_data_tmp = TCI4Keldysh.precompute_all_values(K2a_tmp)
 
