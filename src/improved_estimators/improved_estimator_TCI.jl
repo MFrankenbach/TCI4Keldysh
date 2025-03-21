@@ -960,6 +960,7 @@ struct K2Evaluator_KF
         prime::Bool;
         cutoff::Float64=1.e-20,
         useFDR::Bool=USE_FDR_SE(),
+        γ::Float64,
         broadening_kwargs...
         )
 
@@ -987,6 +988,7 @@ struct K2Evaluator_KF
                     PSFpath, only(ωs_Σ);
                     flavor_idx=flavor_idx,
                     T=T,
+                    γ=γ,
                     broadening_kwargs...
                     )
             else
@@ -994,6 +996,7 @@ struct K2Evaluator_KF
                     PSFpath, only(ωs_Σ);
                     flavor_idx=flavor_idx,
                     T=T,
+                    γ=γ,
                     broadening_kwargs...
                     )
             end
@@ -1019,6 +1022,8 @@ struct K2Evaluator_KF
                 ωs_ext=ωs_ext,
                 flavor_idx=flavor_idx,
                 ωconvMat=ωconvMat,
+                # like in MuNRG: Qij gets double broadening
+                γ=[2γ,γ,γ],
                 broadening_kwargs...
                 )
         end

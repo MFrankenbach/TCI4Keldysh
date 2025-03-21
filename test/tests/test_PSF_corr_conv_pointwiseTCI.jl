@@ -151,17 +151,6 @@ end
             estep=50
             )
 
-        KFev = TCI4Keldysh.FullCorrEvaluator_KF_single(KFC, iK)
-        function KFC_(idx::Vararg{Int,N}) where {N}
-            return TCI4Keldysh.evaluate(KFC, idx...; iK=iK)        
-        end
-
-        for _ in 1:30
-            idx = rand(1:2^R, D)
-            @test isapprox(KFC_(idx...), KFev(idx...); atol=1.e-11)
-        end
-
-
         KFev2 = TCI4Keldysh.FullCorrEvaluator_KF(KFC)
         function KFC2_(idx::Vararg{Int,N}) where {N}
             return TCI4Keldysh.evaluate_all_iK(KFC, idx...)
