@@ -36,7 +36,11 @@ end
         ωs_ext = ntuple(i -> collect(range(ωmin, ωmax; length=2^R)), D)
         ωconvMat = TCI4Keldysh.channel_trafo("a")
         γ, sigmak = TCI4Keldysh.default_broadening_γσ(T)
-        KFC = TCI4Keldysh.FullCorrelator_KF(PSFpath, Ops; T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken")
+        KFC = TCI4Keldysh.FullCorrelator_KF(
+            PSFpath, Ops;
+            T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken",
+            estep=50, emin=1.e-6, emax=1.e4
+            )
 
         # block
         data_block = TCI4Keldysh.precompute_all_values(KFC)
@@ -44,10 +48,12 @@ end
 
         # pointwise
         data_pw = zeros(ComplexF64, vcat(collect(length.(ωs_ext)), [2^npt])...)
+        data_pw_iK = zeros(ComplexF64, vcat(collect(length.(ωs_ext)), [2^npt])...)
         num_eval = prod(size(data_pw))
         count = 0
         for id in Iterators.product(Base.OneTo.(size(data_pw))...)
             data_pw[id...] = TCI4Keldysh.evaluate(KFC, id[1:D]...; iK=id[end])
+            data_pw_iK[id[1:D]...,:] .= TCI4Keldysh.evaluate_all_iK(KFC, id[1:D]...)
             count += 1
             if mod(count, 1000)==0
                 @printf("%.2f percent of evaluations\n", count/num_eval * 100)
@@ -55,6 +61,8 @@ end
         end
 
         data_pw = reshape(data_pw, size(data_block))
+        data_pw_iK = reshape(data_pw_iK, size(data_block))
+        @test maximum(abs.(data_pw .- data_block)) <= 1.e-12
         @test maximum(abs.(data_pw .- data_block)) <= 1.e-12
     end
 

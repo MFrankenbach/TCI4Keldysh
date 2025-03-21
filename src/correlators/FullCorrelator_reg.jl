@@ -1240,14 +1240,15 @@ Evaluate Keldysh correlator at indices idx and Keldysh component iK.
 iK ∈ 1:2^D is the linear index for the 2x...x2 Keldysh structure.
 """
 function evaluate(G::FullCorrelator_KF{D},  idx::Vararg{Int,D}; iK::Int) where{D}
-    #eval_gps(gp) = evaluate_with_ωconversion_KF(gp, idx...)
-    #Gp_values = eval_gps.(G.Gps)
-    result = transpose(evaluate_with_ωconversion_KF(G.Gps[1], idx...)) * G.GR_to_GK[:, iK, 1]# .* G.Gp_to_G[1]
-    for i in 2:G.NGps
-        result += transpose(evaluate_with_ωconversion_KF(G.Gps[i], idx...)) * G.GR_to_GK[:, iK, i]# .* G.Gp_to_G[i]
+    res = zero(ComplexF64)
+    for p in axes(G.Gps,1)
+        for l in axes(G.Gps,2)
+            if G.GR_to_GK[l,iK,p]!=0.0
+                res += G.Gps[p,l](idx...) * G.GR_to_GK[l,iK,p]
+            end
+        end
     end
-    return result
-    #return mapreduce(gp -> evaluate_with_ωconversion_KF(gp, idx...)' * G.GR_to_GK, +, G.Gps)
+    return res
 end
 
 

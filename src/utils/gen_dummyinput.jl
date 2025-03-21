@@ -250,17 +250,26 @@ function multipeak_correlator_KF(
     print("Loading stuff: ")
     @time begin
     perms = permutations(collect(1:D+1))
+    perms_vec = collect(perms)
     isBos = BitVector(ntuple(i -> (i==1 && mod(D,2)==0), D+1))
     @assert length(Adiscs)==factorial(D+1) "Wrong number of PSFs"
     end
     print("Creating Broadened PSFs: ")
-    function get_Acont_p(i, p)
-        # ωconts, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))
+    function get_Acont_p(i::Int, p, l::Int)
+        # D broadening widths
+        gamvec = broadening_widths(γ, p)[l,:]
         ωcont = get_Acont_grid(;broadening_kwargs...)
         ωconts = ntuple(_->ωcont, D)
-        return BroadenedPSF(ωdisc, Adiscs[i], sigmak, γ; ωconts=(ωconts...,), broadening_kwargs...)
+        return BroadenedPSF(ωdisc, Adiscs[i], sigmak, gamvec; ωconts=(ωconts...,), broadening_kwargs...)
     end
-    @time Aconts = [get_Acont_p(i, p) for (i,p) in enumerate(perms)]
+    Aconts = Matrix{TuckerDecomposition{Float64,D}}(undef, length(perms_vec), D+1)
+    @time begin Threads.@threads for i in axes(Aconts, 1)
+            p = perms_vec[i]
+            for l in 1:D+1
+                Aconts[i,l] = get_Acont_p(i, p, l)
+            end
+        end
+    end
 
     return FullCorrelator_KF(Aconts; T, isBos, ωs_ext, ωconvMat, name=name)
 end
