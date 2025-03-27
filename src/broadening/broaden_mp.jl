@@ -102,6 +102,18 @@ function compute_broadened_kernel(
 end
 
 function _prepare_broadening_mp(
+    ωdisc   ::Vector{Float64},
+    Adisc   ::Array{Float64}, 
+    sigmak  ::Vector{Float64},
+    gamma  ::Float64         
+    ; 
+    ωconts  ::NTuple{D,Vector{Float64}},
+    kwargs...
+) where {D}
+    _prepare_broadening_mp(ωdisc, Adisc, sigmak, fill(gamma, D); ωconts=ωconts, kwargs...)
+end
+
+function _prepare_broadening_mp(
     ωdisc   ::Vector{Float64},  # Logarithimic frequency bins. 
                                 # Here the original frequency values from the differences
                                 # b/w energy eigenvalues are shifted to the closest bins.
@@ -176,7 +188,7 @@ function BroadenedPSF(
     ωconts  ::NTuple{D,Vector{Float64}},
     kwargs...
 ) where{D}
-    γ_ = isa(γ,Float64) ? [γ] : γ
+    γ_ = isa(γ,Float64) ? fill(γ, D) : γ
     @TIME _, ωdiscs, Adisc, Kernels, _ = _prepare_broadening_mp(ωdisc, Adisc, sigmak, γ_; ωconts, kwargs...) "Prepare broadening."
     # omdisc = ωdiscs[1]
     # println("KKKKKKKKKKKKKKKKKKKKKK")
