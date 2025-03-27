@@ -139,6 +139,23 @@ end
         @test isapprox(evval, evval_vec; atol=1.e-12)
     end
 
+    function test_eval_tucker_mat()
+        N = 5
+        rng = MersenneTwister(42)
+        A = randn(rng, ComplexF64, (N,N+2,N+3))
+        legs = [randn(rng, ComplexF64, size(A,i)) for i in 1:ndims(A)]
+        e1 = TCI4Keldysh.eval_tucker(A, legs)
+        e1test = TCI4Keldysh.eval_tucker_mat(A, legs)
+        @test abs(e1 - e1test) < 1.e-10
+
+        A = randn(rng, ComplexF64, (N,N+2))
+        legs = [randn(rng, ComplexF64, size(A,i)) for i in 1:ndims(A)]
+        e2 = TCI4Keldysh.eval_tucker(A, legs)
+        e2test = TCI4Keldysh.eval_tucker_mat(A, legs)
+        @test abs(e2 - e2test) < 1.e-10
+    end
+
+    test_eval_tucker_mat()
     test_tucker_eval(2)
     test_tucker_eval(3)
     test_tucker_eval(4)

@@ -2757,18 +2757,6 @@ function (gbev::CachedBatchEvaluator{T})(
     cindexset = vec(collect(Iterators.product(ntuple(i -> 1:gbev.localdims[nleft+i], M)...)))
     out = Array{T,M+2}(undef, (length(leftindexsset), ntuple(i->gbev.localdims[nleft+i],M)..., length(rightindexsset)))
 
-    # careful: manual treatment of caching required to avoid simultaneous writes to CachedFunction dict by different threads
-    # Threads.@threads for il in eachindex(leftindexsset)
-    #         left_act = leftindexsset[il]
-    #     for ic in eachindex(cindexset)
-    #         cen_act = cindexset[ic]
-    #         for ir in eachindex(rightindexsset)
-    #             idx = vcat(left_act, cen_act..., rightindexsset[ir])
-    #             out[il, cindexset[ic]..., ir] = gbev.qf(idx)
-    #         end
-    #     end
-    # end
-
     # chunklen = max(div(length(leftindexsset), Threads.nthreads()), 1)
     chunklen = ceil(Int, length(leftindexsset) / Threads.nthreads())
     chunks = Iterators.partition(eachindex(leftindexsset),  chunklen)

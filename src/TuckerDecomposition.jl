@@ -335,6 +335,22 @@ function eval_tucker(center::Array{T,3}, legs::Vector{Vector{T}}) :: T where {T}
     return ret
 end
 
+function eval_tucker_mat(center::Array{T,3}, legs::Vector{Vector{T}}) :: T where {T}
+    n1, n2, n3 = size(center)
+    l1c = reshape(transpose(legs[1]) * reshape(center, n1, n2*n3), n2, n3)
+    return transpose(legs[2]) * l1c * legs[3]
+end
+
+function eval_tucker_mat(center::Array{T,3}, legs::NTuple{3,AbstractVector{T}}) :: T where {T}
+    n1, n2, n3 = size(center)
+    l1c = reshape(transpose(legs[1]) * reshape(center, n1, n2*n3), n2, n3)
+    return transpose(legs[2]) * l1c * legs[3]
+end
+
+function eval_tucker_mat(center::Array{T,D}, legs::NTuple{D,AbstractVector{T}}) :: T where {T,D}
+    return eval_tucker(center, legs)
+end
+
 """
 * legs: corresponds to legs[i][idx[i],:] in other eval_tucker function
 """
@@ -356,31 +372,6 @@ function eval_tucker(center::Array{T,3}, legs::NTuple{3,AbstractVector{T}}) :: T
 
     return ret
 end
-
-#= 
-const CPP_LIB ::String = "/Users/M.Frankenbach/tci4keldysh/build/tucker_eval.so"
-"""
-Pointwise eval. by direct summation, calling C++ implementation.
-"""
-function (td::TuckerDecomposition{T,3})(idx::Vararg{Int,3}) :: T where {T}
-
-    ret = Ref(Complex{Float64}(0.0, 0.0))
-    n1, n2, n3 = size(td.center)
-    ccall((:eval_tucker, CPP_LIB), Cvoid,
-          (Cint, Cint, Cint,
-           Cint, Cint, Cint,
-           Ptr{Complex{Float64}}, Ptr{Complex{Float64}}, Ptr{Complex{Float64}}, Ptr{Complex{Float64}},
-           Cint, Cint, Cint,
-           Ptr{Complex{Float64}}),
-          n1, n2, n3,
-          size(td.legs[1], 1), size(td.legs[2], 1), size(td.legs[3], 1),
-          td.center, td.legs[1], td.legs[2], td.legs[3],
-          idx[1] - 1, idx[2] - 1, idx[3] - 1,
-          ret)
-
-    return ret[]
-end
-=# 
 
 """
 Struct to accelerate pointwise evaluation of 3D tucker decompositions.
