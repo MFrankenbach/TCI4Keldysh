@@ -1770,7 +1770,7 @@ struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
     X::Matrix{ComplexF64}
     is_incoming::NTuple{4,Bool}
     letter_combinations::Vector{String}
-    sev::Function
+    sev::SigmaEvaluator_KF
     ωs_ext::NTuple{3,Vector{Float64}}
 
     function ΓcoreEvaluator_KF(
@@ -2072,7 +2072,7 @@ end
 """
 Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
 """
-function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
+function (gev::ΓcoreEvaluator_KF{T,KEV})(w::Vararg{Int,3}) where {T,KEV}
     addvals = Vector{T}(undef, gev.Ncorrs)
     for i in 1:gev.Ncorrs
         # first all Keldysh indices
@@ -2098,6 +2098,36 @@ function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
     end
     return sum(addvals)
 end
+
+# """
+# Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
+# """
+# function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
+#     addvals = Vector{T}(undef, gev.Ncorrs)
+#     for i in 1:gev.Ncorrs
+#         # first all Keldysh indices
+#         res = reshape(gev.GFevs[i](w...), ntuple(_->2, 4))
+#         val_legs = Vector{Vector{T}}(undef, length(gev.is_incoming))
+#         for il in eachindex(gev.is_incoming)
+#             mat = if gev.letter_combinations[i][il]==='F'
+#                     -gev.sev(il, gev.is_incoming[il], w...)
+#                 else
+#                     gev.X
+#                 end
+#             leg = if gev.is_incoming[il]
+#                     vec(mat[:, gev.iK_tuple[il]])
+#                 else
+#                     vec(mat[gev.iK_tuple[il], :])
+#                 end
+#             val_legs[il] = leg
+#         end
+#         for d in 1:4
+#             res = res[1,ntuple(_->Colon(),4-d)...].*val_legs[d][1] .+ res[2,ntuple(_->Colon(),4-d)...].*val_legs[d][2]
+#         end
+#         addvals[i] = res
+#     end
+#     return sum(addvals)
+# end
 
 """
 Evaluate full Keldysh vertex in given channel pointwise. In contrast to the Matsubara version,
@@ -2755,7 +2785,6 @@ end
 Evaluation on single Quantics index.
 """
 function (gbev::CachedBatchEvaluator{T})(v::Vector{Int}) where {T}
-    # return gbev.qf(v)
     return gbev.qf.f(v)
 end
 
@@ -2779,60 +2808,76 @@ Batch evaluation of core vertex
 function (gbev::CachedBatchEvaluator{T})(
     leftindexsset::Vector{Vector{Int}}, rightindexsset::Vector{Vector{Int}}, ::Val{M}
     ) where {T,M}
-    nleft = length(first(leftindexsset))
 
+    nleft = length(first(leftindexsset))
     cindexset = vec(collect(Iterators.product(ntuple(i -> 1:gbev.localdims[nleft+i], M)...)))
     out = Array{T,M+2}(undef, (length(leftindexsset), ntuple(i->gbev.localdims[nleft+i],M)..., length(rightindexsset)))
 
-    # careful: manual treatment of caching required to avoid simultaneous writes to CachedFunction dict by different threads
-    # Threads.@threads for il in eachindex(leftindexsset)
-    #         left_act = leftindexsset[il]
-    #     for ic in eachindex(cindexset)
-    #         cen_act = cindexset[ic]
-    #         for ir in eachindex(rightindexsset)
-    #             idx = vcat(left_act, cen_act..., rightindexsset[ir])
-    #             out[il, cindexset[ic]..., ir] = gbev.qf(idx)
+    # populate Pi-tensor
+    println("-- Single evaluation:")
+        @show cindexset[1]
+        v = vcat(leftindexsset[1], cindexset[1]..., rightindexsset[1])
+        @time begin gbev(v) end
+    println("---------------------")
+    Threads.@threads for il in eachindex(leftindexsset)
+        left_act = leftindexsset[il]
+        for ic in eachindex(cindexset)
+            cen_act = cindexset[ic]
+            for ir in eachindex(rightindexsset)
+                idx = vcat(left_act, cen_act..., rightindexsset[ir])
+                key = TCI._key(gbev.qf, idx)
+                out[il, cindexset[ic]..., ir] = haskey(gbev.qf.cache, key) ? gbev.qf.cache[key] : gbev(idx)
+            end
+        end
+    end
+
+    # update cache, non-threaded!
+    for il in eachindex(leftindexsset)
+        left_act = leftindexsset[il]
+        for ic in eachindex(cindexset)
+            cen_act = cindexset[ic]
+            for ir in eachindex(rightindexsset)
+                idx = vcat(left_act, cen_act..., rightindexsset[ir])
+                gbev.qf.cache[TCI._key(gbev.qf, idx)] = out[il, cindexset[ic]..., ir]
+            end
+        end
+    end
+
+    # chunklen = ceil(Int, length(leftindexsset) / Threads.nthreads())
+    # chunks = Iterators.partition(eachindex(leftindexsset),  chunklen)
+    # cache_dicts = Dict([tid => typeof(gbev.qf.cache)() for tid in Threads.threadpooltids(:default)])
+
+    # @assert length(chunks) <= Threads.nthreads()
+    # Threads.@threads :static for chunk in collect(chunks)
+    #         tid_act = Threads.threadid()
+    #         println("-- Thread $(tid_act)/$(Threads.nthreads()) is processing chunk of size $(length(chunk))x$(length(cindexset))x$(length(rightindexsset))")
+    #         for il in chunk
+    #             left_act = leftindexsset[il]
+    #             for ic in eachindex(cindexset)
+    #                 cen_act = cindexset[ic]
+    #                 for ir in eachindex(rightindexsset)
+    #                     idx = vcat(left_act, cen_act..., rightindexsset[ir])
+    #                     out[il, cindexset[ic]..., ir] = gbev.qf(idx, cache_dicts[tid_act])
+    #                 end
+    #             end
     #         end
+    #         println("   Cache dict $(tid_act)/$(Threads.nthreads()) has size: $(Base.summarysize(cache_dicts)/1.e6) MB")
+    #         flush(stdout)
     #     end
+
+    # # merge chached function values into cached function dict
+    # for (_, d) in cache_dicts
+    #     merge!(gbev.qf.cache, d)
     # end
 
-    # chunklen = max(div(length(leftindexsset), Threads.nthreads()), 1)
-    chunklen = ceil(Int, length(leftindexsset) / Threads.nthreads())
-    chunks = Iterators.partition(eachindex(leftindexsset),  chunklen)
-    # printstyled("== CHUNKS: $(length.(chunks)) ($(Threads.nthreads()) threads)\n"; color=:blue)
-    # printstyled("  MEM[GB]: gbev $(Base.summarysize(gbev) / 1024^3), of which qf $(Base.summarysize(gbev.qf) / 1024^3); out $(Base.summarysize(out) / 1024^3)\n"; color=:blue)
-    cache_dicts = Dict([tid => typeof(gbev.qf.cache)() for tid in Threads.threadpooltids(:default)])
-
-    @assert length(chunks) <= Threads.nthreads()
-    # TODO: Is there a better solution than using the :static schedule to make sure cache_dicts are not written
-    # by two threads at the same time? -> Use Locks?
-    Threads.@threads :static for chunk in collect(chunks)
-            tid_act = Threads.threadid()
-            println("-- Thread $(tid_act)/$(Threads.nthreads()) is processing chunk of size $(length(chunk))x$(length(cindexset))x$(length(rightindexsset))")
-            for il in chunk
-                left_act = leftindexsset[il]
-                for ic in eachindex(cindexset)
-                    cen_act = cindexset[ic]
-                    for ir in eachindex(rightindexsset)
-                        idx = vcat(left_act, cen_act..., rightindexsset[ir])
-                        out[il, cindexset[ic]..., ir] = gbev.qf(idx, cache_dicts[tid_act])
-                    end
-                end
-            end
-            println("   Cache dict $(tid_act)/$(Threads.nthreads()) has size: $(Base.summarysize(cache_dicts)/1.e6) MB")
-            flush(stdout)
-        end
-
-    # merge chached function values into cached function dict
-    for (_, d) in cache_dicts
-        merge!(gbev.qf.cache, d)
+    if DEBUG_TCI_KF_RAM()
+        println("\n----------------------------------------")
+        println("     Size of gbev: $(Base.summarysize(gbev))")
+        println("     Size of entire cache: $(Base.summarysize(gbev.qf.cache))")
+        report_mem(true)
     end
-    println("\n----------------------------------------")
-    println("     Size of gbev: $(Base.summarysize(gbev))")
-    println("     Size of entire cache: $(Base.summarysize(gbev.qf.cache))")
-    report_mem(true)
-    println("---- Evaluations for 2-site update done")
-    println("----------------------------------------\n")
+        println("---- Evaluations for 2-site update done (inner loop threading)")
+        println("----------------------------------------\n")
 
     return out
 end
