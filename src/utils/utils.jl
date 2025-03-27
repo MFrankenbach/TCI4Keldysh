@@ -1511,6 +1511,8 @@ function report_mem(do_gc=false)
     println("  Total system memory: $(Sys.total_memory() / 1024^2) MB")
     println("  Available system memory: $(Sys.free_memory() / 1024^2) MB")
     println("-----------------------------------")
+    flush(stdout)
+    flush(stderr)
 end
 
 function channel_K1_Ops(channel::String)
