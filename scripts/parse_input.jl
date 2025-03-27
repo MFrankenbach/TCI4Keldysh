@@ -116,6 +116,9 @@ end
 function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, folder, flavor_idx, channel, kwargs...)
     beta = TCI4Keldysh.dir_to_beta(PSFpath)
     outname = json_filename(jobtype, first(Rs), last(Rs), tolerance, beta; folder=folder)
+    if TCI4Keldysh.DEBUG_TCI_KF_RAM()
+        println("!!! Debugging RAM for KF calculations !!!")
+    end
 
     # prepare output with general info
     d = Dict()
@@ -531,6 +534,7 @@ function keldyshcore(
     ommax = 0.3183098861837907,
     unfoldingscheme=:fused,
     npivot=5,
+    batched=true,
     pivot_steps=nothing,
     serialize_tts=true,
     dump_path=nothing,
@@ -572,6 +576,7 @@ function keldyshcore(
     d["gamma"] = γ 
     # d["ommin"] = ωmin
     d["ommax"] = ommax
+    d["batched"] = batched
     d["iK"] = ik
     broadening_kwargs = filter_broadening_kwargs(;broadening_kwargs...)
     TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
@@ -579,12 +584,10 @@ function keldyshcore(
     tcikwargs = filter_tcikwargs(Dict(kwargs))
     d["tcikwargs"] = tcikwargs 
     d["unfoldingscheme"] = Symbol(unfoldingscheme)
-    TCI4Keldysh.logJSON(d, outname, folder)
-
-    @show kwargs
     evaluator_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
-    @show evaluator_kwargs
     d["FullCorrEvaluator_kwargs"] = evaluator_kwargs
+
+    TCI4Keldysh.logJSON(d, outname, folder)
 
     TCI4Keldysh.report_mem(true)
 
@@ -607,6 +610,7 @@ function keldyshcore(
                 emin=broadening_kwargs[:emin],
                 emax=broadening_kwargs[:emax],
                 npivot=npivot,
+                batched=maybeparse(Bool, batched),
                 pivot_step=pivot_steps[ir],
                 evaluator_kwargs...,
                 tcikwargs...

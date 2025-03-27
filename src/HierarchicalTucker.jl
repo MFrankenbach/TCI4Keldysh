@@ -99,7 +99,7 @@ total length: number of kernels + 1
 because reading columns is faster
 """
 struct HierarchicalTucker{D,T}
-    center::Array{Array{T,D}}
+    center::Array{Array{T,D},D}
     kernels::Legs{D,T}
     ids_cumulated::NTuple{D,Vector{Int}}
 
@@ -127,8 +127,13 @@ function HierarchicalTucker(
     return HierarchicalTucker(center_new, ntuple(i -> Matrix.(transpose.(Us[i])), D))
 end
 
+function findlast_typestable(f::Function, A::Vector{Int})
+    ret = findlast(f, A)
+    return isnothing(ret) ? 0 : ret 
+end
+
 function (ht::HierarchicalTucker{D,T})(idx::Vararg{Int,D}) where {D,T}
-    matrix_ids = ntuple(d -> findlast(id -> id<idx[d], ht.ids_cumulated[d]), D)
+    matrix_ids = ntuple(d -> findlast_typestable(id -> id<idx[d], ht.ids_cumulated[d]), D)
     idx_new = ntuple(d -> idx[d] - ht.ids_cumulated[d][matrix_ids[d]], D)
     legs_idx = ntuple(d -> view(ht.kernels[d][matrix_ids[d]], :, idx_new[d]), D)
     return eval_tucker(ht.center[matrix_ids...], legs_idx) 
@@ -304,11 +309,11 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
     end
 end
 
-function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) where {D}
+function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) :: Vector{ComplexF64} where {D}
     ret = zeros(ComplexF64, 1, 2^(D+1))
     for ip in axes(ev.Gps,2)    
         retarded = zeros(ComplexF64, D+1)
-        idx_int = ev.ωconvMats[ip] * SA[idx...] + ev.ωconvOffs[ip]
+        idx_int = ev.ωconvMats[ip] * SA{Int}[idx...] + ev.ωconvOffs[ip]
         for id in 1:D+1
             retarded[id] = ev.Gps[id,ip](idx_int...)
         end

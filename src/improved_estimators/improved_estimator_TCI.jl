@@ -3,7 +3,7 @@ using BenchmarkTools
 Compute interection vertex with symmetric improved estimators and TCI
 =#
 
-DEBUG_TCI_KF_RAM() = false
+DEBUG_TCI_KF_RAM() = true
 
 # ========== MATSUBARA
 
@@ -1313,8 +1313,8 @@ function Γ_core_TCI_KF(
 
     # print out memory usage
     if DEBUG_TCI_KF_RAM()
-        println("==== FULL CORRELATORS: MEMORY")
         report_mem(true)
+        println("==== FULL CORRELATORS: MEMORY")
         for i in eachindex(GFs)
             @show Base.summarysize(GFs[i]) / 1.e9
         end
@@ -1356,30 +1356,48 @@ function Γ_core_TCI_KF(
 
     if DEBUG_TCI_KF_RAM()
         println("==== CORE EVALUATOR: MEMORY")
-        report_mem()
+        report_mem(true)
         @show Base.summarysize(gev) / 1.e9
         println("==== MEMORY END")
     end
 
-    if KEV==MultipoleKFCEvaluator
-        # can free this
-        GFs = nothing
-    end
     # determine initial pivots
     tcigridsize = ntuple(i -> 2^TCI4Keldysh.grid_R(length(ωs_ext[i])) + 1,D)
     initpivots_ω = initpivots_general(tcigridsize, npivot, pivot_step; verbose=true)
-    GC.gc(true)
 
-    if batched
-        if isnothing(resume_path)
-            gbev = ΓcoreBatchEvaluator_KF(gev; unfoldingscheme=unfoldingscheme)
-        else
-            # load cached values
-            cache = load(joinpath(resume_path, gbevcache_filename()))[jld2_to_dictkey(gbevcache_filename())]
-            # load BatchEvaluator
-            gev = load(joinpath(resume_path, gev_filename()))[jld2_to_dictkey(gev_filename())]
-            gbev = ΓcoreBatchEvaluator_KF(gev; cache=cache, unfoldingscheme=unfoldingscheme)
+    if batched && isnothing(resume_path)
+        gbev = ΓcoreBatchEvaluator_KF(gev; unfoldingscheme=unfoldingscheme)
+        initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
+        t = @elapsed begin
+            tci, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
         end
+        if DEBUG_TCI_KF_RAM()
+            println("==== TT: MEMORY")
+            report_mem()
+            @show Base.summarysize(tci) / 1.e9
+            println("==== MEMORY END")
+        end
+        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tci, gbev.grid, gbev.qf)
+
+        if do_check_interpolation
+            Nhalf = 2^(R-1)
+            gridmin = max(1, Nhalf-2^5)
+            gridmax = min(2^R, Nhalf+2^5)
+            grid1D = gridmin:2:gridmax
+            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
+            maxerr = check_interpolation(qtt.tci, gbev, qgrid)
+            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        end
+
+
+    elseif batched && !isnothing(resume_path)
+        # load cached values
+        cache = load(joinpath(resume_path, gbevcache_filename()))[jld2_to_dictkey(gbevcache_filename())]
+        # load BatchEvaluator
+        gev = load(joinpath(resume_path, gev_filename()))[jld2_to_dictkey(gev_filename())]
+        gbev = ΓcoreBatchEvaluator_KF(gev; cache=cache, unfoldingscheme=unfoldingscheme)
 
         # it is enough to save ΓcoreEvaluator_KF
         if !isnothing(dump_path)
@@ -1388,17 +1406,10 @@ function Γ_core_TCI_KF(
         end
 
         initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
-        # t = @elapsed begin
-        #     tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
-        # end
 
         # create/load tensor train
-        if isnothing(resume_path)
-            tci = TCI.TensorCI2{ComplexF64}(gbev, gbev.qf.localdims, initpivots)
-        else
-            tci = load(joinpath(resume_path, tcigammacore_filename()))[jld2_to_dictkey(tcigammacore_filename())]
-            println("Loaded TCI with rank $(TCI.rank(tci))")
-        end
+        tci = load(joinpath(resume_path, tcigammacore_filename()))[jld2_to_dictkey(tcigammacore_filename())]
+        println("Loaded TCI with rank $(TCI.rank(tci))")
 
         # set tci kwargs related to global pivots, if not already specified
         if !haskey(kwargs_dict, :maxnglobalpivot)
@@ -1462,13 +1473,12 @@ function Γ_core_TCI_KF(
             println(" Maximum interpolation error: $maxerr (tol=$tol)")
         end
 
-        @info "quanticscrossinterpolate time (nocache, batched): $t"
-        return qtt
     else
         if !isnothing(dump_path) || !isnothing(resume_path)
             error("Checkpoints only implemented for batched Γcore in Keldysh")
         end
         t = @elapsed begin
+            # quanticscrossinterpolate automatically does caching
             qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(i -> 2^R, D), initpivots_ω; unfoldingscheme=unfoldingscheme, tcikwargs...)
         end
 
@@ -1478,15 +1488,16 @@ function Γ_core_TCI_KF(
             gridmax = min(2^R, Nhalf+2^5)
             grid1D = gridmin:2:gridmax
             grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
             maxerr = check_interpolation(qtt, gev, grid)
             tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
             println(" Maximum interpolation error: $maxerr (tol=$tol)")
         end
 
-        @info "quanticscrossinterpolate time (nocache, not batched): $t"
-        return qtt
     end
 
+    @info "quanticscrossinterpolate time (nocache, batched): $t"
+    return qtt
 end
 
 """
@@ -1774,7 +1785,15 @@ struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
         # GFevs = [FullCorrEvaluator_KF(GFs[i]; cutoff=cutoff) for i in eachindex(GFs)]
-        GFevs = [KEV_(GFs[i]; kwargs...) for i in eachindex(GFs)]
+        GFevs::Vector{KEV_} = Vector{KEV_}(undef, length(GFs))
+            if DEBUG_TCI_KF_RAM()
+                for i in eachindex(GFs)
+                    GFevs[i] = KEV_(GFs[i]; kwargs...)
+                    report_mem(true)
+                end
+            else
+                GFevs = [KEV_(GFs[i]; kwargs...) for i in eachindex(GFs)]
+            end
         X = get_PauliX()
         iK_tuple = KF_idx(iK,3)
 
@@ -2126,6 +2145,11 @@ struct ΓEvaluator_KF
             broadening_kwargs...
             )
 
+        if DEBUG_TCI_KF_RAM()
+            println("---- core evaluator done")
+            report_mem(true)
+        end
+
         # K2
         K2s = Vector{K2Evaluator_KF}(undef, 6)
         K2offsets = Vector{Vector{Int}}(undef, 2)
@@ -2153,18 +2177,35 @@ struct ΓEvaluator_KF
                 cutoff=K2cutoff,
                 broadening_kwargs...
             )
+            
+            if DEBUG_TCI_KF_RAM()
+                println("---- K2$(ch) (noprime) done")
+                report_mem(true)
+            end
+
             K2p = K2Evaluator_KF(
                 PSFpath, omK2p, flavor_idx, ch, true;
                 useFDR=useFDR,
                 cutoff=K2cutoff,
                 broadening_kwargs...
             )
+
+            if DEBUG_TCI_KF_RAM()
+                println("---- K2$(ch) (prime) done")
+                report_mem(true)
+            end
+
             K2s[2*ic-1] = K2
             K2s[2*ic] = K2p
             # iK
             push!(iKK2, merge_iK_K2(iK_tuple, ch, false))
             push!(iKK2, merge_iK_K2(iK_tuple, ch, true))
             ic += 1
+        end
+
+        if DEBUG_TCI_KF_RAM()
+            println("---- K2 done")
+            report_mem(true)
         end
 
         # precompute K1s
@@ -2196,24 +2237,10 @@ struct ΓEvaluator_KF
             ic += 1
         end
 
-        # println("\n==== FREQUENCY CONVENTIONS")
-        # println("Foreign channels: $foreign_channels")
-        # println("\n")
-        # println("Foreign channels: ")
-        # for m in K1changeMats
-        #     display(m)
-        # end
-        # println("\n")
-        # println("Foreign channels:")
-        # for m in K2changeMats
-        #     display(m)
-        # end
-        # println("\n")
-        # println("Foreign channels:")
-        # for m in K2primechangeMats
-        #     display(m)
-        # end
-        # println("==== FREQUENCY CONVENTIONS END\n")
+        if DEBUG_TCI_KF_RAM()
+            println("---- K1 done")
+            report_mem(true)
+        end
 
         # bare interaction
         Γbare = Γbare_KF(PSFpath, flavor_idx)[iK_tuple...]
@@ -2769,9 +2796,9 @@ function (gbev::CachedBatchEvaluator{T})(
     # by two threads at the same time? -> Use Locks?
     Threads.@threads :static for chunk in collect(chunks)
             tid_act = Threads.threadid()
-            # println("-- Thread $tid_act is processing chunk of size $(length(chunk))")
+            println("-- Thread $(tid_act)/$(Threads.nthreads()) is processing chunk of size $(length(chunk))x$(length(cindexset))x$(length(rightindexsset))")
             for il in chunk
-                    left_act = leftindexsset[il]
+                left_act = leftindexsset[il]
                 for ic in eachindex(cindexset)
                     cen_act = cindexset[ic]
                     for ir in eachindex(rightindexsset)
@@ -2780,12 +2807,20 @@ function (gbev::CachedBatchEvaluator{T})(
                     end
                 end
             end
+            println("   Cache dict $(tid_act)/$(Threads.nthreads()) has size: $(Base.summarysize(cache_dicts)/1.e6) MB")
+            flush(stdout)
         end
 
     # merge chached function values into cached function dict
     for (_, d) in cache_dicts
         merge!(gbev.qf.cache, d)
     end
+    println("\n----------------------------------------")
+    println("     Size of gbev: $(Base.summarysize(gbev))")
+    println("     Size of entire cache: $(Base.summarysize(gbev.qf.cache))")
+    report_mem(true)
+    println("---- Evaluations for 2-site update done")
+    println("----------------------------------------\n")
 
     return out
 end
