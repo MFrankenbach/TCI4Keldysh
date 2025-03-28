@@ -8,26 +8,24 @@ using ProfileCanvas
 using Serialization
 
 function allocations_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     # trigger compilation
     x = gev(1, 1, 1);
     println("-- Allocations: ")
-    println("gev: $((@allocated gev(101, 100, 99)) / 1e6)")
+    println("gev: $((@allocated gev(50,53,47)) / 1e6)")
     println("gev.GFevs: ")
     for i in eachindex(gev.GFevs)
-        println("$i: ", (@allocated gev.GFevs[i](101, 100, 99)) / 1.e6)
+        println("$i: ", (@allocated gev.GFevs[i](50,53,47)) / 1.e6)
     end
     println("---------------")
 end
 
 function benchmark_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     R = 8
     # b = @benchmark $gev(rand(1:2^$R, 3)...)
     b = @benchmark $gev(127, 128, 126)
     display(b)
-    println("--------------------------------")
-    @allocated gev(51,53,46)
 end
 
 function singlethreaded_eval(N::Int=10^4)
@@ -92,10 +90,9 @@ end
 
 
 function profile_allocations_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     # trigger compilation
     x = gev(1, 1, 1);
-    R = 8
     # Profile.Allocs.clear()
     # Profile.Allocs.@profile begin
     @profview gev(101, 100, 99)
@@ -103,7 +100,7 @@ function profile_allocations_gev()
 end
 
 function profile_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev2.serialized"))
     R = 8
     Profile.clear()
     @profile begin
@@ -136,7 +133,7 @@ end
 
 function type_instability_gev()
     # force compilation
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     println("==== ΓcoreEvaluator_KF")
     x = gev(1,1,1)
     # print(@report_opt gev(50,53,47))
@@ -146,4 +143,30 @@ function type_instability_gev()
     print(@code_warntype gev.GFevs[1](50,53,47))
     println("\n\n==== HierarchicalTucker")
     print(@code_warntype gev.GFevs[1].Gps[1,1](50,53,47))
+end
+
+function gen_ΓcoreEvaluator_KF()
+
+    basepath = "SIAM_u=0.50"
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    iK = 6
+    R = 8
+    ommax = 0.3
+    channel = "p"
+    flavor = 1
+    ωs_ext = ntuple(_->TCI4Keldysh.KF_grid_bos(ommax, R), 3)
+    broadening_kwargs = TCI4Keldysh.read_all_broadening_params(basepath; channel=channel)
+    broadening_kwargs[:estep] = 10
+    gev =  TCI4Keldysh.ΓcoreEvaluator_KF(
+        PSFpath,
+        iK,
+        ωs_ext,
+        TCI4Keldysh.MultipoleKFCEvaluator{3},
+        ;
+        channel=channel,
+        flavor_idx=flavor,
+        KEV_kwargs=Dict(:cutoff => 1.e-5, :nlevel => 4),
+        useFDR=false,
+        broadening_kwargs...)
+    serialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"), gev)
 end

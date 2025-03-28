@@ -151,7 +151,7 @@ end
         A = randn(rng, ComplexF64, (N,N+2))
         legs = [randn(rng, ComplexF64, size(A,i)) for i in 1:ndims(A)]
         e2 = TCI4Keldysh.eval_tucker(A, legs)
-        e2test = TCI4Keldysh.eval_tucker_mat(A, legs)
+        e2test = TCI4Keldysh.eval_tucker_mat(A, Tuple(legs))
         @test abs(e2 - e2test) < 1.e-10
     end
 

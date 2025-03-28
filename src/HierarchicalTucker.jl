@@ -279,7 +279,8 @@ decompositions
 struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
     Gps::Matrix{HierarchicalTucker{D,ComplexF64}}
     ωconvOffs::Vector{SVector{D,Int}}
-    ωconvMats::Vector{SMatrix{D,D,Int}}
+    # SMatrix needs four (!) types to be concrete: {S1,S2,T,L}
+    ωconvMats::Vector{Matrix{Int}}
     ωs_ext::NTuple{D,Vector{Float64}}
     GR_to_GK::Array{Float64,3}
 
@@ -287,7 +288,7 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
         nGps = GF.NGps
         Gps_ = Matrix{HierarchicalTucker{D,ComplexF64}}(undef, D+1, nGps)
         ωconvOffs = Vector{SVector{D,Int}}(undef, nGps)
-        ωconvMats = Vector{SMatrix{D,D,Int}}(undef, nGps)
+        ωconvMats = Vector{Matrix{Int}}(undef, nGps)
         Threads.@threads for ip in axes(GF.Gps,1)
             vprintln(" Processing partial correlator no. $ip/$nGps")
             for l in axes(GF.Gps,2)
@@ -311,14 +312,15 @@ end
 
 function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) :: Vector{ComplexF64} where {D}
     ret = zeros(ComplexF64, 1, 2^(D+1))
+    retarded = zeros(ComplexF64, D+1)
+    # idx_int = MVector{D,Int}(0,0,0)
     for ip in axes(ev.Gps,2)    
-        retarded = zeros(ComplexF64, D+1)
         idx_int = ev.ωconvMats[ip] * SA{Int}[idx...] + ev.ωconvOffs[ip]
         for id in 1:D+1
             retarded[id] = ev.Gps[id,ip](idx_int...)
         end
         # transform to Keldysh
-        ret += transpose(retarded) * ev.GR_to_GK[:,:,ip]
+        ret .+= transpose(retarded) * view(ev.GR_to_GK, :, :, ip)
     end
     return vec(ret)
 end

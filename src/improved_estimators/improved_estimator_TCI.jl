@@ -1756,13 +1756,22 @@ function (gev::ΓEvaluator_MF)(w::Vararg{Int,3})
     return ret + gev.Γbare
 end
 
+function create(::Type{MultipoleKFCEvaluator{3}}, GF::FullCorrelator_KF{3}; kwargs...)
+    return MultipoleKFCEvaluator(GF; kwargs...)
+end
+
+function create(::Type{KFCEvaluator}, GF::FullCorrelator_KF{3}; kwargs...)
+    return KFCEvaluator(GF; kwargs...)
+end
+
 
 """
 Structure to evaluate Keldysh core vertex, i.e., wrap the required setup and capture relevant data.
 * sev: callable object with signature sev(i::Int, is_incoming::Bool, w::Vararg{Int,D}) to evaluate self-energy
 on i'th component of transformed frequency w
 """
-struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
+struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF{3,ComplexF64}}
+# struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
     # GFevs::Vector{FullCorrEvaluator_KF{3,T}}
     GFevs::Vector{KEV}
     Ncorrs::Int # number of full correlators
@@ -1785,14 +1794,14 @@ struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
         # GFevs = [FullCorrEvaluator_KF(GFs[i]; cutoff=cutoff) for i in eachindex(GFs)]
-        GFevs::Vector{KEV_} = Vector{KEV_}(undef, length(GFs))
+        GFevs = Vector{KEV_}(undef, length(GFs))
             if DEBUG_TCI_KF_RAM()
                 for i in eachindex(GFs)
-                    GFevs[i] = KEV_(GFs[i]; kwargs...)
+                    GFevs[i] = create(KEV_, GFs[i]; kwargs...)
                     report_mem(true)
                 end
             else
-                GFevs = [KEV_(GFs[i]; kwargs...) for i in eachindex(GFs)]
+                GFevs = [create(KEV_, GFs[i]; kwargs...) for i in eachindex(GFs)]
             end
         X = get_PauliX()
         iK_tuple = KF_idx(iK,3)
@@ -2072,12 +2081,12 @@ end
 """
 Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
 """
-function (gev::ΓcoreEvaluator_KF{T,KEV})(w::Vararg{Int,3}) where {T,KEV}
+function (gev::ΓcoreEvaluator_KF{T,KEV})(w::Vararg{Int,3}) where {T,KEV<:AbstractCorrEvaluator_KF{3,ComplexF64}}
     addvals = Vector{T}(undef, gev.Ncorrs)
+    val_legs = Vector{Vector{T}}(undef, length(gev.is_incoming))
     for i in 1:gev.Ncorrs
         # first all Keldysh indices
         res = reshape(gev.GFevs[i](w...), ntuple(_->2, 4))
-        val_legs = Vector{Vector{T}}(undef, length(gev.is_incoming))
         for il in eachindex(gev.is_incoming)
             mat = if gev.letter_combinations[i][il]==='F'
                     -gev.sev(il, gev.is_incoming[il], w...)
