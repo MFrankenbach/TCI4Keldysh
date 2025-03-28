@@ -1238,269 +1238,6 @@ function tcigammacore_filename()
 end
 
 """
-Compute Keldysh core vertex for single Keldysh component
-
-* iK: Keldysh component
-* sigmak, γ: broadening parameters
-* batched: Use batched evaluator
-* do_check_interpolation: Check interpolation on small grid at the end, report error
-* dump_path: set to save intermediate results every couple of sweeps
-* resume_path: set to resume calculation based on intermediate results
-* npivot: We have npivot^3 initial pivots
-* pivot_step: Pivots are on a npivot^3 equidistant grid with this step size, centered around the frequency grid centre
-"""
-function Γ_core_TCI_KF(
-    PSFpath::String,
-    R::Int,
-    iK::Int,
-    ωmax::Float64;
-    sigmak::Vector{Float64}, # broadening
-    γ::Float64,
-    emin::Float64=1.e-12,
-    emax::Float64=1.e4,
-    estep::Int=_ESTEP_DEFAULT(),
-    # cache_center::Int=0, # maybe later: cache central values
-    ωconvMat::Matrix{Int},
-    T::Float64,
-    flavor_idx::Int=1,
-    dump_path=nothing,
-    resume_path=nothing,
-    batched=true,
-    do_check_interpolation=true,
-    useFDR::Bool=USE_FDR_SE(),
-    npivot::Int=5,
-    pivot_step::Int=div(2^R, npivot-1),
-    unfoldingscheme=:interleaved,
-    KEV::Type=KFCEvaluator,
-    coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6),
-    tcikwargs...
-    )
-
-    @show KEV
-    @show coreEvaluator_kwargs
-
-    broadening_kwargs = Dict([(:emin, emin), (:emax, emax), (:estep, estep)])
-
-    # make frequency grid
-    D = size(ωconvMat, 2)
-    @assert D==3
-    ωs_ext = KF_grid(ωmax, R, D)
-
-    # all 16 4-point correlators
-    letters = ["F", "Q"]
-    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
-    op_labels = ("1", "1dag", "3", "3dag")
-    op_labels_symm = ("3", "3dag", "1", "1dag")
-    is_incoming = (false, true, false, true)
-
-    # create correlator objects
-    Ncorrs = length(letter_combinations)
-    GFs = Vector{FullCorrelator_KF{D}}(undef, Ncorrs)
-    PSFpath_4pt = joinpath(PSFpath, "4pt")
-    filelist = readdir(PSFpath_4pt)
-    for l in 1:Ncorrs
-        letts = letter_combinations[l]
-        vprintln("letts: $letts", 2)
-        ops = [letts[i]*op_labels[i] for i in 1:4]
-        if !any(parse_Ops_to_filename(ops) .== filelist)
-            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
-        end
-        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...)
-        if DEBUG_TCI_KF_RAM()
-            report_mem()
-        end
-    end
-
-    # print out memory usage
-    if DEBUG_TCI_KF_RAM()
-        report_mem(true)
-        println("==== FULL CORRELATORS: MEMORY")
-        for i in eachindex(GFs)
-            @show Base.summarysize(GFs[i]) / 1.e9
-        end
-        println("==== MEMORY END")
-    end
-
-    # evaluate self-energy
-    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
-    @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
-    ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
-    Σω_grid = KF_grid_fer(2*ωmax, R+1)
-    # Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
-    (Σ_L,Σ_R) = if useFDR
-        calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
-    else
-        calc_Σ_KF_aIE(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
-    end
-
-    if DEBUG_TCI_KF_RAM()
-        println("==== SELF-ENERGIES: MEMORY")
-        @show Base.summarysize((Σ_L, Σ_R)) / 1.e9
-        println("==== MEMORY END")
-    end
-
-    # frequency grid offset for self-energy
-    ΣωconvMat = incoming_trafo * ωconvMat
-    corner_low = [first(ωs_ext[i]) for i in 1:D]
-    corner_idx = ones(Int, D)
-    corner_image = ΣωconvMat * corner_low
-    idx_image = ΣωconvMat * corner_idx
-    desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
-    ωconvOff = desired_idx .- idx_image
-
-    sev = SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
-
-    kwargs_dict = Dict{Symbol,Any}(tcikwargs)
-    tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
-    gev = ΓcoreEvaluator_KF(GFs, iK, sev, KEV; coreEvaluator_kwargs...)
-
-    if DEBUG_TCI_KF_RAM()
-        println("==== CORE EVALUATOR: MEMORY")
-        report_mem(true)
-        @show Base.summarysize(gev) / 1.e9
-        println("==== MEMORY END")
-    end
-
-    # determine initial pivots
-    tcigridsize = ntuple(i -> 2^TCI4Keldysh.grid_R(length(ωs_ext[i])) + 1,D)
-    initpivots_ω = initpivots_general(tcigridsize, npivot, pivot_step; verbose=true)
-
-    if batched && isnothing(resume_path)
-        gbev = ΓcoreBatchEvaluator_KF(gev; unfoldingscheme=unfoldingscheme)
-        initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
-        t = @elapsed begin
-            tci, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
-        end
-        if DEBUG_TCI_KF_RAM()
-            println("==== TT: MEMORY")
-            report_mem()
-            @show Base.summarysize(tci) / 1.e9
-            println("==== MEMORY END")
-        end
-        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tci, gbev.grid, gbev.qf)
-
-        if do_check_interpolation
-            Nhalf = 2^(R-1)
-            gridmin = max(1, Nhalf-2^5)
-            gridmax = min(2^R, Nhalf+2^5)
-            grid1D = gridmin:2:gridmax
-            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
-            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
-            maxerr = check_interpolation(qtt.tci, gbev, qgrid)
-            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-            println(" Maximum interpolation error: $maxerr (tol=$tol)")
-        end
-
-
-    elseif batched && !isnothing(resume_path)
-        # load cached values
-        cache = load(joinpath(resume_path, gbevcache_filename()))[jld2_to_dictkey(gbevcache_filename())]
-        # load BatchEvaluator
-        gev = load(joinpath(resume_path, gev_filename()))[jld2_to_dictkey(gev_filename())]
-        gbev = ΓcoreBatchEvaluator_KF(gev; cache=cache, unfoldingscheme=unfoldingscheme)
-
-        # it is enough to save ΓcoreEvaluator_KF
-        if !isnothing(dump_path)
-            file = File(format"JLD2", joinpath(dump_path, gev_filename()))
-            save(file, jld2_to_dictkey(gev_filename()), gev)
-        end
-
-        initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
-
-        # create/load tensor train
-        tci = load(joinpath(resume_path, tcigammacore_filename()))[jld2_to_dictkey(tcigammacore_filename())]
-        println("Loaded TCI with rank $(TCI.rank(tci))")
-
-        # set tci kwargs related to global pivots, if not already specified
-        if !haskey(kwargs_dict, :maxnglobalpivot)
-            kwargs_dict[:maxnglobalpivot]=10
-        end
-        if !haskey(kwargs_dict, :nsearchglobalpivot)
-            kwargs_dict[:nsearchglobalpivot]=100
-        end
-        if !haskey(kwargs_dict, :tolmarginglobalsearch)
-            kwargs_dict[:tolmarginglobalsearch]=3.0
-        end
-
-        maxiter = haskey(kwargs_dict, :maxiter) ? kwargs_dict[:maxiter] : 80
-        # save result every ncheckpoint sweeps if dump_path is given
-        ncheckpoint = isnothing(dump_path) ? maxiter : 3  
-        converged = false
-        if !isnothing(dump_path)
-            kwargs_dict[:maxiter] = ncheckpoint
-        else
-            kwargs_dict[:maxiter] = maxiter
-        end
-
-        if DEBUG_TCI_KF_RAM()
-            println("==== TT: MEMORY")
-            report_mem()
-            @show Base.summarysize(tci) / 1.e9
-            println("==== MEMORY END")
-        end
-        # run
-        t = @elapsed begin
-            for icheckpoint in 1:Int(ceil(maxiter/ncheckpoint))
-                ranks, errors = TCI.optimize!(tci, gbev; kwargs_dict...)
-                println("  After $((icheckpoint-1)*ncheckpoint + length(ranks)) sweeps: ranks=$ranks, errors=$errors")
-                if _tciconverged(ranks, errors, tolerance, 3)
-                    converged = true
-                    println(" ==== CONVERGED")
-                    break
-                elseif !isnothing(dump_path)
-                    # save checkpoint
-                    filetci = File(format"JLD2", joinpath(dump_path, tcigammacore_filename()))
-                    save(filetci, jld2_to_dictkey(tcigammacore_filename()), tci)
-                    filecache = File(format"JLD2", joinpath(dump_path, gbevcache_filename()))
-                    save(filecache, jld2_to_dictkey(gbevcache_filename()), gbev.qf.cache)
-                end
-            end
-        end
-        if !converged
-            @warn "TCI did not converge within $maxiter sweeps!"
-        end
-        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tci, gbev.grid, gbev.qf)
-
-        if do_check_interpolation
-            Nhalf = 2^(R-1)
-            gridmin = max(1, Nhalf-2^5)
-            gridmax = min(2^R, Nhalf+2^5)
-            grid1D = gridmin:2:gridmax
-            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
-            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
-            maxerr = check_interpolation(qtt.tci, gbev, qgrid)
-            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-            println(" Maximum interpolation error: $maxerr (tol=$tol)")
-        end
-
-    else
-        if !isnothing(dump_path) || !isnothing(resume_path)
-            error("Checkpoints only implemented for batched Γcore in Keldysh")
-        end
-        t = @elapsed begin
-            # quanticscrossinterpolate automatically does caching
-            qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(i -> 2^R, D), initpivots_ω; unfoldingscheme=unfoldingscheme, tcikwargs...)
-        end
-
-        if do_check_interpolation
-            Nhalf = 2^(R-1)
-            gridmin = max(1, Nhalf-2^5)
-            gridmax = min(2^R, Nhalf+2^5)
-            grid1D = gridmin:2:gridmax
-            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
-            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
-            maxerr = check_interpolation(qtt, gev, grid)
-            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-            println(" Maximum interpolation error: $maxerr (tol=$tol)")
-        end
-
-    end
-
-    @info "quanticscrossinterpolate time (nocache, batched): $t"
-    return qtt
-end
-
-"""
 To evaluate Matsubara core vertex, wrapping the required setup and relevant data.
 * sev: callable with signature sev(i::Int, w::Vararg{Int,D}) to evaluate self-energy
 on i'th component of transformed frequency w
@@ -1944,6 +1681,305 @@ function eval_Γcore_general(GFevs, sev, is_incoming::NTuple{4,Bool}, letter_com
     end
     return sum(addvals)
 end
+
+"""
+Compute Keldysh core vertex for single Keldysh component
+
+* iK: Keldysh component
+* sigmak, γ: broadening parameters
+* batched: Use batched evaluator
+* do_check_interpolation: Check interpolation on small grid at the end, report error
+* dump_path: set to save intermediate results every couple of sweeps
+* resume_path: set to resume calculation based on intermediate results
+* npivot: We have npivot^3 initial pivots
+* pivot_step: Pivots are on a npivot^3 equidistant grid with this step size, centered around the frequency grid centre
+"""
+function Γ_core_TCI_KF(
+    PSFpath::String,
+    R::Int,
+    iK::Int,
+    ωmax::Float64;
+    sigmak::Vector{Float64}, # broadening
+    γ::Float64,
+    emin::Float64=1.e-12,
+    emax::Float64=1.e4,
+    estep::Int=_ESTEP_DEFAULT(),
+    # cache_center::Int=0, # maybe later: cache central values
+    ωconvMat::Matrix{Int},
+    T::Float64,
+    flavor_idx::Int=1,
+    dump_path=nothing,
+    resume_path=nothing,
+    batched=true,
+    do_check_interpolation=true,
+    useFDR::Bool=USE_FDR_SE(),
+    npivot::Int=5,
+    pivot_step::Int=div(2^R, npivot-1),
+    unfoldingscheme=:interleaved,
+    KEV::Type=KFCEvaluator,
+    coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6),
+    tcikwargs...
+    )
+
+    @show KEV
+    @show coreEvaluator_kwargs
+
+    broadening_kwargs = Dict([(:emin, emin), (:emax, emax), (:estep, estep)])
+
+    # make frequency grid
+    D = size(ωconvMat, 2)
+    @assert D==3
+    ωs_ext = KF_grid(ωmax, R, D)
+
+    # all 16 4-point correlators
+    letters = ["F", "Q"]
+    letter_combinations = kron(kron(letters, letters), kron(letters, letters))
+    op_labels = ("1", "1dag", "3", "3dag")
+    op_labels_symm = ("3", "3dag", "1", "1dag")
+    is_incoming = (false, true, false, true)
+
+    # create correlator objects
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{FullCorrelator_KF{D}}(undef, Ncorrs)
+    PSFpath_4pt = joinpath(PSFpath, "4pt")
+    filelist = readdir(PSFpath_4pt)
+    for l in 1:Ncorrs
+        letts = letter_combinations[l]
+        vprintln("letts: $letts", 2)
+        ops = [letts[i]*op_labels[i] for i in 1:4]
+        if !any(parse_Ops_to_filename(ops) .== filelist)
+            ops = [letts[i]*op_labels_symm[i] for i in 1:4]
+        end
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...)
+        if DEBUG_TCI_KF_RAM()
+            report_mem()
+        end
+    end
+
+    # print out memory usage
+    if DEBUG_TCI_KF_RAM()
+        report_mem(true)
+        println("==== FULL CORRELATORS: MEMORY")
+        for i in eachindex(GFs)
+            @show Base.summarysize(GFs[i]) / 1.e9
+        end
+        println("==== MEMORY END")
+    end
+
+    # evaluate self-energy
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
+    ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
+    Σω_grid = KF_grid_fer(2*ωmax, R+1)
+    # Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
+    (Σ_L,Σ_R) = if useFDR
+        calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
+    else
+        calc_Σ_KF_aIE(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
+    end
+
+    if DEBUG_TCI_KF_RAM()
+        println("==== SELF-ENERGIES: MEMORY")
+        @show Base.summarysize((Σ_L, Σ_R)) / 1.e9
+        println("==== MEMORY END")
+    end
+
+    # frequency grid offset for self-energy
+    ΣωconvMat = incoming_trafo * ωconvMat
+    corner_low = [first(ωs_ext[i]) for i in 1:D]
+    corner_idx = ones(Int, D)
+    corner_image = ΣωconvMat * corner_low
+    idx_image = ΣωconvMat * corner_idx
+    desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
+    ωconvOff = desired_idx .- idx_image
+
+    sev = SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
+
+    gev = ΓcoreEvaluator_KF(GFs, iK, sev, KEV; coreEvaluator_kwargs...)
+    if KEV==MultipoleKFCEvaluator{3}
+        GFs = nothing
+    end
+    return Γ_core_TCI_KF(
+        gev,
+        ωs_ext,
+        R;
+        dump_path=dump_path,
+        resume_path=resume_path,
+        batched=batched,
+        do_check_interpolation=do_check_interpolation,
+        npivot=npivot,
+        pivot_step=pivot_step,
+        unfoldingscheme=unfoldingscheme,
+        tcikwargs...
+    )
+end
+
+"""
+To introduce function barrier and allow for garbage collection
+"""
+function Γ_core_TCI_KF(
+    gev::ΓcoreEvaluator_KF,
+    ωs_ext::NTuple{3,Vector{Float64}},
+    R::Int;
+    dump_path=nothing,
+    resume_path=nothing,
+    batched=true,
+    do_check_interpolation=true,
+    npivot::Int=5,
+    pivot_step::Int=div(2^R, npivot-1),
+    unfoldingscheme=:interleaved,
+    tcikwargs...
+    )
+
+    kwargs_dict = Dict(tcikwargs)
+    tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
+
+    println("==== CORE EVALUATOR: MEMORY")
+    report_mem(true)
+    @show Base.summarysize(gev) / 1.e9
+    println("==== MEMORY END")
+
+    # determine initial pivots
+    D = 3
+    tcigridsize = ntuple(i -> 2^TCI4Keldysh.grid_R(length(ωs_ext[i])) + 1,D)
+    initpivots_ω = initpivots_general(tcigridsize, npivot, pivot_step; verbose=true)
+
+    if batched && isnothing(resume_path)
+        gbev = ΓcoreBatchEvaluator_KF(gev; unfoldingscheme=unfoldingscheme)
+        initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
+        t = @elapsed begin
+            tci, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
+        end
+        if DEBUG_TCI_KF_RAM()
+            println("==== TT: MEMORY")
+            report_mem()
+            @show Base.summarysize(tci) / 1.e9
+            println("==== MEMORY END")
+        end
+        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tci, gbev.grid, gbev.qf)
+
+        if do_check_interpolation
+            Nhalf = 2^(R-1)
+            gridmin = max(1, Nhalf-2^5)
+            gridmax = min(2^R, Nhalf+2^5)
+            grid1D = gridmin:2:gridmax
+            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
+            maxerr = check_interpolation(qtt.tci, gbev, qgrid)
+            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        end
+
+
+    elseif batched && !isnothing(resume_path)
+        # load cached values
+        cache = load(joinpath(resume_path, gbevcache_filename()))[jld2_to_dictkey(gbevcache_filename())]
+        # load BatchEvaluator
+        gev = load(joinpath(resume_path, gev_filename()))[jld2_to_dictkey(gev_filename())]
+        gbev = ΓcoreBatchEvaluator_KF(gev; cache=cache, unfoldingscheme=unfoldingscheme)
+
+        # it is enough to save ΓcoreEvaluator_KF
+        if !isnothing(dump_path)
+            file = File(format"JLD2", joinpath(dump_path, gev_filename()))
+            save(file, jld2_to_dictkey(gev_filename()), gev)
+        end
+
+        initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
+
+        # create/load tensor train
+        tci = load(joinpath(resume_path, tcigammacore_filename()))[jld2_to_dictkey(tcigammacore_filename())]
+        println("Loaded TCI with rank $(TCI.rank(tci))")
+
+        # set tci kwargs related to global pivots, if not already specified
+        if !haskey(kwargs_dict, :maxnglobalpivot)
+            kwargs_dict[:maxnglobalpivot]=10
+        end
+        if !haskey(kwargs_dict, :nsearchglobalpivot)
+            kwargs_dict[:nsearchglobalpivot]=100
+        end
+        if !haskey(kwargs_dict, :tolmarginglobalsearch)
+            kwargs_dict[:tolmarginglobalsearch]=3.0
+        end
+
+        maxiter = haskey(kwargs_dict, :maxiter) ? kwargs_dict[:maxiter] : 80
+        # save result every ncheckpoint sweeps if dump_path is given
+        ncheckpoint = isnothing(dump_path) ? maxiter : 3  
+        converged = false
+        if !isnothing(dump_path)
+            kwargs_dict[:maxiter] = ncheckpoint
+        else
+            kwargs_dict[:maxiter] = maxiter
+        end
+
+        if DEBUG_TCI_KF_RAM()
+            println("==== TT: MEMORY")
+            report_mem()
+            @show Base.summarysize(tci) / 1.e9
+            println("==== MEMORY END")
+        end
+        # run
+        t = @elapsed begin
+            for icheckpoint in 1:Int(ceil(maxiter/ncheckpoint))
+                ranks, errors = TCI.optimize!(tci, gbev; kwargs_dict...)
+                println("  After $((icheckpoint-1)*ncheckpoint + length(ranks)) sweeps: ranks=$ranks, errors=$errors")
+                if _tciconverged(ranks, errors, tolerance, 3)
+                    converged = true
+                    println(" ==== CONVERGED")
+                    break
+                elseif !isnothing(dump_path)
+                    # save checkpoint
+                    filetci = File(format"JLD2", joinpath(dump_path, tcigammacore_filename()))
+                    save(filetci, jld2_to_dictkey(tcigammacore_filename()), tci)
+                    filecache = File(format"JLD2", joinpath(dump_path, gbevcache_filename()))
+                    save(filecache, jld2_to_dictkey(gbevcache_filename()), gbev.qf.cache)
+                end
+            end
+        end
+        if !converged
+            @warn "TCI did not converge within $maxiter sweeps!"
+        end
+        qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tci, gbev.grid, gbev.qf)
+
+        if do_check_interpolation
+            Nhalf = 2^(R-1)
+            gridmin = max(1, Nhalf-2^5)
+            gridmax = min(2^R, Nhalf+2^5)
+            grid1D = gridmin:2:gridmax
+            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
+            maxerr = check_interpolation(qtt.tci, gbev, qgrid)
+            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        end
+
+    else
+        if !isnothing(dump_path) || !isnothing(resume_path)
+            error("Checkpoints only implemented for batched Γcore in Keldysh")
+        end
+        t = @elapsed begin
+            # quanticscrossinterpolate automatically does caching
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, gev, ntuple(i -> 2^R, D), initpivots_ω; unfoldingscheme=unfoldingscheme, tcikwargs...)
+        end
+
+        if do_check_interpolation
+            Nhalf = 2^(R-1)
+            gridmin = max(1, Nhalf-2^5)
+            gridmax = min(2^R, Nhalf+2^5)
+            grid1D = gridmin:2:gridmax
+            grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+            qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
+            maxerr = check_interpolation(qtt, gev, grid)
+            tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        end
+
+    end
+
+    @info "quanticscrossinterpolate time (nocache, batched): $t"
+    return qtt
+    
+end
+
 
 function test_eval_Γcore_general()
     base_path = "SIAM_u=0.50"
