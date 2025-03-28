@@ -63,6 +63,7 @@ DEBUG_RAM() = false
 
 include("TuckerDecomposition.jl")
 include("utils/utils.jl")
+include("utils/cubicspline.jl")
 include("broadening/broaden_1D.jl")
 include("broadening/broaden_mp.jl")
 include("broadening/broaden_logGauss.jl")

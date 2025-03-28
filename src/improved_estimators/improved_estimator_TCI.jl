@@ -2823,11 +2823,13 @@ function (gbev::CachedBatchEvaluator{T})(
     out = Array{T,M+2}(undef, (length(leftindexsset), ntuple(i->gbev.localdims[nleft+i],M)..., length(rightindexsset)))
 
     # populate Pi-tensor
-    println("-- Single evaluation:")
-        @show cindexset[1]
-        v = vcat(leftindexsset[1], cindexset[1]..., rightindexsset[1])
-        @time begin gbev(v) end
-    println("---------------------")
+    if DEBUG_TCI_KF_RAM()
+        println("-- Single evaluation:")
+            @show cindexset[1]
+            v = vcat(leftindexsset[1], cindexset[1]..., rightindexsset[1])
+            @time begin gbev(v) end
+        println("---------------------")
+    end
     Threads.@threads for il in eachindex(leftindexsset)
         left_act = leftindexsset[il]
         for ic in eachindex(cindexset)
@@ -2884,9 +2886,9 @@ function (gbev::CachedBatchEvaluator{T})(
         println("     Size of gbev: $(Base.summarysize(gbev))")
         println("     Size of entire cache: $(Base.summarysize(gbev.qf.cache))")
         report_mem(true)
-    end
-        println("---- Evaluations for 2-site update done (inner loop threading)")
+        println("---- Evaluations for 2-site update done")
         println("----------------------------------------\n")
+    end
 
     return out
 end

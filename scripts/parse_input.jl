@@ -203,6 +203,10 @@ function filter_KFCEvaluator_kwargs(;kwargs...)
         val = Dict(kwargs)[:kev]
         # get the requested Type
         ret[:KEV] = _to_type(val)
+        # TODO: this is ugly
+        if ret[:KEV]==TCI4Keldysh.MultipoleKFCEvaluator
+            ret[:KEV] = TCI4Keldysh.MultipoleKFCEvaluator{3}
+        end
     end
     if haskey(Dict(kwargs), :coreevaluator_kwargs)
         val = Dict(kwargs)[:coreevaluator_kwargs]

@@ -753,9 +753,7 @@ function my_hilbert_trafo(
         interp = if interpolation==:linear
             linear_interpolation(xs_in, ys)
         elseif interpolation==:spline
-            error("NYI")
-            # extrapolate(scale(xs_in, interpolate(ys, BSpline(Cubic(Line(OnGrid()))))), Throw())
-            # interpolate((xs_in,), ys, Gridded(Cubic(Line())))
+            CubicSpline(xs_in, ys)
         else
             error("Interpolation $(interoplation) invalid!")
         end
@@ -769,9 +767,7 @@ function my_hilbert_trafo(
             interp = if interpolation==:linear
                 linear_interpolation(xs_in, ys[:,i])
             elseif interpolation==:spline
-                # interpolate((xs_in,), ys[:,i], Gridded(Cubic(Line())))
-                error("NYI")
-                # extrapolate(scale(xs_in, interpolate(ys[:,i], BSpline(Cubic(Line(OnGrid()))))), Throw())
+                CubicSpline(xs_in, ys[:,i])
             else
                 error("Interpolation $(interoplation) invalid!")
             end
