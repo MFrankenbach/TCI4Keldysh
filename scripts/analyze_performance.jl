@@ -43,18 +43,9 @@ function allocations_gev()
     println("gev       : $((@allocated gev(50,53,47)) / 1e6)")
     println("gev (buff): $((@allocated TCI4Keldysh.eval_buff!(gev, 50,53,47)) / 1e6)")
     println("gev.GFevs: ")
-<<<<<<< Updated upstream
-    ret_buff = MVector{16,ComplexF64}(zeros(ComplexF64, 16))
-    retarded_buff = MVector{4,ComplexF64}(zeros(ComplexF64, 4))
-    idx_int = MVector{3,Int}(0,0,0)
-    for i in 1:1
-        println("$i:        ", (@allocated gev.GFevs[i](50,53,47)) / 1.e6)
-        println("$i (buff): ", (@allocated TCI4Keldysh.eval_buff!(gev.GFevs[i], ret_buff, retarded_buff, idx_int, 50,53,47)) / 1.e6)
-=======
     # for i in eachindex(gev.GFevs)
     for i in 1:1
         println("$i: ", (@allocated gev.GFevs[i](50,53,47)) / 1.e6)
->>>>>>> Stashed changes
     end
     println("---------------")
     println("HierarchicalTucker: ")
