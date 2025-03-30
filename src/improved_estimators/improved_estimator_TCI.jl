@@ -920,6 +920,15 @@ struct SigmaEvaluator_KF <: Function
     ωconvOff::Vector{Int}
 end
 
+function eval_buff!(sev::SigmaEvaluator_KF, ret_buff::MMatrix{2,2,ComplexF64,4}, row::Int, is_inc::Bool, w::Vararg{Int,N}) where {N}
+    @views w_int = dot(sev.ΣωconvMat[row,:], SA[w...]) + sev.ωconvOff[row]
+    if is_inc
+        ret_buff .= view(sev.Σ_R,w_int,:,:)
+    else
+        ret_buff .= view(sev.Σ_L,w_int,:,:)
+    end
+end
+
 function (sev::SigmaEvaluator_KF)(row::Int, is_inc::Bool, w::Vararg{Int,N}) where {N}
     w_int = dot(sev.ΣωconvMat[row,:], SA[w...]) + sev.ωconvOff[row]
     if is_inc
@@ -2123,27 +2132,28 @@ Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
 """
 function eval_buff!(gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}},w::Vararg{Int,3}) where {T}
     result = zero(T)
-    val_legs = [MVector{2,ComplexF64}(0,0) for _ in 1:length(gev.is_incoming)]
-    ret_buff = MVector{16,ComplexF64}(zeros(ComplexF64, 16))
-    retarded_buff = MVector{4,ComplexF64}(zeros(ComplexF64, 4))
+    val_legs = MArray{Tuple{4,2},ComplexF64,2,8}(undef)
+    ret_buff = MVector{16,ComplexF64}(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+    # restensor = MArray{Tuple{2,2,2,2},ComplexF64,4,16}(undef)
+    retarded_buff = MVector{4,ComplexF64}(0,0,0,0)
     idx_int = MVector{3,Int}(0,0,0)
+    mat = MMatrix{2,2,ComplexF64,4}(undef)
     for i in 1:gev.Ncorrs
         # first all Keldysh indices
         eval_buff!(gev.GFevs[i], ret_buff, retarded_buff, idx_int, w...)
-        restensor = reshape(ret_buff, (2,2,2,2))
         # contract 
         for il in eachindex(gev.is_incoming)
-            mat = if gev.letter_combinations[i][il]==='F'
-                    -gev.sev(il, gev.is_incoming[il], w...)
+            if gev.letter_combinations[i][il]==='F'
+                eval_buff!(gev.sev, mat, il, gev.is_incoming[il], w...)
+            else
+                # TODO: make gev.X an MMatrix
+                mat .= gev.X
+            end
+            val_legs[il,:] .= if gev.is_incoming[il]
+                    view(mat,:, gev.iK_tuple[il])
                 else
-                    gev.X
+                    view(mat,gev.iK_tuple[il], :)
                 end
-            leg = if gev.is_incoming[il]
-                    vec(mat[:, gev.iK_tuple[il]])
-                else
-                    vec(mat[gev.iK_tuple[il], :])
-                end
-            val_legs[il] .= leg
         end
         interm = zero(T)
         for k4 in 1:2
@@ -2153,13 +2163,13 @@ function eval_buff!(gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}},w::Varar
                 for k2 in 1:2
                     it2 = zero(T)
                     for k1 in 1:2
-                        it2 += restensor[k1,k2,k3,k4] * val_legs[1][k1]
+                        it2 += ret_buff[k1 + 2*(k2-1) + 4*(k3-1) + 8*(k4-1)] * val_legs[1,k1]
                     end
-                    it3 += it2 * val_legs[2][k2]
+                    it3 += it2 * val_legs[2,k2]
                 end
-                it4 += it3 * val_legs[3][k3]
+                it4 += it3 * val_legs[3,k3]
             end
-            interm += it4 * val_legs[4][k4]
+            interm += it4 * val_legs[4,k4]
         end
         result += interm
         ret_buff .= zero(ComplexF64)

@@ -3,9 +3,29 @@ using JET
 using BenchmarkTools
 using Profile
 using StatProfilerHTML
+using StaticArrays
 using Random
 using ProfileCanvas
 using Serialization
+using PProf
+# using AllocCheck
+
+function allocations_multipole()
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    # trigger compilation
+    x = TCI4Keldysh.eval_buff!(gev, 1, 1, 1);
+    println("-- Allocations MultipoleKFCEvaluator: ")
+    ret_buff = MVector{16,ComplexF64}(zeros(ComplexF64, 16))
+    retarded_buff = MVector{4,ComplexF64}(zeros(ComplexF64, 4)) 
+    idx_int = MVector{3,Int}(0,0,0)
+    for i in 1:1
+        gg = gev.GFevs[i]
+        println("$i: ", (@allocated TCI4Keldysh.eval_buff!(gg, ret_buff, retarded_buff, idx_int, 50,53,47)) / 1.e6)
+        b = @benchmark TCI4Keldysh.eval_buff!($gg, $ret_buff, $retarded_buff, $idx_int, 50, 53, 47)
+        display(b)
+    end
+end
+
 
 function allocations_ht()
     @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
@@ -13,7 +33,10 @@ function allocations_ht()
     x = TCI4Keldysh.eval_buff!(gev, 1, 1, 1);
     println("-- Allocations HierarchicalTucker: ")
     for i in 1:1
-        println("$i: ", (@allocated gev.GFevs[i].Gps[1,1](50,53,47)) / 1.e6)
+        gg = gev.GFevs[i].Gps[1,1]
+        println("$i: ", (@allocated gg(50,53,47)) / 1.e6)
+        b = @benchmark $gg(50, 53, 47)
+        display(b)
     end
 end
 
@@ -127,14 +150,14 @@ function profile_allocations_gev()
     @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     # trigger compilation
     x = gev(1, 1, 1);
-    # Profile.Allocs.clear()
-    # Profile.Allocs.@profile begin
-    @profview gev(101, 100, 99)
-    # PProf.Allocs.pprof()
+    Profile.Allocs.clear()
+    Profile.Allocs.@profile gev(101, 100, 99)
+    pprof()
+    # display(Profile.Allocs.fetch())
 end
 
 function profile_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev2.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     R = 8
     Profile.clear()
     @profile begin
@@ -175,7 +198,10 @@ function type_instability_gev()
     print(@code_warntype TCI4Keldysh.eval_buff!(gev,50,53,47))
     println("\n\n==== MultipoleKFCEvaluator")
     # print(@report_opt gev.GFevs[1](50,53,47))
-    print(@code_warntype gev.GFevs[1](50,53,47))
+    ret_buff = MVector{16,ComplexF64}(zeros(ComplexF64, 16))
+    retarded_buff = MVector{4,ComplexF64}(zeros(ComplexF64, 4)) 
+    idx_int = MVector{3,Int}(0,0,0)
+    print(@code_warntype TCI4Keldysh.eval_buff!(gev.GFevs[1], ret_buff, retarded_buff, idx_int, 50,53,47))
     println("\n\n==== HierarchicalTucker")
     print(@code_warntype gev.GFevs[1].Gps[1,1](50,53,47))
 end
