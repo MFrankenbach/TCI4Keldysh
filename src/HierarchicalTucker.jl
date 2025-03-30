@@ -310,17 +310,37 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
     end
 end
 
+"""
+Call with buffers
+ret has length D1 =2^(D+1)
+retarded has length D2 =D+1
+"""
+function eval_buff!(ev::MultipoleKFCEvaluator{D}, ret::MVector{D1,ComplexF64}, retarded::MVector{D2,ComplexF64}, idx_int::MVector{D,Int}, idx::Vararg{Int,D}) where {D,D1,D2}
+    @inbounds for ip in axes(ev.Gps,2)    
+        idx_int .= ev.ωconvMats[ip] * SA{Int}[idx...] + ev.ωconvOffs[ip]
+        for id in 1:D+1
+            retarded[id] = ev.Gps[id,ip](idx_int...)
+        # transform to Keldysh, no matmul to avoid allocation
+            for ik in 1:2^(D+1)
+                ret[ik] += retarded[id] * ev.GR_to_GK[id,ik,ip]
+            end
+        end
+    end
+end
+
+
 function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) :: Vector{ComplexF64} where {D}
     ret = zeros(ComplexF64, 1, 2^(D+1))
     retarded = zeros(ComplexF64, D+1)
-    # idx_int = MVector{D,Int}(0,0,0)
-    for ip in axes(ev.Gps,2)    
+    @inbounds for ip in axes(ev.Gps,2)    
         idx_int = ev.ωconvMats[ip] * SA{Int}[idx...] + ev.ωconvOffs[ip]
         for id in 1:D+1
             retarded[id] = ev.Gps[id,ip](idx_int...)
+        # transform to Keldysh, no matmul to avoid allocation
+            for ik in 1:2^(D+1)
+                ret[ik] += retarded[id] * ev.GR_to_GK[id,ik,ip]
+            end
         end
-        # transform to Keldysh
-        ret .+= transpose(retarded) * view(ev.GR_to_GK, :, :, ip)
     end
     return vec(ret)
 end

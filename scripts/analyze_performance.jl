@@ -7,17 +7,46 @@ using Random
 using ProfileCanvas
 using Serialization
 
+function allocations_ht()
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    # trigger compilation
+    x = TCI4Keldysh.eval_buff!(gev, 1, 1, 1);
+    println("-- Allocations HierarchicalTucker: ")
+    for i in 1:1
+        println("$i: ", (@allocated gev.GFevs[i].Gps[1,1](50,53,47)) / 1.e6)
+    end
+end
+
+function test_eval_buff()
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    x = gev(50,51,12)
+    y = TCI4Keldysh.eval_buff!(gev, 50,51,12)
+    @show abs(x-y)
+    return nothing
+end
+
+
 function allocations_gev()
     @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     # trigger compilation
-    x = gev(1, 1, 1);
+    x = TCI4Keldysh.eval_buff!(gev, 1, 1, 1);
+    x = gev(1,1,1);
     println("-- Allocations: ")
-    println("gev: $((@allocated gev(50,53,47)) / 1e6)")
+    println("gev       : $((@allocated gev(50,53,47)) / 1e6)")
+    println("gev (buff): $((@allocated TCI4Keldysh.eval_buff!(gev, 50,53,47)) / 1e6)")
     println("gev.GFevs: ")
-    for i in eachindex(gev.GFevs)
-        println("$i: ", (@allocated gev.GFevs[i](50,53,47)) / 1.e6)
+    ret_buff = MVector{16,ComplexF64}(zeros(ComplexF64, 16))
+    retarded_buff = MVector{4,ComplexF64}(zeros(ComplexF64, 4))
+    idx_int = MVector{3,Int}(0,0,0)
+    for i in 1:1
+        println("$i:        ", (@allocated gev.GFevs[i](50,53,47)) / 1.e6)
+        println("$i (buff): ", (@allocated TCI4Keldysh.eval_buff!(gev.GFevs[i], ret_buff, retarded_buff, idx_int, 50,53,47)) / 1.e6)
     end
     println("---------------")
+    println("HierarchicalTucker: ")
+    for i in 1:1
+        println("$i: ", (@allocated gev.GFevs[i].Gps[1,1](50,53,47)) / 1.e6)
+    end
 end
 
 function benchmark_gev()
@@ -136,8 +165,9 @@ function type_instability_gev()
     @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     println("==== ΓcoreEvaluator_KF")
     x = gev(1,1,1)
+    x = TCI4Keldysh.eval_buff!(gev,1,1,1)
     # print(@report_opt gev(50,53,47))
-    print(@code_warntype gev(50,53,47))
+    print(@code_warntype TCI4Keldysh.eval_buff!(gev,50,53,47))
     println("\n\n==== MultipoleKFCEvaluator")
     # print(@report_opt gev.GFevs[1](50,53,47))
     print(@code_warntype gev.GFevs[1](50,53,47))

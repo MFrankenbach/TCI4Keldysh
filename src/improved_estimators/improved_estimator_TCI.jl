@@ -2114,6 +2114,59 @@ function evaluate_all_iK(gev::ΓcoreEvaluator_KF{T}, w::Vararg{Float64,3}) where
     return eval_interpol(zeros(ComplexF64,2,2,2,2), __f, gev.ωs_ext, w...)
 end
 
+function (gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}})(w::Vararg{Int,3}) where {T}
+    return eval_buff!(gev, w...)
+end
+
+"""
+Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
+"""
+function eval_buff!(gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}},w::Vararg{Int,3}) where {T}
+    result = zero(T)
+    val_legs = [MVector{2,ComplexF64}(0,0) for _ in 1:length(gev.is_incoming)]
+    ret_buff = MVector{16,ComplexF64}(zeros(ComplexF64, 16))
+    retarded_buff = MVector{4,ComplexF64}(zeros(ComplexF64, 4))
+    idx_int = MVector{3,Int}(0,0,0)
+    for i in 1:gev.Ncorrs
+        # first all Keldysh indices
+        eval_buff!(gev.GFevs[i], ret_buff, retarded_buff, idx_int, w...)
+        restensor = reshape(ret_buff, (2,2,2,2))
+        # contract 
+        for il in eachindex(gev.is_incoming)
+            mat = if gev.letter_combinations[i][il]==='F'
+                    -gev.sev(il, gev.is_incoming[il], w...)
+                else
+                    gev.X
+                end
+            leg = if gev.is_incoming[il]
+                    vec(mat[:, gev.iK_tuple[il]])
+                else
+                    vec(mat[gev.iK_tuple[il], :])
+                end
+            val_legs[il] .= leg
+        end
+        interm = zero(T)
+        for k4 in 1:2
+            it4 = zero(T)
+            for k3 in 1:2
+                it3 = zero(T)
+                for k2 in 1:2
+                    it2 = zero(T)
+                    for k1 in 1:2
+                        it2 += restensor[k1,k2,k3,k4] * val_legs[1][k1]
+                    end
+                    it3 += it2 * val_legs[2][k2]
+                end
+                it4 += it3 * val_legs[3][k3]
+            end
+            interm += it4 * val_legs[4][k4]
+        end
+        result += interm
+        ret_buff .= zero(ComplexF64)
+    end
+    return result
+end
+
 """
 Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
 """
