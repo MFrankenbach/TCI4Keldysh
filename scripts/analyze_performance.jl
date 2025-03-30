@@ -26,6 +26,14 @@ function test_eval_buff()
 end
 
 
+function allocations_tucker()
+    A = randn(ComplexF64, 100, 100, 100)
+    legs = ntuple(i -> randn(ComplexF64, size(A,i)), ndims(A))
+    x = TCI4Keldysh.eval_tucker(A, legs);
+    b = @allocated TCI4Keldysh.eval_tucker(A, legs);
+    println("Allocations: $b")
+end
+
 function allocations_gev()
     @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
     # trigger compilation
@@ -35,12 +43,18 @@ function allocations_gev()
     println("gev       : $((@allocated gev(50,53,47)) / 1e6)")
     println("gev (buff): $((@allocated TCI4Keldysh.eval_buff!(gev, 50,53,47)) / 1e6)")
     println("gev.GFevs: ")
+<<<<<<< Updated upstream
     ret_buff = MVector{16,ComplexF64}(zeros(ComplexF64, 16))
     retarded_buff = MVector{4,ComplexF64}(zeros(ComplexF64, 4))
     idx_int = MVector{3,Int}(0,0,0)
     for i in 1:1
         println("$i:        ", (@allocated gev.GFevs[i](50,53,47)) / 1.e6)
         println("$i (buff): ", (@allocated TCI4Keldysh.eval_buff!(gev.GFevs[i], ret_buff, retarded_buff, idx_int, 50,53,47)) / 1.e6)
+=======
+    # for i in eachindex(gev.GFevs)
+    for i in 1:1
+        println("$i: ", (@allocated gev.GFevs[i](50,53,47)) / 1.e6)
+>>>>>>> Stashed changes
     end
     println("---------------")
     println("HierarchicalTucker: ")

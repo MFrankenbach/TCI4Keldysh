@@ -331,8 +331,9 @@ end
 
 function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) :: Vector{ComplexF64} where {D}
     ret = zeros(ComplexF64, 1, 2^(D+1))
-    retarded = zeros(ComplexF64, D+1)
-    @inbounds for ip in axes(ev.Gps,2)    
+    retarded = zeros(ComplexF64, 1, D+1)
+    # idx_int = MVector{D,Int}(0,0,0)
+    for ip in axes(ev.Gps,2)    
         idx_int = ev.ωconvMats[ip] * SA{Int}[idx...] + ev.ωconvOffs[ip]
         for id in 1:D+1
             retarded[id] = ev.Gps[id,ip](idx_int...)
@@ -341,6 +342,8 @@ function (ev::MultipoleKFCEvaluator{D})(idx::Vararg{Int,D}) :: Vector{ComplexF64
                 ret[ik] += retarded[id] * ev.GR_to_GK[id,ik,ip]
             end
         end
+        # transform to Keldysh
+        ret .+= retarded * view(ev.GR_to_GK, :, :, ip) 
     end
     return vec(ret)
 end

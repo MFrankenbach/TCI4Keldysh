@@ -355,19 +355,19 @@ end
 * legs: corresponds to legs[i][idx[i],:] in other eval_tucker function
 """
 function eval_tucker(center::Array{T,3}, legs::NTuple{3,AbstractVector{T}}) :: T where {T}
-    ret = zero(T)    
-
+    ret = zero(T)
     n1, n2, n3 = size(center)
+    v1, v2, v3 = legs
     @TUCKER_FASTMATH @inbounds for k in 1:n3
         ret3 = zero(T)
         for j in 1:n2
             ret2 = zero(T)
             for i in 1:n1
-                ret2 += legs[1][i] * center[i, j, k]
+                ret2 += v1[i] * center[i, j, k]
             end
-            ret3 += ret2 * legs[2][j]
+            ret3 += ret2 * v2[j]
         end
-        ret += ret3 * legs[3][k]
+        ret += ret3 * v3[k]
     end
 
     return ret
