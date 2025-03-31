@@ -2145,6 +2145,7 @@ function eval_buff!(gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}},w::Varar
         for il in eachindex(gev.is_incoming)
             if gev.letter_combinations[i][il]==='F'
                 eval_buff!(gev.sev, mat, il, gev.is_incoming[il], w...)
+                @. mat = -mat
             else
                 # TODO: make gev.X an MMatrix
                 mat .= gev.X
@@ -2175,6 +2176,34 @@ function eval_buff!(gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}},w::Varar
         ret_buff .= zero(ComplexF64)
     end
     return result
+end
+
+function eval_nobuff(gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}},w::Vararg{Int,3}) where {T}
+    # TODO: can we avoid copy-paste from (gev::ΓcoreEvaluator_KF{T,KEV})(w::Vararg{Int,3}) where {T,KEV<:AbstractCorrEvaluator_KF{3,ComplexF64}}?
+    addvals = Vector{T}(undef, gev.Ncorrs)
+    val_legs = Vector{Vector{T}}(undef, length(gev.is_incoming))
+    for i in 1:gev.Ncorrs
+        # first all Keldysh indices
+        res = reshape(gev.GFevs[i](w...), ntuple(_->2, 4))
+        for il in eachindex(gev.is_incoming)
+            mat = if gev.letter_combinations[i][il]==='F'
+                    -gev.sev(il, gev.is_incoming[il], w...)
+                else
+                    gev.X
+                end
+            leg = if gev.is_incoming[il]
+                    vec(mat[:, gev.iK_tuple[il]])
+                else
+                    vec(mat[gev.iK_tuple[il], :])
+                end
+            val_legs[il] = leg
+        end
+        for d in 1:4
+            res = res[1,ntuple(_->Colon(),4-d)...].*val_legs[d][1] .+ res[2,ntuple(_->Colon(),4-d)...].*val_legs[d][2]
+        end
+        addvals[i] = res
+    end
+    return sum(addvals)
 end
 
 """

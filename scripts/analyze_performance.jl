@@ -1,6 +1,7 @@
 using TCI4Keldysh
 using JET
 using BenchmarkTools
+using LinearAlgebra
 using Profile
 using StatProfilerHTML
 using StaticArrays
@@ -40,11 +41,31 @@ function allocations_ht()
     end
 end
 
+function test_eval_buff_multipole()
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    ret_buff = MVector{16,ComplexF64}(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+    retarded_buff = MVector{4,ComplexF64}(0,0,0,0)
+    idx_int = MVector{3,Int}(0,0,0)
+    for _ in 1:200
+        idx = rand(1:2^8, 3)
+        for i in eachindex(gev.GFevs)
+            TCI4Keldysh.eval_buff!(gev.GFevs[i], ret_buff, retarded_buff, idx_int, idx...)
+            nobuff = gev.GFevs[i](idx...)
+            @assert norm(nobuff.-ret_buff) < 1.e-10
+            ret_buff .= zero(ComplexF64)
+        end
+    end
+end
+
 function test_eval_buff()
     @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
-    x = gev(50,51,12)
-    y = TCI4Keldysh.eval_buff!(gev, 50,51,12)
-    @show abs(x-y)
+    for _ in 1:200
+        idx = rand(1:2^8, 3)
+        nobuff = TCI4Keldysh.eval_nobuff(gev, idx...)
+        buff = TCI4Keldysh.eval_buff!(gev, idx...)
+        @assert size(nobuff) == size(buff)
+        @assert norm(nobuff.-buff) < 1.e-10
+    end
     return nothing
 end
 
