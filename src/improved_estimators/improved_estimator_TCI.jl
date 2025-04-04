@@ -110,7 +110,6 @@ function read_GFs_Γcore!(
     # create correlator objects
     PSFpath_4pt = joinpath(PSFpath, "4pt")
     filelist = readdir(PSFpath_4pt)
-    # Threads.@threads for l in 1:Ncorrs # can two threads try to read the same file here?
     for l in 1:length(GFs)
         letts = letter_combinations[l]
         vprintln("letts: $letts", 2)
@@ -253,7 +252,6 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
 end
 
 function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
-
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
     channel = "t"
     ωconvMat = TCI4Keldysh.channel_trafo(channel)

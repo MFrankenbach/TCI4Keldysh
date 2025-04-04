@@ -9,6 +9,7 @@ using Random
 using ProfileCanvas
 using Serialization
 using PProf
+using HDF5
 # using AllocCheck
 
 function allocations_multipole()
@@ -232,13 +233,15 @@ function gen_ΓcoreEvaluator_KF()
     basepath = "SIAM_u=0.50"
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
     iK = 6
-    R = 8
-    ommax = 0.3
-    channel = "p"
+    R = 7
+    ommax = 0.20371832715762606
+    channel = "t"
     flavor = 1
     ωs_ext = ntuple(_->TCI4Keldysh.KF_grid_bos(ommax, R), 3)
     broadening_kwargs = TCI4Keldysh.read_all_broadening_params(basepath; channel=channel)
-    broadening_kwargs[:estep] = 10
+    broadening_kwargs[:estep] = 50
+    broadening_kwargs[:emin] = 1.e-4
+    broadening_kwargs[:emax] = 1.e6
     gev =  TCI4Keldysh.ΓcoreEvaluator_KF(
         PSFpath,
         iK,
@@ -247,8 +250,27 @@ function gen_ΓcoreEvaluator_KF()
         ;
         channel=channel,
         flavor_idx=flavor,
-        KEV_kwargs=Dict(:cutoff => 1.e-5, :nlevel => 4),
+        KEV_kwargs=Dict(:cutoff => 1.e-6, :nlevel => 4),
         useFDR=false,
         broadening_kwargs...)
-    serialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"), gev)
+    serialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR7t.serialized"), gev)
 end
+
+function test_ΓcoreEvaluator_KF()
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR7t.serialized"))
+    Vpath = joinpath(TCI4Keldysh.pdatadir(), "keldyshconv_R7_1thread", "V_KF_U4.h5");
+    core = h5read(Vpath, "core");
+    iK_tuple = (2,1,2,1)
+    N = 10^4
+    errs = Vector{Float64}(undef, N)
+    scerrs = Vector{Float64}(undef, N)
+    amax = maximum(abs.(core))
+    for i in 1:N
+        idx = rand(1:2^7, 3)
+        val = gev(idx...)
+        ref = core[idx..., iK_tuple...]
+        errs[i] = abs(val-ref)
+        scerrs[i] = abs(val-ref)/amax
+    end
+    return errs, scerrs
+end 

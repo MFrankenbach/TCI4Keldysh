@@ -707,9 +707,10 @@ struct FullCorrelator_KF{D}
             return BroadenedPSF(ωdisc, Adiscs[i], sigmak, gamvec; ωconts=(ωconts...,), broadening_kwargs...)
         end
         Aconts = Matrix{TuckerDecomposition{Float64,D}}(undef, length(perms_vec), D+1)
-        @time begin Threads.@threads for i in axes(Aconts, 1)
-                p = perms_vec[i]
-                for l in 1:D+1
+        @time begin 
+            for l in 1:D+1
+                Threads.@threads for i in axes(Aconts, 1)
+                    p = perms_vec[i]
                     Aconts[i,l] = get_Acont_p(i, p, l)
                 end
             end
