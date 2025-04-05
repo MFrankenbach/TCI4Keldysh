@@ -802,7 +802,14 @@ end
 K1 for each channel on 1D frequency grid, both MF and KF
 TODO: Move this elsewhere? Not related to TCI...
 """
-function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; mode=:normal, ωs_ext::Vector{Float64}, channel="t", broadening_kwargs...)
+function precompute_K1r(
+    PSFpath::String, flavor_idx::Int, formalism="MF";
+    mode=:normal,
+    ωs_ext::Vector{Float64},
+    channel="t", 
+    increase_estep=true,
+    broadening_kwargs...
+    )
 
     T = dir_to_T(PSFpath)
     ops = channel_K1_Ops(channel)
@@ -812,6 +819,15 @@ function precompute_K1r(PSFpath::String, flavor_idx::Int, formalism="MF"; mode=:
         basepath = join(split(rstrip(PSFpath, '/'), "/")[1:end-1], "/")
         (γ, sigmak) = read_broadening_params(basepath; channel=channel)
         broaden_dict = Dict(broadening_kwargs)
+
+        estep = if increase_estep && haskey(broaden_dict, :estep)
+                min(500, 4 * broaden_dict[:estep])
+            elseif haskey(broaden_dict, :estep)
+                broaden_dict[:estep]
+            else
+                _ESTEP_DEFAULT()
+            end
+        println("ESTEP in K1: $(estep)")
 
         # are different broadening parameters requested?
         γ = if haskey(broaden_dict,:γ)
@@ -1504,6 +1520,10 @@ function create(::Type{MultipoleKFCEvaluator{3}}, GF::FullCorrelator_KF{3}; kwar
     return MultipoleKFCEvaluator(GF; kwargs...)
 end
 
+function create(::Type{MultipoleKFCEvaluator}, GF::FullCorrelator_KF{3}; kwargs...)
+    return MultipoleKFCEvaluator(GF; kwargs...)
+end
+
 function create(::Type{KFCEvaluator}, GF::FullCorrelator_KF{3}; kwargs...)
     return KFCEvaluator(GF; kwargs...)
 end
@@ -1720,8 +1740,8 @@ function Γ_core_TCI_KF(
     batched=true,
     do_check_interpolation=true,
     useFDR::Bool=USE_FDR_SE(),
-    npivot::Int=5,
-    pivot_step::Int=div(2^R, npivot-1),
+    npivot::Int=1,
+    pivot_step::Int= npivot!=1 ? div(2^R, npivot-1) : 0,
     unfoldingscheme=:interleaved,
     KEV::Type=KFCEvaluator,
     coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6),
@@ -1832,8 +1852,8 @@ function Γ_core_TCI_KF(
     resume_path=nothing,
     batched=true,
     do_check_interpolation=true,
-    npivot::Int=5,
-    pivot_step::Int=div(2^R, npivot-1),
+    npivot::Int=1,
+    pivot_step::Int= npivot!=1 ? div(2^R, npivot-1) : 0,
     unfoldingscheme=:interleaved,
     tcikwargs...
     )
@@ -2949,13 +2969,6 @@ function (gbev::CachedBatchEvaluator{T})(
     out = Array{T,M+2}(undef, (length(leftindexsset), ntuple(i->gbev.localdims[nleft+i],M)..., length(rightindexsset)))
 
     # populate Pi-tensor
-    if DEBUG_TCI_KF_RAM()
-        println("-- Single evaluation:")
-            @show cindexset[1]
-            v = vcat(leftindexsset[1], cindexset[1]..., rightindexsset[1])
-            @time begin gbev(v) end
-        println("---------------------")
-    end
     Threads.@threads for il in eachindex(leftindexsset)
         left_act = leftindexsset[il]
         for ic in eachindex(cindexset)
@@ -3007,6 +3020,7 @@ function (gbev::CachedBatchEvaluator{T})(
     #     merge!(gbev.qf.cache, d)
     # end
 
+    #= 
     if DEBUG_TCI_KF_RAM()
         println("\n----------------------------------------")
         println("     Size of gbev: $(Base.summarysize(gbev))")
@@ -3015,6 +3029,7 @@ function (gbev::CachedBatchEvaluator{T})(
         println("---- Evaluations for 2-site update done")
         println("----------------------------------------\n")
     end
+    =#
 
     return out
 end

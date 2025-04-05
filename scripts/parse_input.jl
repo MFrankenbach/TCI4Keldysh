@@ -160,6 +160,8 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
         matsubaraslice_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="nonlin_keldyshfull"
         nonlin_keldyshfull(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="gen_kf_coreevaluator"
+        gen_KF_coreevaluator(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     else
         error("Invalid jobtype $jobtype")
     end
@@ -228,6 +230,64 @@ function serialize_tt(tci, grid, outname::String, folder::String)
 end
 
 # ==== JOBTYPES
+
+function gen_KF_coreevaluator(
+    outname::AbstractString,
+    d::Dict,
+    ;
+    ik,
+    ommax=0.3183098861837907,
+    Rs,
+    PSFpath,
+    folder,
+    flavor_idx,
+    channel,
+    kwargs...
+)
+
+    iK = maybeparse(Int, ik)
+    # read broadening settings
+    (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
+    if haskey(kwargs, :γ)
+        γ = maybeparse(Float64, Dict(kwargs)[:γ])
+    end
+    if haskey(kwargs, :sigmak)
+        sigmak = [maybeparse(Float64, Dict(kwargs)[:sigmak])]
+    end
+    broadening_kwargs = filter_broadening_kwargs(;broadening_kwargs...)
+    TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
+
+    # evaluator kwargs
+    evaluator_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
+
+    ommax = maybeparse(Float64, ommax)
+    d["iK"] = iK
+    d["ommax"] = ommax
+    d["evaluator_kwargs"] = evaluator_kwargs 
+    d["gamma"] = γ
+    d["sigmak"] = sigmak
+    d["broadening_kwargs"] = broadening_kwargs
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    for R in Rs
+        ωs_ext = ntuple(_->TCI4Keldysh.KF_grid_bos(ommax, R), 3)
+        gev =  TCI4Keldysh.ΓcoreEvaluator_KF(
+            PSFpath,
+            iK,
+            ωs_ext,
+            TCI4Keldysh.MultipoleKFCEvaluator{3},
+            ;
+            channel=channel,
+            flavor_idx=flavor_idx,
+            KEV_kwargs=evaluator_kwargs[:coreEvaluator_kwargs],
+            useFDR=false,
+            sigmak=sigmak,
+            γ=γ,
+            broadening_kwargs...)
+        serialize(joinpath(TCI4Keldysh.pdatadir(), folder, "gevR$(R)$(channel).serialized"), gev)
+    end
+end
+
 function matsubaracore(
     outname::AbstractString,
     d::Dict,
@@ -410,7 +470,7 @@ function keldyshfull(
     ik,
     ommax=0.3183098861837907,
     Rs,
-    npivot=5,
+    npivot=1,
     pivot_steps=nothing,
     unfoldingscheme=:fused,
     PSFpath,
@@ -448,9 +508,19 @@ function keldyshfull(
     grid_kwargs = Dict([(:unfoldingscheme, Symbol(unfoldingscheme))])
     d["unfoldingscheme"] = Symbol(unfoldingscheme)
 
+    # get broadening parameters
     (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
+    if haskey(kwargs, :γ)
+        γ = maybeparse(Float64, Dict(kwargs)[:γ])
+    end
+    if haskey(kwargs, :sigmak)
+        sigmak = [maybeparse(Float64, Dict(kwargs)[:sigmak])]
+    end
+
     broadening_kwargs = filter_broadening_kwargs(;broadening_kwargs...)
     TCI4Keldysh.override_dict!(Dict(kwargs), broadening_kwargs)
+    d["gamma"] = γ
+    d["sigmak"] = sigmak
     d["broadening_kwargs"] = broadening_kwargs
 
     evaluator_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
@@ -537,7 +607,7 @@ function keldyshcore(
     channel::String,
     ommax = 0.3183098861837907,
     unfoldingscheme=:fused,
-    npivot=5,
+    npivot=1,
     batched=true,
     pivot_steps=nothing,
     serialize_tts=true,
@@ -569,6 +639,12 @@ function keldyshcore(
 
     # get broadening parameters
     (γ, sigmak, broadening_kwargs) = all_broadening_settings(PSFpath, channel)
+    if haskey(kwargs, :γ)
+        γ = maybeparse(Float64, Dict(kwargs)[:γ])
+    end
+    if haskey(kwargs, :sigmak)
+        sigmak = [maybeparse(Float64, Dict(kwargs)[:sigmak])]
+    end
 
     # prepare output
     d["times"] = times
@@ -578,7 +654,6 @@ function keldyshcore(
     d["numthreads"] = Threads.threadpoolsize()
     d["sigmak"] = sigmak 
     d["gamma"] = γ 
-    # d["ommin"] = ωmin
     d["ommax"] = ommax
     d["batched"] = batched
     d["iK"] = ik
@@ -590,6 +665,7 @@ function keldyshcore(
     d["unfoldingscheme"] = Symbol(unfoldingscheme)
     evaluator_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
     d["FullCorrEvaluator_kwargs"] = evaluator_kwargs
+    d["npivot"] = npivot
 
     TCI4Keldysh.logJSON(d, outname, folder)
 
