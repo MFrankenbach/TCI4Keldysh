@@ -1,6 +1,7 @@
 using BenchmarkTools
 #=
-Compute interection vertex with symmetric improved estimators and TCI
+This file collects functions and structs used for pointwise evaluation of vertex functions.
+These are needed to compute vertex functions in qunatics tensor train format in an efficient way.
 =#
 
 DEBUG_TCI_KF_RAM() = true
@@ -8,7 +9,7 @@ DEBUG_TCI_KF_RAM() = true
 # ========== MATSUBARA
 
 """
-Evaluate self-energy pointwise by symmetric improved estimator.
+Evaluate self-energy pointwisely by symmetric improved estimator.
 (Eq. 108 Lihm et. al.)
 """
 struct SigmaEvaluator_MF{D}
@@ -307,7 +308,7 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
 end
 
 """
-Determine initial pivots as a sub-grid of a frequency grid of given size
+Determine initial pivots (of TCI) as a sub-grid of a frequency grid of given size
 """
 function initpivots_general(gridsize::NTuple{D,Int}, npivot::Int, pivot_step::Int; verbose=false) where {D}
     # grid centre
@@ -326,6 +327,9 @@ function initpivots_general(gridsize::NTuple{D,Int}, npivot::Int, pivot_step::In
     return initpivots
 end
 
+"""
+Initial pivots (of TCI) that one can use for vertex interpolation.
+"""
 function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullCorrelator_KF{D}}}; npivot::Int=2) where {D}
 
     pivots = Vector{Int}[]
@@ -616,6 +620,10 @@ end
 
 # ==== Lower-dim. asymptotic contributions K1r and K2r(')
 
+"""
+Second+third row in Fig 13, Lihm et. al., split in 6 terms in a, p, t channels
+Performs QTCI on K2(prime) in given channel, in Keldysh. 
+"""
 function K2_TCI_KF(
     PSFpath,
     R::Int;
@@ -652,7 +660,7 @@ end
 
 """
 Second+third row in Fig 13, Lihm et. al., split in 6 terms in a, p, t channels
-Return 2*R bit quantics tensor train (2D function)
+Performs QTCI on K2(prime) in given channel, in Matsubara. 
 """
 function K2_TCI(
     PSFpath::String,
@@ -719,6 +727,9 @@ function K2_TCI(
     return qtt
 end
 
+"""
+Compute K2 on a given grid.
+"""
 function precompute_K2r(
         PSFpath::String, flavor_idx::Int, formalism="MF";
         ωs_ext::NTuple{2,Vector{Float64}},
@@ -799,8 +810,7 @@ function precompute_K2r(
 end
 
 """
-K1 for each channel on 1D frequency grid, both MF and KF
-TODO: Move this elsewhere? Not related to TCI...
+Compute K1 for given channel on 1D frequency grid, both MF and KF supported.
 """
 function precompute_K1r(
     PSFpath::String, flavor_idx::Int, formalism="MF";
@@ -934,6 +944,9 @@ struct SigmaEvaluator_KF <: Function
     ωconvOff::Vector{Int}
 end
 
+"""
+Evaluate self-energy with memory buffer to avoid allocations.
+"""
 function eval_buff!(sev::SigmaEvaluator_KF, ret_buff::MMatrix{2,2,ComplexF64,4}, row::Int, is_inc::Bool, w::Vararg{Int,N}) where {N}
     @views w_int = dot(sev.ΣωconvMat[row,:], SA[w...]) + sev.ωconvOff[row]
     if is_inc
@@ -952,6 +965,9 @@ function (sev::SigmaEvaluator_KF)(row::Int, is_inc::Bool, w::Vararg{Int,N}) wher
     end
 end
 
+"""
+Interpolate self-energy onto requested frequency.
+"""
 function eval_interpol(sev::SigmaEvaluator_KF, row::Int, is_inc::Bool, ws::Vector{Float64}, w::Vararg{Float64,N}) where {N}
     w_int = dot(sev.ΣωconvMat[row,:], SA[w...])    
     idx_up = searchsortedfirst(ws, w_int)
@@ -963,7 +979,7 @@ function eval_interpol(sev::SigmaEvaluator_KF, row::Int, is_inc::Bool, ws::Vecto
 end
 
 """
-Evaluate K2 class pointwise on 2D frequency grid.
+Struct to evaluate K2(prime) pointwise on 2D frequency grid for a fixed channel.
 """
 struct K2Evaluator_KF
     GFevs::Vector{FullCorrEvaluator_KF{2,ComplexF64}}
@@ -1261,7 +1277,7 @@ function tcigammacore_filename()
 end
 
 """
-To evaluate Matsubara core vertex, wrapping the required setup and relevant data.
+To evaluate Matsubara core vertex pointwise, wrapping the required setup and relevant data.
 * sev: callable with signature sev(i::Int, w::Vararg{Int,D}) to evaluate self-energy
 on i'th component of transformed frequency w
 """
@@ -1680,6 +1696,7 @@ function eval_K1_general(K1, trafo::Matrix{Int}, w::Vararg{Float64,3})
 end
 
 """
+Generic method to evaluate the core vertex.
 * sev: evaluates self-energy, returns 2x2 Complex Matrix
 * GFevs: evaluate full correlators, return 16-entry complex vectors (all Keldysh components)
 """
@@ -1710,7 +1727,7 @@ function eval_Γcore_general(GFevs, sev, is_incoming::NTuple{4,Bool}, letter_com
 end
 
 """
-Compute Keldysh core vertex for single Keldysh component
+Compute Keldysh core vertex using TCI for single Keldysh component
 
 * iK: Keldysh component
 * sigmak, γ: broadening parameters
@@ -2132,10 +2149,16 @@ function compare_precomputed_eval_Γcore_general()
     end
 end
 
+"""
+Evaluate `gev` on all Keldysh components
+"""
 function evaluate_all_iK(gev::ΓcoreEvaluator_KF{T}, w::Vararg{Int,3}) where {T}
     return eval_Γcore_general(gev.GFevs, gev.sev, gev.is_incoming, gev.letter_combinations, w...)
 end
 
+"""
+Evaluate `gev` on all Keldysh components
+"""
 function evaluate_all_iK(gev::ΓcoreEvaluator_KF{T}, w::Vararg{Float64,3}) where {T}
     __f(ids::Vararg{Int,3}) = evaluate_all_iK(gev, ids...)
     return eval_interpol(zeros(ComplexF64,2,2,2,2), __f, gev.ωs_ext, w...)
@@ -2146,7 +2169,8 @@ function (gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}})(w::Vararg{Int,3})
 end
 
 """
-Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
+Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function).
+Memory buffers to reduce allocations.
 """
 function eval_buff!(gev::ΓcoreEvaluator_KF{T,MultipoleKFCEvaluator{3}},w::Vararg{Int,3}) where {T}
     result = zero(T)
@@ -2253,36 +2277,6 @@ function (gev::ΓcoreEvaluator_KF{T,KEV})(w::Vararg{Int,3}) where {T,KEV<:Abstra
     end
     return sum(addvals)
 end
-
-# """
-# Evaluate Γcore (using sIE or aIE for self-energy, depending on sev function)
-# """
-# function (gev::ΓcoreEvaluator_KF{T})(w::Vararg{Int,3}) where {T}
-#     addvals = Vector{T}(undef, gev.Ncorrs)
-#     for i in 1:gev.Ncorrs
-#         # first all Keldysh indices
-#         res = reshape(gev.GFevs[i](w...), ntuple(_->2, 4))
-#         val_legs = Vector{Vector{T}}(undef, length(gev.is_incoming))
-#         for il in eachindex(gev.is_incoming)
-#             mat = if gev.letter_combinations[i][il]==='F'
-#                     -gev.sev(il, gev.is_incoming[il], w...)
-#                 else
-#                     gev.X
-#                 end
-#             leg = if gev.is_incoming[il]
-#                     vec(mat[:, gev.iK_tuple[il]])
-#                 else
-#                     vec(mat[gev.iK_tuple[il], :])
-#                 end
-#             val_legs[il] = leg
-#         end
-#         for d in 1:4
-#             res = res[1,ntuple(_->Colon(),4-d)...].*val_legs[d][1] .+ res[2,ntuple(_->Colon(),4-d)...].*val_legs[d][2]
-#         end
-#         addvals[i] = res
-#     end
-#     return sum(addvals)
-# end
 
 """
 Evaluate full Keldysh vertex in given channel pointwise. In contrast to the Matsubara version,
@@ -2469,6 +2463,9 @@ function ΓEvaluator_KF(
     )
 end
 
+"""
+Evaluate full vertex on point.
+"""
 function (gev::ΓEvaluator_KF)(w::Vararg{Int,3})
     # core vertex
     ret = gev.core(w...)
@@ -2504,6 +2501,9 @@ function (gev::ΓEvaluator_KF)(w::Vararg{Int,3})
     return ret + gev.Γbare
 end
 
+"""
+Evaluate core vertex on point.
+"""
 function eval_core(gev::ΓEvaluator_KF, w::Vararg{Float64,3})
     return eval_interpol(gev.core, w...)
 end
@@ -2734,8 +2734,15 @@ function test_eval_K12_ΓEvaluator_KF()
 end
 
 
+"""
+BatchEvaluator that supports caching with multiple threads.
+"""
 abstract type CachedBatchEvaluator{T} <: TCI.BatchEvaluator{T} end
 
+"""
+Evaluates full Matsubara vertex. Batch evaluation will be used in TCI, which
+is desirable when running on multiple threads.
+"""
 struct ΓBatchEvaluator_MF <: CachedBatchEvaluator{ComplexF64}
     grid::QuanticsGrids.InherentDiscreteGrid{3}
     qf::TCI.CachedFunction{ComplexF64}
@@ -2783,6 +2790,10 @@ function ΓBatchEvaluator_MF(
     return ΓBatchEvaluator_MF(gev; unfoldingscheme=unfoldingscheme)
 end
 
+"""
+Evaluates full Keldysh vertex. Batch evaluation will be used in TCI, which
+is desirable when running on multiple threads.
+"""
 struct ΓBatchEvaluator_KF <: CachedBatchEvaluator{ComplexF64}
     grid::QuanticsGrids.InherentDiscreteGrid{3}
     qf::TCI.CachedFunction{ComplexF64}
@@ -2838,6 +2849,10 @@ function ΓBatchEvaluator_KF(
     return ΓBatchEvaluator_KF(gev; grid_kwargs...)
 end
 
+"""
+Evaluates Matsubara core vertex. Batch evaluation will be used in TCI, which
+is desirable when running on multiple threads.
+"""
 struct ΓcoreBatchEvaluator_MF{T} <: CachedBatchEvaluator{T}
     grid::QuanticsGrids.InherentDiscreteGrid{3}
     qf::TCI.CachedFunction{T}
@@ -2889,7 +2904,8 @@ struct ΓcoreBatchEvaluator_MF{T} <: CachedBatchEvaluator{T}
 end
 
 """
-To evaluate Keldysh core vertex in parallelized fashion (more than 16 threads).
+Evaluates Keldysh core vertex. Batch evaluation will be used in TCI, which
+is desirable when running on multiple threads.
 """
 struct ΓcoreBatchEvaluator_KF{T} <: CachedBatchEvaluator{T}
     # discrete grid because we only need to address frequency indices, not actual frequencies

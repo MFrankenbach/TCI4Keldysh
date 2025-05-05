@@ -1,6 +1,14 @@
+#=
+Methods for the computing MF/KF four-point vertex and K2 contributions.
+For the method, see "Symmetric improved estimators for multipoint vertex functions", Lihm et.al. (2024).
+=#
+
 # whether to use fluctuation-dissipation theorem in asymmetric estimators of self-energy (relevant for core vertex, K2)
 USE_FDR_SE() = false
 # 2d
+"""
+Symmetric estimator for K2 class.
+"""
 function compute_K2r_symmetric_estimator(
     formalism ::String,
     PSFpath::String,
@@ -224,6 +232,9 @@ function compute_Γcore_symmetric_estimator(
 end
 
 
+"""
+Contract self-energy with precomputed correlator data.
+"""
 function _mult_Σ_KF(G_data::Array{ComplexF64,N}, Σ::Array{ComplexF64,NΣ}; idim::Int, is_incoming::Bool) where{N,NΣ}
     G_out = zeros(ComplexF64, size(G_data))
     Ndims_freqs = ndims(Σ) - 2
@@ -238,6 +249,9 @@ function _mult_Σ_KF(G_data::Array{ComplexF64,N}, Σ::Array{ComplexF64,NΣ}; idi
     return G_out
 end
 
+"""
+Bare Keldysh vertex
+"""
 function Γbare_KF(PSFpath::String, flavor_idx::Int)
     if flavor_idx==2
         gam0 = load_Adisc_0pt(PSFpath, "Q12")
@@ -253,6 +267,10 @@ function Γbare_KF(PSFpath::String, flavor_idx::Int)
     end
 end
 
+"""
+Compute full vertex in given formalism. Can store individual contributions (K1,K2 in different channels and core)
+by providing `store_dir`.
+"""
 function compute_Γfull_symmetric_estimator(
     formalism ::String,
     PSFpath::String,
@@ -454,6 +472,9 @@ function compute_Γfull_symmetric_estimator(
     return Γfull
 end
 
+"""
+NOT YET IMPLEMENTED
+"""
 function compute_Γcore_pointwise(
     formalism ::String,
     PSFpath::String,
@@ -474,5 +495,6 @@ function compute_Γcore_pointwise(
         ωs_ext = KF_grid(ommax, R, 3)
         # TODO need to evaluate vertex on arbitrary frequencies
         # by interpolation
+        error("NYI")
     end
 end

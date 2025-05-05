@@ -20,6 +20,7 @@ These are normally provided by the mpNRG code by Lee et. al. [Lee2021].
 3. abbreviations:
    * IE/sIE/aSI: ((a-)symmetric) improved estimator
    * TD: Tucker decomposition
+   * MF/KF: Matsubara / Keldysh formalism
    * 2p,3p,4p: p=point
    * GF: correlator/Green's function
    * a,p,t: channels, i.e., different kinds of frequency parametrizations of the vertex

@@ -312,8 +312,8 @@ function matsubaracore(
     svd_kernel = true
     @show svd_kernel
     @show batched_eval
-    npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 2
-    unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol, kwargs[:unfoldingscheme]) : :interleaved 
+    npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 0
+    unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol, kwargs[:unfoldingscheme]) : :fused
 
     # prepare output
     tcikwargs = filter_tcikwargs(Dict(kwargs))
@@ -397,8 +397,8 @@ function matsubarafull(
 
     T = TCI4Keldysh.dir_to_T(PSFpath)
     tcikwargs = filter_tcikwargs(Dict(kwargs))
-    npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 2
-    unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol ,kwargs[:unfoldingscheme]) : :interleaved 
+    npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 0
+    unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol ,kwargs[:unfoldingscheme]) : :fused
     d["tcikwargs"] = tcikwargs
     d["unfoldingscheme"] = unfoldingscheme
     d["npivot"] = npivot
