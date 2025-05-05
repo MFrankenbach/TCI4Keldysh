@@ -1,0 +1,68 @@
+\documentclass[12pt]{article}
+
+\usepackage[utf8]{inputenc} 
+\usepackage{amsmath}  
+\usepackage{graphicx} 
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{listings}
+
+\title{TCI4Keldysh}
+\author{Markus Frankenbach}
+\date{\today}  
+
+\begin{document}
+
+\maketitle
+
+\begin{section}{Introduction}
+\texttt{TCI4Keldysh} can compute imaginary- and real-frequency 4-point vertices from the multipoint numerical renormalization group (mpNRG) in quantics tensor train (QTT) format.
+The vertices can be obtained in their 'full' form or decomposed into a 3d core and lower-dimensional asymptotic contributions.
+Further functionalities include the computation of four-point vertices on dense, possibly nonlinear, grids and the computation of 2-4-point correlators, either
+in QTT format or on a dense, linear grid.
+\end{section}
+
+\begin{section}{Getting started}
+The code is exclusively written in Julia. To install all required packages,
+simply run \texttt{>> Pkg.instantiate()} in the Julia REPL.
+As noted in the \texttt{README.md}, you will need correctly formatted partial spectral functions (.mat files) to use this code.
+These are normally provided by the mpNRG code by Lee et. al. [Lee2021].
+Once you have suitable spectral data, change the \texttt{datadir} function in \texttt{src/utils.jl} to
+return the parent directory of the directory containing your set of spectral functions.
+That's all the setup you need! To run a calculation, either write your own script using
+the functionality provided by \texttt{TCI4Keldysh}, or, if you only require a standard functionality
+use input files, as explained in the next section.
+\end{section}
+
+\begin{section}{Input files}
+The code can be run using input files by running:
+\begin{verbatim}
+    julia scripts/parse_input.jl <path_to_inputfile>
+\end{verbatim}
+The input file is just a list of key-value pairs, the most important key being
+\texttt{jobtype}, as it specifies the type of calculation. For example:
+\begin{verbatim}
+TCI4Keldysh BEGIN
+jobtype matsubarafull
+Rrange 0404
+tolerance 1.e-2
+channel a
+flavor_idx 1
+PSFpath <path to spectral functions>
+TCI4Keldysh END
+\end{verbatim}
+Available jobtypes and options can be inferred from the \texttt{parse\_input.jl} script.
+They will be documented here once users need it.
+\end{section}
+
+\begin{section}{Contributing authors}
+This document was written by Markus Frankenbach. The \texttt{TCI4Keldysh} code was
+written by Markus Frankenbach and Anxiang Ge.
+\end{section}
+
+\nocite{*}
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
