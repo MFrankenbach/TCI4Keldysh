@@ -17,9 +17,9 @@
 \maketitle
 
 \begin{section}{Introduction}
-\texttt{TCI4Keldysh} can compute imaginary- and real-frequency 4-point vertices from the multipoint numerical renormalization group (mpNRG) in quantics tensor train (QTT) format.
+\texttt{TCI4Keldysh} can compute imaginary- and real-frequency 4-point vertices from multipoint numerical renormalization group (mpNRG) spectral functions in quantics tensor train (QTT) format.
 The vertices can be obtained in their 'full' form or decomposed into a 3d core and lower-dimensional asymptotic contributions.
-Further functionalities include the computation of four-point vertices on dense, possibly nonlinear, grids and the computation of 2-4-point correlators, either
+Further features include the computation of four-point vertices on dense, possibly nonlinear, grids and the computation of 2-4-point correlators, either
 in QTT format or on a dense, linear grid.
 \end{section}
 
@@ -27,11 +27,11 @@ in QTT format or on a dense, linear grid.
 The code is exclusively written in Julia. To install all required packages,
 simply run \texttt{>> Pkg.instantiate()} in the Julia REPL.
 As noted in the \texttt{README.md}, you will need correctly formatted partial spectral functions (.mat files) to use this code.
-These are normally provided by the mpNRG code by Lee et. al. [Lee2021].
+These are normally provided by the mpNRG code by Lee et.~al.\ \cite{Lee2021}.
 Once you have suitable spectral data, change the \texttt{datadir} function in \texttt{src/utils.jl} to
 return the parent directory of the directory containing your set of spectral functions.
 That's all the setup you need! To run a calculation, either write your own script using
-the functionality provided by \texttt{TCI4Keldysh}, or, if you only require a standard functionality
+the functionality provided by \texttt{TCI4Keldysh}, or, if you only require a standard feature,
 use input files, as explained in the next section.
 \end{section}
 
