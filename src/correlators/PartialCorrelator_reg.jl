@@ -1,3 +1,7 @@
+"""
+This file is concerned with representing and evaluating partial correlators in both formalisms (Matsubara/Keldysh).
+It provides the basic struct to represent a partial correlator.
+"""
 
 """
 PartialCorrelator_reg

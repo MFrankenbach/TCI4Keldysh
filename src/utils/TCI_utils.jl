@@ -1,3 +1,8 @@
+#=
+Collect utilities for working with tensor trains.
+Mostly used for postprocessing and for evaluating spectral representations in tensor network language.
+=#
+
 """
 qtt_to_fattensor(Ts::Vector{Array{T, 3}})
 

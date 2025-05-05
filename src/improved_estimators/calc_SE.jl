@@ -1,5 +1,5 @@
 #=
-This file provides different methods for the computation of the selfenergy
+This file provides different methods to compute the selfenergy.
 =#
 
 """

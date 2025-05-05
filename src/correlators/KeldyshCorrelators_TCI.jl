@@ -1,5 +1,8 @@
 #=
-Compute Keldysh correlators @ TCI by pointwise evaluation.
+Compute Keldysh correlators using TCI by pointwise evaluation.
+The computation of correlators in TCI comes with the caveat that, for the same tolerance, they tend
+to have higher bond dimensions than the vertex. Using them as intermediates to obtain the vertex as a QTT
+is therefore note efficient. Moreover, getting correlators in tensor train format is not the main objective of this code.
 =#
 
 function KFev_filename()

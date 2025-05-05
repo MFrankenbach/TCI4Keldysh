@@ -2,7 +2,14 @@ using Plots
 
 #=
 Compute PartialCorrelators & FullCorrelators (Matsubara) by convolution with frequency kernels, all in interleaved quantics representation.
-Performance: 🤯😢
+The computations happen in tensor train format.
+This approach is not recommended and was not pursued further because:
+a) 4-point correlators often are less compressible than four-point vertices. Using them as intermediates
+in the symmetric improved estimator is therefore expected to be inefficient.
+b) Partial spectral functions are barely compressible (frequency kernels are, though). This made the MPS-MPO contractions
+very costly in our tests.
+
+For functions that TCI the vertex, see `src/improved_estimators/improved_estimators_TCI.jl`
 =#
 
 """

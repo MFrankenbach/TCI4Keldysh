@@ -1,5 +1,5 @@
 #=
-Written by ChatGPT
+Written by ChatGPT. Could come in useful at some point.
 =#
 
 using LinearAlgebra

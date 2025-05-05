@@ -1,6 +1,6 @@
 #=
 Compute partial and full correlators in imaginary time domain.
-EXPERIMENTAL/WIP; NOT TESTED
+EXPERIMENTAL/WORK IN PROGRESS; NOT TESTED
 =#
 
 struct CompressedPSF

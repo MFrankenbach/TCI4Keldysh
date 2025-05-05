@@ -1,3 +1,10 @@
+#=
+This file implements an efficient way to compress a tucker decomposition. The resulting object
+provides fast, pointwise evaluation of the Tucker decomposition within a certain accuracy.
+This is used in `MultipoleKFCEvaluator`, a struct for fast evaluation of a full Keldysh correlator. The latter
+is required to evaluate the Keldysh vertex.
+=#
+
 function nested_intervals(min::Int, max::Int, nlevel::Int)
     levels = [[min:max]]
     if max<=min error("Invalid boundaries") end
@@ -436,7 +443,7 @@ function speedup_MultipoleKFCEvaluator()
     (γ, sigmak) = TCI4Keldysh.read_broadening_params(basepath; channel=channel)
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     ommax = 0.65
-    R = 14
+    R = 12
     ωs_ext = TCI4Keldysh.KF_grid(ommax, R, D)
     G = TCI4Keldysh.FullCorrelator_KF(
         PSFpath,
@@ -449,23 +456,30 @@ function speedup_MultipoleKFCEvaluator()
         sigmak=sigmak,
         emax=max(20.0, 3*ommax),
         emin=2.5*1.e-5,
-        estep=20
+        estep=50
     )
+
+    # compile
+    evaluate_all_iK(G, 1,1,1)
 
     # time full correlator
     w = ntuple(i -> rand(1:length(ωs_ext[i])), 3)
-    res1 = @benchmark evaluate_all_iK($G, $w...)
+    res1 = @benchmark evaluate_all_iK($G, $w...) seconds=15
     display(res1)
 
     # for R=12, nlevel=4->5 yields a threefold speedup in evaluations
     Gev = MultipoleKFCEvaluator(G; nlevel=4, cutoff=1.e-6)
+
+    # compile
+    Gev(1,1,1)
+
     # time hierarchical tuckers
     function __f()
         w = ntuple(i -> rand(1:length(ωs_ext[i])), 3)
         return Gev(w...)
     end
 
-    res2 = @benchmark $__f()
+    res2 = @benchmark $__f() seconds=20 samples=30000
     display(res2)
 end
 

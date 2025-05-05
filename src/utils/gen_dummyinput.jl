@@ -2,6 +2,9 @@ using Random
 using MAT
 #=
 Generate dummy PSFs/Correlators for trying things out and testing.
+
+WARNING: This is not mature for PSFs. Currently, generating artificial PSFs also yields extremely artificial results.
+It is therefore NOT RECOMMENDED.
 =#
 
 function write_PSF(outfile, odisc::Vector{Float64}, Adiscs_new)

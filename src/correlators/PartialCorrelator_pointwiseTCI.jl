@@ -1,5 +1,7 @@
 #=
 Compute PartialCorrelator in quantics representation by TCI-ing the tucker decomposition via pointwise evaluation.
+Note that the main objective of the code is vertex computation and, apart from the testing functions, this file
+is not relevant for that purpose.
 =#
 
 """
