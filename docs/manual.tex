@@ -152,10 +152,24 @@ Therefore, the more generic and recommended method is to use \texttt{MultipoleKF
 With this option, one can provide a cutoff and a number of levels with the keyword \texttt{coreEvaluator\_kwargs}.
 A \texttt{cutoff} of $10^{-6}$ is sufficient for tolerance of $\tau\geq10^{-4}$. Cranking up \texttt{nlevel} speeds
 up vertex evaluations, but requires more RAM and preprocessing time.
-% \subsection{Computation of a Matsubara vertex (without TCI)}
+\subsection{Computation of a Matsubara vertex (without TCI)}
+This input files requests computation of the full Matsubara vertex on a $(2^7+1)\times2^7\times2^7$ grid.
+The first grid is bosonic and therefore needs an odd number of frequency points to be symmetric.
+If you only need the core vertex, change the \texttt{jobtype} to \texttt{conv\_matsubaracore}.
+\begin{verbatim}
+TCI4Keldysh BEGIN
+jobtype conv_matsubarafull
+Rrange 0707
+tolerance 1.e-2
+channel a
+flavor_idx 1
+PSFpath /home/data/SIAM_u=0.50
+TCI4Keldysh END  
+\end{verbatim}
+\textit{To avoid \texttt{.h5} write clashes, you should only request a single grid size at a time!}
 \subsection{Computation of a Keldysh vertex on a linear grid (without TCI)}
 Below we give an example for computing a Keldysh vertex on a linear (equidistant) grid of size
-$2^{3\cdot8}=256\times256\times256$.
+$257\times256\times256$. The first grid is centered around zero (`bosonic`). To be symmetric, it needs an additional point.
 To compute only the core vertex, use the \texttt{jobtype} \texttt{conv\_keldyshcore}.
 \begin{verbatim}
 TCI4Keldysh BEGIN
@@ -170,6 +184,7 @@ TCI4Keldysh END
 \end{verbatim}
 The frequency box is specified by \texttt{ommax} as $[-\texttt{ommax},\texttt{ommax}]^3$.
 All Keldysh components of the vertex will be computed.
+\textit{To avoid \texttt{.h5} write clashes, you should only request a single grid size at a time!}
 
 \subsection{Computation of a Keldysh vertex on a nonlinear grid (without TCI)}
 The following input exemplifies how to evaluate the Keldysh vertex on a nonlinear (e.g.\ logarithmic) grid.
