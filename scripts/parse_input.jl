@@ -147,6 +147,10 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
         keldyshcore_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="conv_keldyshfull"
         keldyshfull_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="conv_matsubarafull"
+        matsubarafull_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="conv_matsubaracore"
+        matsubaracore_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     # Correlator jobs
     elseif jobtype=="corrkeldysh"
         corrkeldysh(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
@@ -945,6 +949,56 @@ function keldyshslice_conv(
 end
 
 """
+Conventional computation of full matsubara vertex
+"""
+function matsubarafull_conv(outname, d; 
+    Rs,
+    folder,
+    PSFpath,
+    flavor_idx,
+    channel,
+    kwargs...)
+
+    useFDR = if haskey(Dict(kwargs), :usefdr)
+        maybeparse(Bool, kwargs[:usefdr])
+    else
+        TCI4Keldysh.USE_FDR_SE()
+    end
+
+    d["channel"] = channel
+    TCI4Keldysh.logJSON(d, outname, folder)
+    
+    for R in Rs
+        if R>10
+            error("This calculation (R=$R) is doomed.")
+        end
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+        ωs_ext = TCI4Keldysh.MF_npoint_grid(T,2^(R-1),3)
+        gamcore = TCI4Keldysh.compute_Γfull_symmetric_estimator(
+            "MF",
+            PSFpath;
+            T,
+            flavor_idx,
+            ωs_ext,
+            channel=channel,
+            store_dir = joinpath(TCI4Keldysh.pdatadir(), folder),
+            useFDR=useFDR
+            )
+
+        # store
+        h5name = "V_MF_$(channel)_R=$(R).h5"
+        h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "V_MF", gamcore)
+        for i in eachindex(ωs_ext)
+            h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "omgrid$i", ωs_ext[i])
+        end
+        println("==== R=$R DONE")
+        flush(stdout)
+        flush(stderr)
+    end
+end
+
+
+"""
 Conventional computation of full keldysh vertex
 """
 function keldyshfull_conv(outname, d; 
@@ -1019,6 +1073,54 @@ function keldyshfull_conv(outname, d;
         flush(stderr)
     end
 end
+
+"""
+Conventional computation of keldysh core vertex
+"""
+function matsubaracore_conv(outname, d::Dict; 
+    Rs,
+    folder,
+    PSFpath,
+    flavor_idx,
+    channel,
+    kwargs...)
+
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    d["channel"] = channel
+    TCI4Keldysh.logJSON(d, outname, folder)
+    
+    for R in Rs
+        if R>10
+            error("This calculation (R=$R) is doomed.")
+        end
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+        ωs_ext = TCI4Keldysh.MF_npoint_grid(T,2^(R-1),3)
+        om_sig = TCI4Keldysh.Σ_grid(ntuple(i -> ωs_ext[i],2))
+        (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_MF_aIE(PSFpath, om_sig; flavor_idx=flavor_idx, T=T)
+        gamcore = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+            "MF",
+            joinpath(PSFpath, "4pt"),
+            Σ_R
+            ;
+            Σ_calcL=Σ_L,
+            T,
+            flavor_idx,
+            ωs_ext,
+            ωconvMat
+            )
+
+        # store
+        h5name = "V_MF_$(channel)_R=$(R).h5"
+        h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "V_MF", gamcore)
+        for i in eachindex(ωs_ext)
+            h5write(joinpath(TCI4Keldysh.pdatadir(), folder, h5name), "omgrid$i", ωs_ext[i])
+        end
+        println("==== R=$R DONE")
+        flush(stdout)
+        flush(stderr)
+    end
+end
+
 
 
 """
