@@ -5,7 +5,9 @@
 \usepackage{graphicx} 
 \usepackage{xcolor}
 \usepackage{hyperref}
-\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage[a4paper,margin=2cm]{geometry}
 \usepackage{listings}
 
 \title{TCI4Keldysh}
@@ -24,21 +26,44 @@ in QTT format or on a dense, linear grid.
 \end{section}
 
 \begin{section}{Getting started}
+\label{sec:getting_started}
 The code is exclusively written in Julia. To install all required packages,
 simply run \texttt{>> Pkg.instantiate()} in the Julia REPL.
-As noted in the \texttt{README.md}, you will need correctly formatted partial spectral functions (.mat files) to use this code.
-These are normally provided by the mpNRG code by Lee et.~al.\ \cite{Lee2021}.
+As noted in the \texttt{README.md}, you will need correctly formatted partial spectral functions (\texttt{.mat} files, converted according to \texttt{README\_data.md}) to use this code.
+These can be generated with the mpNRG code by Lee et.~al.\ \cite{Lee2021}.
+Off-the-shelf partial spectral functions (PSFs) can be downloaded from OpenDataLMU \href{https://www.google.com/}{here}\textcolor{red}{[TODO:insert link]}.
 Once you have suitable spectral data, change the \texttt{datadir} function in \texttt{src/utils.jl} to
 return the parent directory of the directory containing your set of spectral functions.
-That's all the setup you need! To run a calculation, either write your own script using
-the functionality provided by \texttt{TCI4Keldysh}, or, if you only require a standard feature,
+With a single PSF data set, your \texttt{datadir} should be structured as follows:
+\begin{verbatim}
+    <return value of TCI4Keldysh.datadir()>/
+    |
+    --<dataset name>/
+        |
+        --<PSF folder name>/
+            |
+            --4pt/
+                |
+                --<4pt PSFs>
+            <2/3pt PSFs>
+        mpNRG_ph.mat
+        mpNRG_pht.mat
+        mpNRG_pp.mat
+\end{verbatim}
+The \texttt{mpNRG\_*.mat} files contain the physical and numerical (broadening etc.) parameters.
+Only default broadening parameters are read from these files.
+To inform \texttt{TCI4Keldysh} about the temperature of you PSF dataset, modify the function \texttt{TCI4Keldysh.dir\_to\_T()} in \texttt{src/utils.jl}.
+That's all you need to run a first calculation! 
+
+To run a calculation, either write your own script using
+the functions provided by \texttt{TCI4Keldysh}, or, if you only require a standard feature,
 use input files, as explained in the next section.
 \end{section}
 
 \begin{section}{Input files}
 The code can be run using input files by running:
 \begin{verbatim}
-    julia scripts/parse_input.jl <path_to_inputfile>
+    julia --project scripts/parse_input.jl <path_to_inputfile>
 \end{verbatim}
 The input file is just a list of key-value pairs, the most important key being
 \texttt{jobtype}, as it specifies the type of calculation. For example:
@@ -49,11 +74,124 @@ Rrange 0404
 tolerance 1.e-2
 channel a
 flavor_idx 1
-PSFpath <path to spectral functions>
+PSFpath <absolute path to spectral functions>
 TCI4Keldysh END
 \end{verbatim}
-Available jobtypes and options can be inferred from the \texttt{parse\_input.jl} script.
-They will be documented here once users need it.
+The \texttt{PSFpath} corresponds to the \texttt{<PSF folder name>} in the example given in Sec.\ \ref{sec:getting_started}.
+The results of your calculation will by default be written into a directory \texttt{pwtcidir}. To change that directory (\textit{recommended}),
+export the environment variable \texttt{PWTCIDIR} before running the calculation.
+
+The following subsections illustrate which jobtypes \texttt{TCI4Keldysh} offers using sample input files.
+The most important settings are listed in Tab. \ref{tab:options}.
+\begin{table}[h]
+    \centering
+    \begin{tabular}{c|p{6cm}|p{5cm}}
+        \toprule
+        name & description & examples\\
+        \midrule
+            \texttt{jobtype} & The type of calculation to run. & \texttt{matsubarafull} \texttt{matsubaracore} \texttt{keldyshfull}\vfil \texttt{keldyshcore}\\
+        \midrule
+        \texttt{Rrange} &
+        Range \texttt{<fromto>} of how many quantics bits to use in each dimension.
+        Calulations will be run for $R\in\{\texttt{from},\ldots,\texttt{to}\}$.
+        \textbf{Currently mandatory} even for jobs that don't use it. & \texttt{0710}$\rightarrow R\in\{7,\ldots,10\}$ \\
+        \midrule
+        \texttt{tolerance} & TCI tolerance. Only relevant in jobs that use TCI, but \textbf{currently mandatory}. & \texttt{1.e-3}\\
+        \midrule
+        \texttt{channel} & Select channel parametrization. The parametrizations can be seen in the function \texttt{channel\_trafo()} in \texttt{src/utils.jl}. & \texttt{a}\vfil \texttt{p}\vfil \texttt{t}\\
+        \midrule
+        \texttt{PSFpath} & Absolute path to partial spectral function data. & \texttt{/home/SIAM\_u=0.50/myPSFs}\\
+        \midrule
+        \texttt{flavor\_idx} & Select either 1 (all spins up) or 2 (two spins up, two down). & \texttt{1}\vfil \texttt{2}\\
+        \bottomrule
+    \end{tabular}
+    \caption{Selected input file options.}
+    \label{tab:options}
+\end{table}
+% More details on available options will be documented here once users need it.
+\subsection{QTCI-Compression of Matsubara vertex}
+The following input file compresses a full matsubara vertex for 7,8 and 9 quantics bits in each frequency.
+To compress only the core, use the \texttt{jobtype} \texttt{matsubaracore}.
+\begin{verbatim}
+TCI4Keldysh BEGIN
+jobtype matsubarafull
+Rrange 0709
+tolerance 1.e-4
+channel p
+flavor_idx 1
+PSFpath /home/data/SIAM_u=0.50/PSF_nz=4_conn_zavg
+TCI4Keldysh END 
+\end{verbatim}
+\subsection{QTCI-Compression of Keldysh vertex}
+\label{subsec:KeldyshCompression}
+The following input file compresses a full Keldysh vertex for 12 quantics bits in each frequency.
+To compress only the core, use the \texttt{jobtype} \texttt{keldyshcore}.
+\begin{verbatim}
+TCI4Keldysh BEGIN
+jobtype keldyshfull
+Rrange 1212
+tolerance 1.e-2
+channel p
+flavor_idx 1
+PSFpath /home/data/siam05_U0.05_T0.0005_Delta0.0318
+iK 1
+unfoldingscheme fused
+ommax 0.65
+KEV MultipoleKFCEvaluator
+coreEvaluator_kwargs cutoff Float64 1.e-6 nlevel Int 4
+TCI4Keldysh END 
+\end{verbatim}
+Keldysh computations come with a few more options than Matsubara: The Keldysh component is
+specified with $\texttt{iK}\in\{1,\ldots,15\}$ ($\texttt{iK}=16$ vanishes). The coresponding four Keldysh indices
+$(k_1k_2k_3k_4)$ are given by the \texttt{iK}th entry of \texttt{Iterators.product(1:2,1:2,1:2,1:2)}.
+The variable \texttt{ommax} sets the frequency box to $[-\texttt{ommax},\texttt{ommax}]^3$.
+The \texttt{KEV} option specifies the method of pointwise Keldysh vertex evaluation and can be set to
+\texttt{MultipoleKFCEvaluator} or \texttt{KFCEvaluator}. The latter is faster, but uses much more memory because,
+for each partial correlator, it contracts one kernel with the PSF during preprocessing.
+Therefore, the more generic and recommended method is to use \texttt{MultipoleKFCEvaluator}.
+With this option, one can provide a cutoff and a number of levels with the keyword \texttt{coreEvaluator\_kwargs}.
+A \texttt{cutoff} of $10^{-6}$ is sufficient for tolerance of $\tau\geq10^{-4}$. Cranking up \texttt{nlevel} speeds
+up vertex evaluations, but requires more RAM and preprocessing time.
+% \subsection{Computation of a Matsubara vertex (without TCI)}
+\subsection{Computation of a Keldysh vertex on a linear grid (without TCI)}
+Below we give an example for computing a Keldysh vertex on a linear (equidistant) grid of size
+$2^{3\cdot8}=256\times256\times256$.
+To compute only the core vertex, use the \texttt{jobtype} \texttt{conv\_keldyshcore}.
+\begin{verbatim}
+TCI4Keldysh BEGIN
+jobtype conv_keldyshfull
+Rrange 0808
+tolerance 1.e-2
+channel a
+flavor_idx 1
+PSFpath /home/data/SIAM_u=0.50
+ommax 0.65
+TCI4Keldysh END 
+\end{verbatim}
+The frequency box is specified by \texttt{ommax} as $[-\texttt{ommax},\texttt{ommax}]^3$.
+All Keldysh components of the vertex will be computed.
+
+\subsection{Computation of a Keldysh vertex on a nonlinear grid (without TCI)}
+The following input exemplifies how to evaluate the Keldysh vertex on a nonlinear (e.g.\ logarithmic) grid.
+Note that there is a sepearate \texttt{jobtype} for equidistant grids and that, for equal grid sizes,
+nonlinear grids are much more costly.
+\begin{verbatim}
+TCI4Keldysh BEGIN
+jobtype nonlin_keldyshfull
+Rrange 1212
+tolerance 1.e-2
+channel t
+flavor_idx 1
+PSFpath /home/data/SIAM_u=0.50
+KEV MultipoleKFCEvaluator
+coreEvaluator_kwargs cutoff Float64 1.e-6 nlevel Int 4
+frequencygrid loggrid20.h5
+foreign_channels a pQFT
+TCI4Keldysh END 
+\end{verbatim}
+The \texttt{frequencygrid} provides the name of a \texttt{.h5} file that specifies the
+grid. It contains three \texttt{Float64} vectors with keys \texttt{om1},\texttt{om2},\texttt{om3}.
+For details on the \texttt{KEV} and \texttt{coreEvaluator\_kwargs} options, see Sec.\ \ref{subsec:KeldyshCompression}.
 \end{section}
 
 \begin{section}{Contributing authors}
