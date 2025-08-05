@@ -21,17 +21,17 @@
 \begin{section}{Introduction}
 \texttt{TCI4Keldysh} can compute imaginary- and real-frequency 4-point vertices from multipoint numerical renormalization group (mpNRG) spectral functions in quantics tensor train (QTT) format.
 The vertices can be obtained in their 'full' form or decomposed into a 3d core and lower-dimensional asymptotic contributions.
-Further features include the computation of four-point vertices on dense, possibly nonlinear, grids and the computation of 2-4-point correlators, either
+Further features include the computation of four-point vertices on dense, possibly nonlinear, grids and the computation of 2/3/4-point correlators, either
 in QTT format or on a dense, linear grid.
 \end{section}
 
 \begin{section}{Getting started}
 \label{sec:getting_started}
-The code is exclusively written in Julia. To install all required packages,
+The code is exclusively written in Julia (version 1.10.3). To install all required packages,
 simply run \texttt{>> Pkg.instantiate()} in the Julia REPL.
 As noted in the \texttt{README.md}, you will need correctly formatted partial spectral functions (\texttt{.mat} files, converted according to \texttt{README\_data.md}) to use this code.
 These can be generated with the mpNRG code by Lee et.~al.\ \cite{Lee2021}.
-Off-the-shelf partial spectral functions (PSFs) can be downloaded from OpenDataLMU \href{https://www.google.com/}{here}\textcolor{red}{[TODO:insert link]}.
+Off-the-shelf partial spectral functions (PSFs) can be downloaded from OpenDataLMU \href{https://doi.org/10.5282/ubm/data.613}{here}.
 Once you have suitable spectral data, change the \texttt{datadir} function in \texttt{src/utils.jl} to
 return the parent directory of the directory containing your set of spectral functions.
 With a single PSF data set, your \texttt{datadir} should be structured as follows:
@@ -61,12 +61,12 @@ use input files, as explained in the next section.
 \end{section}
 
 \begin{section}{Input files}
-The code can be run using input files by running:
+The code can be run using input files by executing the command:
 \begin{verbatim}
     julia --project scripts/parse_input.jl <path_to_inputfile>
 \end{verbatim}
 The input file is just a list of key-value pairs, the most important key being
-\texttt{jobtype}, as it specifies the type of calculation. For example:
+\texttt{jobtype}, which specifies the type of calculation. For example:
 \begin{verbatim}
 TCI4Keldysh BEGIN
 jobtype matsubarafull
@@ -79,7 +79,7 @@ TCI4Keldysh END
 \end{verbatim}
 The \texttt{PSFpath} corresponds to the \texttt{<PSF folder name>} in the example given in Sec.\ \ref{sec:getting_started}.
 The results of your calculation will by default be written into a directory \texttt{pwtcidir}. To change that directory (\textit{recommended}),
-export the environment variable \texttt{PWTCIDIR} before running the calculation.
+export the environment variable \texttt{PWTCIDIR} in your SLURM script before running the calculation.
 
 The following subsections illustrate which jobtypes \texttt{TCI4Keldysh} offers using sample input files.
 The most important settings are listed in Tab. \ref{tab:options}.
@@ -142,7 +142,7 @@ coreEvaluator_kwargs cutoff Float64 1.e-6 nlevel Int 4
 TCI4Keldysh END 
 \end{verbatim}
 Keldysh computations come with a few more options than Matsubara: The Keldysh component is
-specified with $\texttt{iK}\in\{1,\ldots,15\}$ ($\texttt{iK}=16$ vanishes). The coresponding four Keldysh indices
+specified with $\texttt{iK}\in\{1,\ldots,15\}$ ($\texttt{iK}=16$ is zero). The corresponding four Keldysh indices
 $(k_1k_2k_3k_4)$ are given by the \texttt{iK}th entry of \texttt{Iterators.product(1:2,1:2,1:2,1:2)}.
 The variable \texttt{ommax} sets the frequency box to $[-\texttt{ommax},\texttt{ommax}]^3$.
 The \texttt{KEV} option specifies the method of pointwise Keldysh vertex evaluation and can be set to
@@ -150,7 +150,7 @@ The \texttt{KEV} option specifies the method of pointwise Keldysh vertex evaluat
 for each partial correlator, it contracts one kernel with the PSF during preprocessing.
 Therefore, the more generic and recommended method is to use \texttt{MultipoleKFCEvaluator}.
 With this option, one can provide a cutoff and a number of levels with the keyword \texttt{coreEvaluator\_kwargs}.
-A \texttt{cutoff} of $10^{-6}$ is sufficient for tolerance of $\tau\geq10^{-4}$. Cranking up \texttt{nlevel} speeds
+A \texttt{cutoff} of $10^{-6}$ was sufficient for tolerances of $\tau\geq10^{-4}$ in our calculations. Increasing \texttt{nlevel} speeds
 up vertex evaluations, but requires more RAM and preprocessing time.
 \subsection{Computation of a Matsubara vertex (without TCI)}
 This input files requests computation of the full Matsubara vertex on a $(2^7+1)\times2^7\times2^7$ grid.
@@ -209,9 +209,11 @@ grid. It contains three \texttt{Float64} vectors with keys \texttt{om1},\texttt{
 For details on the \texttt{KEV} and \texttt{coreEvaluator\_kwargs} options, see Sec.\ \ref{subsec:KeldyshCompression}.
 \end{section}
 
-\begin{section}{Contributing authors}
+\begin{section}{Contributing authors and acknowledgement}
 This document was written by Markus Frankenbach. The \texttt{TCI4Keldysh} code was
-written by Markus Frankenbach and Anxiang Ge.
+written by Markus Frankenbach and Anxiang Ge in the group of Jan von Delft.
+If you use this code in your work, please cite \cite{Frankenbach2025}. If your project heavily relies on the code, it's
+authors may need to be coauthors of the paper. That being said, collaborations are very welcome.
 \end{section}
 
 \nocite{*}

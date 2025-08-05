@@ -28,10 +28,11 @@ These are normally provided by the mpNRG code by Lee et. al. [Lee2021].
    * $\Gamma$: four-point vertex
 
 ## References
-1. [Lihm2024]: "Symmetric improved estimators for multipoint vertex functions", doi:10.1103/PhysRevB.109.125138
-2. [Kugler2021]: "Multipoint Correlation Functions: Spectral Representation and Numerical Evaluation", doi: 10.1103/PhysRevX.11.041006
-3. [Lee2021]: "Computing Local Multipoint Correlators Using the Numerical Renormalization Group", doi:10.1103/PhysRevX.11.041007
-4. [Fernandez2025]: "Learning tensor networks with tensor cross interpolation: New algorithms and libraries", doi:10.21468/SciPostPhys.18.3.104
+1. [Frankenbach2025]: "Compressing local vertex functions from the multipoint numerical renormalization group using quantics tensor cross interpolation", https://arxiv.org/abs/2506.13359
+2. [Lihm2024]: "Symmetric improved estimators for multipoint vertex functions", doi:10.1103/PhysRevB.109.125138
+3. [Kugler2021]: "Multipoint Correlation Functions: Spectral Representation and Numerical Evaluation", doi: 10.1103/PhysRevX.11.041006
+4. [Lee2021]: "Computing Local Multipoint Correlators Using the Numerical Renormalization Group", doi:10.1103/PhysRevX.11.041007
+5. [Fernandez2025]: "Learning tensor networks with tensor cross interpolation: New algorithms and libraries", doi:10.21468/SciPostPhys.18.3.104
 
 ## List of contributors
 Markus Frankenbach<br>
