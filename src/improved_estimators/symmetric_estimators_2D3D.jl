@@ -273,7 +273,7 @@ by providing `store_dir`.
 """
 function compute_Γfull_symmetric_estimator(
     formalism ::String,
-    PSFpath::String,
+    PSFpath::String
     ;
     T::Float64,
     flavor_idx::Int,
@@ -285,6 +285,8 @@ function compute_Γfull_symmetric_estimator(
 )
 
     ωconvMat4pt = channel_trafo(channel)
+
+    Nom = length(ωs_ext[1])
 
     # self-energies
     omsig = only(trafo_grids(ωs_ext[1:2], reshape([1,1],(1,2))))
@@ -312,7 +314,7 @@ function compute_Γfull_symmetric_estimator(
     )
 
     if !isnothing(store_dir)
-        h5write(joinpath(store_dir, "V_KF_U4.h5"), "core", Γfull)
+        h5write(joinpath(store_dir, "V_$(formalism)_U4_Nom$(Nom).h5"), "core", Γfull)
     end
 
     channels = ["a","t","pNRG"]
@@ -355,7 +357,7 @@ function compute_Γfull_symmetric_estimator(
                     end
                     if !isnothing(store_dir)
                         outdata = Γfull .- before
-                        h5write(joinpath(store_dir, "V_KF_U3_$(channel_translate(ch))_$(prime).h5"), "K2", collect(outdata))
+                        h5write(joinpath(store_dir, "V_KF_U3_$(channel_translate(ch))_$(prime)_Nom$(Nom).h5"), "K2", collect(outdata))
                     end
                 end
             else
@@ -389,7 +391,7 @@ function compute_Γfull_symmetric_estimator(
                     end
                     if !isnothing(store_dir)
                         outdata = Γfull .- before
-                        h5write(joinpath(store_dir, "V_KF_U3_$(channel_translate(ch))_$(prime).h5"), "K2", collect(outdata))
+                        h5write(joinpath(store_dir, "V_KF_U3_$(channel_translate(ch))_$(prime)_Nom$(Nom).h5"), "K2", collect(outdata))
                     end
                 end
             end
@@ -415,7 +417,7 @@ function compute_Γfull_symmetric_estimator(
                 end
                 if !isnothing(store_dir)
                     outdata = Γfull .- before
-                    h5write(joinpath(store_dir, "V_KF_U2_$(channel_translate(ch)).h5"), "K1", collect(outdata))
+                    h5write(joinpath(store_dir, "V_KF_U2_$(channel_translate(ch))_Nom$(Nom).h5"), "K1", collect(outdata))
                 end
             end
         else
@@ -442,7 +444,7 @@ function compute_Γfull_symmetric_estimator(
                 printstyled("==== NORM AFTER: $(norm(Γfull))\n"; color=:magenta)
                 if !isnothing(store_dir)
                     outdata = Γfull .- before
-                    h5write(joinpath(store_dir, "V_KF_U2_$(channel_translate(ch)).h5"), "K1", collect(outdata))
+                    h5write(joinpath(store_dir, "V_KF_U2_$(channel_translate(ch))_Nom$(Nom).h5"), "K1", collect(outdata))
                 end
             end
         end
@@ -466,7 +468,7 @@ function compute_Γfull_symmetric_estimator(
     end
 
     if !isnothing(store_dir)
-        h5write(joinpath(store_dir, "V_KF_symm.h5"), "V_KF", Γfull)
+        h5write(joinpath(store_dir, "V_$(formalism)_symm_Nom$(Nom).h5"), "V_KF", Γfull)
     end
     
     return Γfull

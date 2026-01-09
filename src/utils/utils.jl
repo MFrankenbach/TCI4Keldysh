@@ -1,3 +1,7 @@
+#=
+Collect various utilities.
+=#
+
 using JSON
 
 """
@@ -1429,8 +1433,8 @@ end
 Where to find PSF data
 """
 function datadir()
-    return joinpath(dirname(Base.current_project()), "data")
-    # return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
+    # return joinpath(dirname(Base.current_project()), "data")
+    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
 end
 
 """
@@ -1466,7 +1470,8 @@ function dir_to_T(PSFpath::String) :: Float64
         "SIAM_strong2_U0.2_T0.0001"=>1.0/10000.0,
         "siam05_U0.05_T0.05_Delta0.0318"=>1.0/20.0,
         "PRX_jae-mo_PSF"=>1.e-4,
-        "unittest_PSF"=>1.0/2000.0
+        "unittest_PSF"=>1.0/2000.0,
+        "HM_SquareLattice_T0.25_U4_mu2"=>1.0/4.0
         )
     for (key, val) in d
         if contains(PSFpath, key)
@@ -1958,8 +1963,14 @@ function read_broadening_settings(path=joinpath(TCI4Keldysh.datadir(), "SIAM_u=0
         path = joinpath(datadir(), path)
     end
 
+    files = filter(f -> occursin("mpNRG", f), readdir(path; join=true))
+    file = if length(files)==1
+        only(files)
+    else
+        joinpath(path, "mpNRG_$(channel_translate(channel)).mat")
+    end
     d = Dict{Symbol, Any}()
-    matopen(joinpath(path, "mpNRG_$(channel_translate(channel)).mat")) do f
+    matopen(file) do f
         d[:emin] = read(f, "emin")
         d[:emax] = read(f, "emax")
     end

@@ -454,8 +454,8 @@ function speedup_MultipoleKFCEvaluator()
         flavor_idx=1,
         γ=γ,
         sigmak=sigmak,
-        emax=max(20.0, 3*ommax),
-        emin=2.5*1.e-5,
+        emax=1.e4,
+        emin=1.e-6,
         estep=50
     )
 
@@ -464,7 +464,7 @@ function speedup_MultipoleKFCEvaluator()
 
     # time full correlator
     w = ntuple(i -> rand(1:length(ωs_ext[i])), 3)
-    res1 = @benchmark evaluate_all_iK($G, $w...) seconds=15
+    res1 = @benchmark evaluate_all_iK($G, $w...) seconds=60 samples=500
     display(res1)
 
     # for R=12, nlevel=4->5 yields a threefold speedup in evaluations
@@ -479,7 +479,7 @@ function speedup_MultipoleKFCEvaluator()
         return Gev(w...)
     end
 
-    res2 = @benchmark $__f() seconds=20 samples=30000
+    res2 = @benchmark $__f() seconds=200 samples=100000
     display(res2)
 end
 
