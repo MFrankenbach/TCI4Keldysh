@@ -135,22 +135,14 @@ end
 """
 Test accuracy of ΓcoreEvaluator_KF
 """
-function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
+function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8, ωmax::Float64=0.65)
 
     basepath = "SIAM_u=0.50"
     nz = 4
     PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=$(nz)_conn_zavg/")
-    channel = "t"
-    # read box size
-    gamfile = joinpath(TCI4Keldysh.datadir(), basepath, "V_KF_$(channel_translate(channel))", "V_KF_U4.mat") 
-    ωs_ext = nothing
-    matopen(gamfile) do f
-        CFdat = read(f, "CFdat")
-        ωs_ext = ntuple(i -> real.(vec(vec(CFdat["ogrid"])[i])), 3)
-    end
+    channel = "p"
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
-    ωmax = maximum(ωs_ext[1])
     (γ, sigmak) = read_broadening_params(basepath; channel=channel)
     broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath; channel=channel)
     ωconvMat = channel_trafo(channel)
@@ -179,48 +171,40 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
         if !any(parse_Ops_to_filename(ops) .== filelist)
             ops = [letts[i]*op_labels_symm[i] for i in 1:4]
         end
-        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, broadening_kwargs...);
+        GFs[l] = TCI4Keldysh.FullCorrelator_KF(PSFpath_4pt, ops; T, flavor_idx, ωs_ext, ωconvMat, sigmak=sigmak, γ=γ, estep=50, emin=1.e-6, emax=1.e4);
     end
 
     # evaluate self-energy
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
     @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
-    ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
     Σω_grid = KF_grid_fer(2*ωmax, R+1)
-    # Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
-    (Σ_L,Σ_R) = calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
+    (Σ_L,Σ_R) = calc_Σ_KF_aIE(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
 
-    # frequency grid offset for self-energy
+    println("Channel: $(channel), flavor: $(flavor_idx)")
+    println("PSFpath: $(PSFpath)")
+
     ΣωconvMat = incoming_trafo * ωconvMat
-    corner_low = [first(ωs_ext[i]) for i in 1:D]
-    corner_idx = ones(Int, D)
-    corner_image = ΣωconvMat * corner_low
-    idx_image = ΣωconvMat * corner_idx
-    desired_idx = [findfirst(w -> abs(w-corner_image[i])<ωstep*0.1, Σω_grid) for i in eachindex(corner_image)]
-    ωconvOff = desired_idx .- idx_image
+    ωconvOff = idx_trafo_offset(ωs_ext, ntuple(_->Σω_grid, 4), ΣωconvMat)
+    sev_eval = SigmaEvaluator_KF(Σ_R,Σ_L,ΣωconvMat,ωconvOff)
 
-    function sev(row::Int, is_inc::Bool, w::Vararg{Int,3})
-        w_int = dot(ΣωconvMat[row,:], SA[w...]) + ωconvOff[row]
-        if is_inc
-            return Σ_R[w_int,:,:]
-        else
-            return Σ_L[w_int,:,:]
-        end
-    end
-
-    cutoff = tolerance*1.e-2
-    gev = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=cutoff)
-    gev_ref = ΓcoreEvaluator_KF(GFs, iK, sev; cutoff=1.e-20)
+    cutoff = 1.e-6
+    GC.gc(true)
+    gev = ΓcoreEvaluator_KF(GFs, iK, sev_eval, MultipoleKFCEvaluator{3}; cutoff=cutoff, nlevel=min(4, R-1))
+    GC.gc(true)
+    # KFCEvaluator
+    gev_ref = ΓcoreEvaluator_KF(GFs, iK, sev_eval, KFCEvaluator)
+    GC.gc(true)
+    @show typeof(gev)
+    @show typeof(gev_ref)
 
     N = 2^R
-    Neval = 2^4
+    Neval = 2^6
     eval_step = max(div(N, Neval), 1)
-    Ncenter_h = 2
+    Ncenter_h = 4
     gridslice = vcat(collect(1:eval_step:N), collect(div(N,2)-Ncenter_h+1 : div(N,2)+Ncenter_h))
-    Neval += 2*Ncenter_h
-    @assert length(gridslice)==Neval
+    Neval = length(gridslice)
 
-    println("Box extent: ommax=$ωmax, Neval=$Neval, Ncenter_half=$Ncenter_h")
+    println("Box extent: ommax=$ωmax, Neval=$Neval, Ncenter_half=$Ncenter_h, eval_step=$(eval_step)")
 
     # reference values
     println("Computing reference...")
@@ -231,7 +215,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
         refval[idx...] = gev_ref(w...)
     end
 
-    # approximate value4
+    # approximate value
     println("Computing test values...")
     flush(stdout)
     testval = zeros(ComplexF64, ntuple(_->Neval, D))
@@ -243,35 +227,44 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8)
     maxref = maximum(abs.(refval))
     diffabs = abs.(testval - refval)
     diff = diffabs ./ maxref
-    printstyled("Keldysh GammaCoreEvaluator error for tol=$tolerance\n"; color=:blue)
+    printstyled("Keldysh GammaCoreEvaluator error with cutoff=$cutoff\n"; color=:blue)
     @show maxref
     @show maximum(diff)
     @show maximum(diffabs)
-    open("KFgamcoreEvaluator.txt", "a") do f
+    pref = if haskey(ENV, "PWTCIDIR")
+        ENV["PWTCIDIR"]
+    else
+        ""
+    end
+    open(joinpath(TCI4Keldysh.pdatadir(), pref, "KFgamcoreEvaluator.txt"), "a") do f
         write(f, "R=$R, iK=$iK, tol=$tolerance, maxref=$maxref, MAXERR=$(maximum(diff)) ($(length(testval)) evals)\n")
     end
+    # dump evaluator
+    @save joinpath(TCI4Keldysh.pdatadir(), pref, "gev_KF_R=$(R)_tol=$(tolstr(tolerance)).jld2") gev gev_ref
 end
 
 function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
-    channel = "t"
+    channel = "p"
+    println("Channel: $(channel)")
+    println("PSFpath: $(PSFpath)")
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = TCI4Keldysh.dir_to_T(PSFpath)
 
     # numerically exact evaluator
-    gev_ref = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=1.e-20)
-
     cutoff = 0.01 * tolerance
-    gev = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=cutoff)
+    gev = ΓcoreEvaluator_MF(PSFpath, R; MEV_=FullCorrEvaluator_MF{ComplexF64,3,2}, ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=cutoff, svd_kernel=true)
+    gev_ref = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1)
+    @show typeof(gev.GFevs)
+    @show typeof(gev_ref.GFevs)
 
     D = 3
     N = 2^R
-    Neval = 2^4
+    Neval = 2^5
     eval_step = max(div(N, Neval), 1)
-    Ncenter_h = 2
+    Ncenter_h = 4
     gridslice = vcat(collect(1:eval_step:N), collect(div(N,2)-Ncenter_h+1 : div(N,2)+Ncenter_h))
-    Neval += 2*Ncenter_h
-    @assert length(gridslice)==Neval
+    Neval = length(gridslice)
 
     printstyled("Memory usage [GB] of ΓcoreEvaluator_MF (ref): $(Base.summarysize(gev_ref) / (1024^3))\n"; color=:blue)
     printstyled("Memory usage [GB] of ΓcoreEvaluator_MF (approx): $(Base.summarysize(gev) / (1024^3))\n"; color=:blue)
@@ -282,9 +275,6 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     refval = zeros(ComplexF64, ntuple(_->Neval, D))
     Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
         w = ntuple(i -> gridslice[idx[i]], D)
-        if rand(Float64)<=1.e-2
-            @time gev_ref(w...)
-        end
         refval[idx...] = gev_ref(w...)
     end
 
@@ -302,7 +292,12 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     printstyled("Matsubara GammaCoreEvaluator error for tol=$tolerance\n"; color=:blue)
     @show maxref
     @show maximum(diff)
-    open("MFgamcoreEvaluator.txt", "a") do f
+    pref = if haskey(ENV, "PWTCIDIR")
+        ENV["PWTCIDIR"]
+    else
+        ""
+    end
+    open(joinpath(TCI4Keldysh.pdatadir(), pref,"MFgamcoreEvaluator.txt"), "a") do f
         write(f, "R=$R, tol=$tolerance, maxref=$maxref, MAXERR=$(maximum(diff)) ($(length(testval)) evals)\n")
     end
 end
@@ -1281,9 +1276,9 @@ To evaluate Matsubara core vertex pointwise, wrapping the required setup and rel
 * sev: callable with signature sev(i::Int, w::Vararg{Int,D}) to evaluate self-energy
 on i'th component of transformed frequency w
 """
-struct ΓcoreEvaluator_MF{T}
+struct ΓcoreEvaluator_MF{T,MEV<:AbstractCorrEvaluator_MF{T,3,2}}
     # GFevs::Vector{FullCorrEvaluator_MF{T,3,2}}
-    GFevs::Vector{MFCEvaluator}
+    GFevs::Vector{MEV}
     Ncorrs::Int # number of full correlators
     is_incoming::NTuple{4,Bool}
     letter_combinations::Vector{String}
@@ -1293,32 +1288,29 @@ struct ΓcoreEvaluator_MF{T}
         GFs::Vector{FullCorrelator_MF{3}},
         sev,
         is_incoming::NTuple{4,Bool},
-        letter_combinations::Vector{String}
-        ;
-        cutoff::Float64=1.e-20)
+        letter_combinations::Vector{String};
+        MEV_=MFCEvaluator, MEV_kwargs...
+        )
         
-        @warn "Keyword :cutoff is obsolete"
-
         # create correlator evaluators
         T = eltype(GFs[1].Gps[1].tucker.legs[1])
-        # GFevs = [FullCorrEvaluator_MF(GFs[i], true; cutoff=cutoff) for i in eachindex(GFs)]
-        GFevs = [MFCEvaluator(GFs[i]) for i in eachindex(GFs)]
+        GFevs = [create(MEV_, GFs[i]; MEV_kwargs...) for i in eachindex(GFs)]
 
-        return new{T}(GFevs,length(GFs), is_incoming, letter_combinations, sev)
+        return new{T,MEV_}(GFevs,length(GFs), is_incoming, letter_combinations, sev)
     end
 end
 
 function ΓcoreEvaluator_MF(
     GFs::Vector{FullCorrelator_MF{3}},
-    sev,
-    ;
-    cutoff::Float64=1.e-20)
+    sev;
+    MEV_=MFCEvaluator, MEV_kwargs...
+    )
 
     is_incoming = (false, true, false, true)
     letters = ["F", "Q"]
     letter_combinations = kron(kron(letters, letters), kron(letters, letters))
 
-    return ΓcoreEvaluator_MF(GFs, sev, is_incoming, letter_combinations; cutoff=cutoff)
+    return ΓcoreEvaluator_MF(GFs, sev, is_incoming, letter_combinations; MEV_=MEV_, MEV_kwargs...)
 end
 
 function ΓcoreEvaluator_MF(
@@ -1328,7 +1320,7 @@ function ΓcoreEvaluator_MF(
     ωconvMat::Matrix{Int},
     T::Float64,
     flavor_idx::Int=1,
-    cutoff::Float64=1.e-20
+    MEV_=MFCEvaluator, MEV_kwargs...
     )
     # make frequency grid
     D = size(ωconvMat, 2)
@@ -1352,7 +1344,7 @@ function ΓcoreEvaluator_MF(
     sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
 
     # create core evaluator
-    return ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
+    return ΓcoreEvaluator_MF(GFs, sev; MEV_=MEV_, MEV_kwargs...)
 end
 
 """
@@ -1530,6 +1522,18 @@ function (gev::ΓEvaluator_MF)(w::Vararg{Int,3})
     end
     
     return ret + gev.Γbare
+end
+
+function create(::Type{MFCEvaluator}, GF::FullCorrelator_MF{3}; kwargs...)
+    return MFCEvaluator(GF; kwargs...)
+end
+
+function create(::Type{FullCorrEvaluator_MF{ComplexF64,3,2}}, GF::FullCorrelator_MF{3}; kwargs...)
+    return FullCorrEvaluator_MF(GF; kwargs...)
+end
+
+function create(::Type{FullCorrEvaluator_MF}, GF::FullCorrelator_MF{3}; kwargs...)
+    return FullCorrEvaluator_MF(GF; kwargs...)
 end
 
 function create(::Type{MultipoleKFCEvaluator{3}}, GF::FullCorrelator_KF{3}; kwargs...)
@@ -1756,6 +1760,7 @@ function Γ_core_TCI_KF(
     resume_path=nothing,
     batched=true,
     do_check_interpolation=true,
+    bosgrid=false,
     useFDR::Bool=USE_FDR_SE(),
     npivot::Int=1,
     pivot_step::Int= npivot!=1 ? div(2^R, npivot-1) : 0,
@@ -1773,7 +1778,11 @@ function Γ_core_TCI_KF(
     # make frequency grid
     D = size(ωconvMat, 2)
     @assert D==3
-    ωs_ext = KF_grid(ωmax, R, D)
+    ωs_ext = if bosgrid
+                ntuple(_->TCI4Keldysh.KF_grid_bos(ωmax, R), D)
+            else
+                KF_grid(ωmax, R, D)
+            end
 
     # all 16 4-point correlators
     letters = ["F", "Q"]
@@ -1814,7 +1823,11 @@ function Γ_core_TCI_KF(
     incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
     @assert all(sum(abs.(ωconvMat); dims=2) .<= 2) "Only two nonzero elements per row in frequency trafo allowed"
     ωstep = abs(ωs_ext[1][1] - ωs_ext[1][2])
-    Σω_grid = KF_grid_fer(2*ωmax, R+1)
+    Σω_grid = if bosgrid
+                KF_grid_bos(2*ωmax, R+1)
+            else
+                KF_grid_fer(2*ωmax, R+1)
+            end
     # Σ = calc_Σ_KF_sIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ)
     (Σ_L,Σ_R) = if useFDR
         calc_Σ_KF_aIE_viaR(PSFpath, Σω_grid; flavor_idx=flavor_idx, T=T, sigmak, γ, broadening_kwargs...)
