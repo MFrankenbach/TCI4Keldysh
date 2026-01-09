@@ -149,11 +149,13 @@ function lowerbound(G::FullCorrelator_MF{D}) where {D}
     return maximum(abs.(vals))
 end
 
+abstract type AbstractCorrEvaluator_MF{T,D,N} end
+
 """
 To evaluate FullCorrelator_MF pointwise.
 * tucker_cuts: In the Tucker center, elements (i,j,k) with i+j+k > prune_idx are neglected
 """
-struct FullCorrEvaluator_MF{T,D,N}
+struct FullCorrEvaluator_MF{T,D,N} <: AbstractCorrEvaluator_MF{T,D,N}
 
     GF::FullCorrelator_MF{D}
     anevs::Vector{AnomalousEvaluator{T,D,N}}
@@ -162,7 +164,7 @@ struct FullCorrEvaluator_MF{T,D,N}
     tucker_cuts::Vector{Int}
 
     function FullCorrEvaluator_MF(
-        GF::FullCorrelator_MF{D}, svd_kernel::Bool=false;
+        GF::FullCorrelator_MF{D}, svd_kernel::Bool;
         cutoff::Float64=1.e-12, tucker_cutoff::Union{Float64, Nothing}=nothing
     ) where {D}
 
@@ -238,6 +240,10 @@ struct FullCorrEvaluator_MF{T,D,N}
     end
 end
 
+function FullCorrEvaluator_MF(GF::FullCorrelator_MF{D}; svd_kernel::Bool=false, kwargs...) where {D}
+    return FullCorrEvaluator_MF(GF, svd_kernel; kwargs...)
+end
+
 """
 Evaluate full Matsubara correlator, including anomalous terms.
 """
@@ -277,7 +283,7 @@ Contract one frequency into PSF.
 * remLegs: p×2 matrix of remaining tucker legs (kernels) to be contracted into omPSFs
 copied here to improve memory layout
 """
-struct MFCEvaluator
+struct MFCEvaluator <: AbstractCorrEvaluator_MF{ComplexF64,3,2}
     GF::FullCorrelator_MF{3}
     omPSFs::Vector{Array{ComplexF64,3}}
     remLegs::Matrix{Matrix{ComplexF64}}
@@ -285,7 +291,8 @@ struct MFCEvaluator
     ano_terms_required::Vector{Bool}
     anoid_to_Gpid::Vector{Int}
 
-    function MFCEvaluator(GF::FullCorrelator_MF{3})
+    # kwargs... are only for compatibility
+    function MFCEvaluator(GF::FullCorrelator_MF{3}; kwargs...)
         @assert all(intact.(GF.Gps)) "Received altered correlator!"
         np = length(GF.Gps)
         omPSFs = Vector{Array{ComplexF64,3}}(undef, np)
@@ -569,7 +576,7 @@ function speedup_FullCorrelator_MF()
     channel = "p"
     Ops = TCI4Keldysh.dummy_operators(npt)
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
-    R = 10
+    R = 12
     T=TCI4Keldysh.dir_to_T(PSFpath)
     ωs_ext = MF_npoint_grid(T, 2^(R-1), 3)
     G = TCI4Keldysh.FullCorrelator_MF(
