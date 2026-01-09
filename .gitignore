@@ -7,5 +7,4 @@ cluster_output/**
 *png
 *pdf
 slurm*log
-*.sh
 .CondaPkg/**
