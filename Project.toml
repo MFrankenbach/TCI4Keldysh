@@ -48,3 +48,8 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 StridedViews = "4db3bf67-4bd7-4b4e-b153-31dc3fb37143"
 TensorCrossInterpolation = "b261b2ec-6378-4871-b32e-9173bb050604"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+Quantics = "0.4.5"
+QuanticsGrids = "0.3.3"
+QuanticsTCI = "0.7.1"
