@@ -1433,8 +1433,7 @@ end
 Where to find PSF data
 """
 function datadir()
-    # return joinpath(dirname(Base.current_project()), "data")
-    return joinpath("/scratch/m/M.Frankenbach/tci4keldysh", "data")
+    return joinpath(dirname(Base.current_project()), "data")
 end
 
 """
@@ -2062,3 +2061,8 @@ function vprintstyled(msg::AbstractString, minlevel::Int=1; kwargs...)
         printstyled(msg; kwargs...)
     end
 end
+
+default_frequency_varnames(D::Int) = ("om","nu","nup")[1:D]
+
+grid_origin(grid::NTuple{D,<:AbstractVector{Float64}}) where {D} = ntuple(d -> grid[d][1], D)
+grid_step(grid::NTuple{D,<:AbstractVector{Float64}}) where {D} = ntuple(d -> grid[d][2] - grid[d][1], D)
