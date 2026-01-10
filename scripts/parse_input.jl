@@ -292,6 +292,9 @@ function gen_KF_coreevaluator(
     end
 end
 
+"""
+Obtain the Matsubara core vertex in QTT format.
+"""
 function matsubaracore(
     outname::AbstractString,
     d::Dict,
@@ -314,8 +317,6 @@ function matsubaracore(
     qttranks = []
     qttbonddims = []
     svd_kernel = true
-    @show svd_kernel
-    @show batched_eval
     npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 0
     unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol, kwargs[:unfoldingscheme]) : :fused
 
@@ -385,6 +386,9 @@ function matsubaracore(
     end
 end
     
+"""
+Obtain the full Matsubara vertex in QTT format.
+"""
 function matsubarafull(
     outname::String,
     d::Dict,
@@ -467,6 +471,9 @@ function matsubarafull(
     end
 end
 
+"""
+Obtain the full Keldysh vertex in QTT format.
+"""
 function keldyshfull(
     outname::String,
     d::Dict,
@@ -599,6 +606,9 @@ function all_broadening_settings(PSFpath::AbstractString, channel::AbstractStrin
     return (γ, sigmak, broadening_kwargs)
 end
 
+"""
+Obtain the Keldysh core vertex in QTT format.
+"""
 function keldyshcore(
     outname::AbstractString,
     d::Dict;
