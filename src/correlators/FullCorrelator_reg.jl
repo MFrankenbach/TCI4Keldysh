@@ -244,6 +244,8 @@ function FullCorrEvaluator_MF(GF::FullCorrelator_MF{D}; svd_kernel::Bool=false, 
     return FullCorrEvaluator_MF(GF, svd_kernel; kwargs...)
 end
 
+get_frequency_grid(fev::FullCorrEvaluator_MF) = fev.GF.ωs_ext
+
 """
 Evaluate full Matsubara correlator, including anomalous terms.
 """
@@ -340,6 +342,8 @@ function (fev::MFCEvaluator)(idx::Vararg{Int,3})
     end
     return res
 end
+
+get_frequency_grid(mev::MFCEvaluator) = mev.GF.ωs_ext
 
 """
 Try to evaluate FullCorrelator_MF batchwise.
@@ -989,6 +993,9 @@ struct KFCEvaluator <: AbstractCorrEvaluator_KF{3,ComplexF64}
         return new(KFC, omPSFs, remLegs)
     end
 end
+
+get_frequency_grid(G::FullCorrEvaluator_KF) = G.KFC.ωs_ext
+get_frequency_grid(G::KFCEvaluator) = G.KFC.ωs_ext
 
 """
 NOT faster standard call...
