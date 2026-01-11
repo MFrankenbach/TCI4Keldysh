@@ -32,11 +32,11 @@ simply run \texttt{>> Pkg.instantiate()} in the Julia REPL.
 As noted in the \texttt{README.md}, you will need correctly formatted partial spectral functions (\texttt{.mat} files, converted according to \texttt{README\_data.md}) to use this code.
 These can be generated with the mpNRG code by Lee et.~al.\ \cite{Lee2021}.
 Off-the-shelf partial spectral functions (PSFs) can be downloaded from OpenDataLMU \href{https://doi.org/10.5282/ubm/data.613}{here}.
-Once you have suitable spectral data, change the \texttt{datadir} function in \texttt{src/utils.jl} to
-return the parent directory of the directory containing your set of spectral functions.
-With a single PSF data set, your \texttt{datadir} should be structured as follows:
+Once you have suitable spectral data, set an environment variable \texttt{TCI4KELDYSH\_DATADIR} to
+the parent directory of the directory containing your set of spectral functions.
+With a single PSF data set, your \texttt{TCI4KELDYSH\_DATADIR} should be structured as follows:
 \begin{verbatim}
-    <return value of TCI4Keldysh.datadir()>/
+    <\texttt{TCI4KELDYSH\_DATADIR}>/
     |
     --<dataset name>/
         |
@@ -46,13 +46,10 @@ With a single PSF data set, your \texttt{datadir} should be structured as follow
                 |
                 --<4pt PSFs>
             <2/3pt PSFs>
-        mpNRG_ph.mat
-        mpNRG_pht.mat
-        mpNRG_pp.mat
+        mpNRG.mat
 \end{verbatim}
-The \texttt{mpNRG\_*.mat} files contain the physical and numerical (broadening etc.) parameters.
-Only default broadening parameters are read from these files.
-To inform \texttt{TCI4Keldysh} about the temperature of you PSF dataset, modify the function \texttt{TCI4Keldysh.dir\_to\_T()} in \texttt{src/utils.jl}.
+The \texttt{mpNRG.mat} file contains the physical and numerical (broadening etc.) parameters.
+Only default broadening parameters and temperatures are read from these files.
 That's all you need to run a first calculation! 
 
 To run a calculation, either write your own script using
