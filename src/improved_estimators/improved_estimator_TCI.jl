@@ -401,217 +401,9 @@ function initpivots_Γcore(GFs::Union{Vector{FullCorrelator_MF{D}}, Vector{FullC
 end
 
 """
-First row in Fig 13, Lihm et. al.
-Return 3*R bit quantics tensor train.
-
-Use BatchEvaluator and CachedFunction. Intended to run on multiple threads.
+BatchEvaluator that supports caching with multiple threads.
 """
-function Γ_core_TCI_MF_batched(
-    PSFpath::String,
-    R::Int;
-    cache_center::Int=0,
-    ωconvMat::Matrix{Int},
-    T::Float64,
-    flavor_idx::Int=1,
-    use_ΣaIE::Bool=true,
-    do_check_interpolation::Bool=true,
-    npivot::Int=2,
-    unfoldingscheme=:interleaved,
-    tcikwargs...
-)
-
-    kwargs_dict = Dict(tcikwargs)
-    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
-    gev = ΓcoreEvaluator_MF(
-        PSFpath,
-        R;
-        cache_center=cache_center,
-        ωconvMat=ωconvMat,
-        flavor_idx=flavor_idx,
-        T=T,
-        cutoff=cutoff
-    )
-
-    # create batch evaluator
-    gbev = ΓcoreBatchEvaluator_MF(gev; use_ΣaIE=use_ΣaIE, unfoldingscheme=unfoldingscheme)
-
-    GC.gc(true)
-
-    initpivots_ω = initpivots_Γcore([gev.GFevs[i].GF for i in eachindex(gev.GFevs)]; npivot=npivot)
-    initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
-
-    vprintln("Memory usage [GB] of ΓcoreBatchEvaluator_MF: $(Base.summarysize(gbev) / (1024^3))", 2)
-
-    @info "BATCHED"
-    t = @elapsed begin
-        tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
-    end
-    qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
-    @info "quanticscrossinterpolate time batched (nocache): $t"
-
-    if do_check_interpolation
-        Nhalf = 2^(R-1)
-        gridmin = max(1, Nhalf-2^5)
-        gridmax = min(2^R, Nhalf+2^5)
-        grid1D = gridmin:2:gridmax
-        grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
-        qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
-        maxerr = check_interpolation(qtt.tci, gbev, qgrid)
-        tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-        println(" Maximum interpolation error: $maxerr (tol=$tol)")
-    end
-
-    return qtt
-
-end
-
-
-"""
-First row in Fig 13, Lihm et. al.
-Return 3*R bit quantics tensor train.
-* cache_center: if >0, precompute a block of size 2*cache_center along each dimension
-and use it to save pointwise evaluations
-"""
-function Γ_core_TCI_MF(
-    PSFpath::String,
-    R::Int;
-    cache_center::Int=0,
-    ωconvMat::Matrix{Int},
-    T::Float64,
-    flavor_idx::Int=1,
-    use_ΣaIE::Bool=false,
-    npivot::Int=2,
-    qtcikwargs...
-)
-    if use_ΣaIE
-        error("Asymmetric self-energy estimators for non-batched MF vertex NYI!")
-    end
-
-    println(">>Starting Γcore calculation")
-    flush(stdout)
-
-    # make frequency grid
-    D = size(ωconvMat, 2)
-    Nhalf = 2^(R-1)
-    ωs_ext = MF_npoint_grid(T, Nhalf, D)
-
-    # all 16 4-point correlators
-    letter_combinations = letter_combinations_Γcore()
-    is_incoming = (false, true, false, true)
-
-    Ncorrs = length(letter_combinations)
-    GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
-
-    read_GFs_Γcore!(
-        GFs, PSFpath, letter_combinations;
-        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
-        )
-
-    println(">>Loaded correlators")
-    flush(stdout)
-
-    # create full correlator evaluators
-    kwargs_dict = Dict(qtcikwargs)
-    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
-    GFevs = Vector{FullCorrEvaluator_MF{ComplexF64, 3, 2}}(undef, Ncorrs)
-    for l in 1:Ncorrs
-        GFevs[l] = FullCorrEvaluator_MF(GFs[l], true; cutoff=cutoff, tucker_cutoff=10.0*cutoff)
-    end
-
-    println(">>Created FullCorrEvaluators")
-    flush(stdout)
-
-    # create self-energy evaluator
-    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
-    sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
-
-    println(">>Created SelfEnergy evaluators")
-    flush(stdout)
-
-    # search initial pivots
-    initpivots_ω = initpivots_Γcore([GFevs[i].GF for i in eachindex(GFevs)]; npivot=npivot)
-
-    GC.gc(true)
-    if cache_center > 0
-        printstyled("-- Preparing cache for core vertex of size ($(2*cache_center))^$D...\n"; color=:cyan)
-    # obtain cache values
-        cache_center = min(cache_center, 2^(R-1))
-        ω_cache_Σ = MF_grid(T, 2*cache_center, true)
-        Σ_calc_sIE = calc_Σ_MF_sIE(PSFpath, ω_cache_Σ; flavor_idx=flavor_idx, T=T)
-        ωs_ext_cache = MF_npoint_grid(T, cache_center, D)
-        cacheval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
-            "MF", PSFpath*"4pt/", Σ_calc_sIE; ωs_ext=ωs_ext_cache, T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx
-            )
-
-        # locate cached frequency grids in larger grids
-        cache_start = [findfirst(w -> abs(ωs_ext_cache[j][1] - w)<1.e-10, ωs_ext[j]) for j in 1:D]
-        cache_end =   [findfirst(w -> abs(ωs_ext_cache[j][end] - w)<1.e-10, ωs_ext[j]) for j in 1:D]
-        @assert !any(isnothing.(cache_start))
-        @assert !any(isnothing.(cache_end))
-
-        function is_cached(w::NTuple{3,Int})
-            return all((w .>= cache_start) .&& (w .<= cache_end))
-        end
-
-        println(">>Starting quanticscrossinterpolate (cache)")
-        flush(stdout)
-
-        # evaluation with caching
-        function eval_Γ_core_cache(w::Vararg{Int,3})
-            if is_cached(w)
-                w_c = w .- cache_start .+ 1
-                return cacheval[w_c...]
-            else
-                addvals = Vector{ComplexF64}(undef, Ncorrs)
-                Threads.@threads for i in 1:Ncorrs
-                    addvals[i] = GFevs[i](w...)
-                    for il in eachindex(letter_combinations[i])
-                        if letter_combinations[i][il]==='F'
-                            addvals[i] *= -sev(il, w...)
-                        end
-                    end
-                end
-            return sum(addvals)
-            end
-        end
-
-        report_mem()
-
-        t = @elapsed begin
-            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core_cache, ntuple(i -> 2^R, D), initpivots_ω; qtcikwargs...)
-        end
-        @info "quanticscrossinterpolate time (cache): $t"
-        return qtt
-    else
-
-        println(">>Starting quanticscrossinterpolate (nocache)")
-        flush(stdout)
-
-        # evaluation without caching
-        function eval_Γ_core(w::Vararg{Int,3})
-            addvals = Vector{ComplexF64}(undef, Ncorrs)
-            Threads.@threads for i in 1:Ncorrs
-                addvals[i] = GFevs[i](w...)
-                for il in eachindex(letter_combinations[i])
-                    if letter_combinations[i][il]==='F'
-                        addvals[i] *= -sev(il, w...)
-                    end
-                end
-            end
-            return sum(addvals)
-        end
-
-        report_mem()
-
-        t = @elapsed begin
-            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D), initpivots_ω; qtcikwargs...)
-        end
-        report_mem()
-        @info "quanticscrossinterpolate time (nocache): $t"
-        return qtt
-    end
-
-end
+abstract type CachedBatchEvaluator{T} <: TCI.BatchEvaluator{T} end
 
 # ==== Lower-dim. asymptotic contributions K1r and K2r(')
 
@@ -974,7 +766,7 @@ function eval_interpol(sev::SigmaEvaluator_KF, row::Int, is_inc::Bool, ws::Vecto
 end
 
 """
-Struct to evaluate K2(prime) pointwise on 2D frequency grid for a fixed channel.
+Struct to evaluate K2(prime) pointwise on 2D frequency grid for a fixed channel in the Keldysh formalism.
 """
 struct K2Evaluator_KF
     GFevs::Vector{FullCorrEvaluator_KF{2,ComplexF64}}
@@ -1273,11 +1065,12 @@ end
 
 """
 To evaluate Matsubara core vertex pointwise, wrapping the required setup and relevant data.
-* sev: callable with signature sev(i::Int, w::Vararg{Int,D}) to evaluate self-energy
-on i'th component of transformed frequency w
+# Fields
+- `GFevs`: Objects to evaluate full correlators that occur in sIE.
+- `sev`: A `SigmaEvaluator_MF` that is callable with signature `sev(i::Int, w::Vararg{Int,D})` to evaluate self-energy
+on `i'th component of transformed frequency `w`
 """
 struct ΓcoreEvaluator_MF{T,MEV<:AbstractCorrEvaluator_MF{T,3,2}}
-    # GFevs::Vector{FullCorrEvaluator_MF{T,3,2}}
     GFevs::Vector{MEV}
     Ncorrs::Int # number of full correlators
     is_incoming::NTuple{4,Bool}
@@ -1384,9 +1177,72 @@ function eval_LR(gev::ΓcoreEvaluator_MF{T}, w::Vararg{Int,3}) where {T}
 end
 
 """
-Evaluate full vertex pointwise.
-* K1s/K2s: Precomputed asymptotic classes, stored densely
-* K1/2changeMats/offsets: transformation matrices and index offsets for reading
+Evaluates Matsubara core vertex. Batch evaluation will be used in TCI, which
+is desirable when running on multiple threads.
+# Fields
+- `grid`: Quantics grid with grid step 1 (referring to grid indices, not to Matsubara frequencies)
+- `qf`: Cached function that evaluates the core vertex
+- `localdims`: Local dimensions of the quantics grid
+"""
+struct ΓcoreBatchEvaluator_MF{T} <: CachedBatchEvaluator{T}
+    grid::QuanticsGrids.InherentDiscreteGrid{3}
+    qf::TCI.CachedFunction{T}
+    localdims::Vector{Int}
+    gev::ΓcoreEvaluator_MF{T} # to access information
+
+    function ΓcoreBatchEvaluator_MF(GFs::Vector{FullCorrelator_MF{3}}, sev; cutoff=1.e-20, use_ΣaIE::Bool=false, unfoldingscheme=:interleaved)
+        # set up grid
+        D = 3
+        R = grid_R(GFs[1])
+        @assert all(R .== grid_R.(GFs[2:end])) "Full correlator objects have different grid sizes"
+        T = eltype(GF.Gps[1].tucker.center)
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        gev = ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
+
+        # cached function
+        qf_ = if use_ΣaIE
+                v -> eval_LR(gev, QuanticsGrids.quantics_to_origcoord(grid, v)...)
+            else # use sIE for Σ
+                v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+            end
+        qf = TCI.CachedFunction{T}(qf_, localdims)
+
+        return new{T}(grid, qf, localdims, gev)
+    end
+
+    function ΓcoreBatchEvaluator_MF(gev::ΓcoreEvaluator_MF{T}; use_ΣaIE::Bool=false, unfoldingscheme=:interleaved) where {T}
+        # set up grid
+        D = 3
+        R = grid_R(gev.GFevs[1].GF)
+        for i in eachindex(gev.GFevs)
+            @assert R == grid_R(gev.GFevs[i].GF) "Full correlator objects have different grid sizes"
+        end
+        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
+        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
+
+        # cached function
+        qf_ = if use_ΣaIE
+                v -> eval_LR(gev, QuanticsGrids.quantics_to_origcoord(grid, v)...)
+            else # use sIE for Σ
+                v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
+            end
+        qf = TCI.CachedFunction{T}(qf_, localdims)
+
+        return new{T}(grid, qf, localdims, gev)
+    end
+end
+
+
+"""
+Evaluates full vertex pointwise.
+# Fields
+- `core`: Core vertex evaluator.
+- `channel`: In which channel to evaluate the full vertex.
+- `foreign_channels`: The other two channels (e.g., if `channel="t"`, then `foreign_channels=("a","p")` or `("p","a")`).
+- `K1s/K2s`: Precomputed asymptotic contributions, stored as plain arrays.
+- `K1/2changeMats/offsets`: transformation matrices and index offsets for reading
 K1 and K2 from foreign channels
 """
 struct ΓEvaluator_MF
@@ -1551,12 +1407,15 @@ end
 
 """
 Structure to evaluate Keldysh core vertex, i.e., wrap the required setup and capture relevant data.
-* sev: callable object with signature sev(i::Int, is_incoming::Bool, w::Vararg{Int,D}) to evaluate self-energy
+Evaluates only a single Keldydsh component.
+# Fields
+- `GFevs`: Objects to evaluate full correlators that occur in sIE.
+- `iK_tuple`: The requested Keldysh component of the vertex.
+- `X`: Pauli-X matrix.
+- sev: A `SigmaEvaluator_KF`, callable object with signature `sev(i::Int, is_incoming::Bool, w::Vararg{Int,D})` to evaluate self-energy
 on i'th component of transformed frequency w
 """
 struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF{3,ComplexF64}}
-# struct ΓcoreEvaluator_KF{T,KEV<:AbstractCorrEvaluator_KF}
-    # GFevs::Vector{FullCorrEvaluator_KF{3,T}}
     GFevs::Vector{KEV}
     Ncorrs::Int # number of full correlators
     iK_tuple::NTuple{4,Int} # requested Keldysh idx
@@ -1731,16 +1590,18 @@ function eval_Γcore_general(GFevs, sev, is_incoming::NTuple{4,Bool}, letter_com
 end
 
 """
-Compute Keldysh core vertex using TCI for single Keldysh component
+Compute Keldysh core vertex using TCI for a single Keldysh component.
+See also  [`Γ_core_TCI_MF`](@ref).
 
-* iK: Keldysh component
-* sigmak, γ: broadening parameters
-* batched: Use batched evaluator
-* do_check_interpolation: Check interpolation on small grid at the end, report error
-* dump_path: set to save intermediate results every couple of sweeps
-* resume_path: set to resume calculation based on intermediate results
-* npivot: We have npivot^3 initial pivots
-* pivot_step: Pivots are on a npivot^3 equidistant grid with this step size, centered around the frequency grid centre
+# Arguments
+- `iK`: Keldysh component
+- `sigmak`, γ: broadening parameters (log-Gaussian and linear, respectively)
+- `batched`: Use batched evaluator
+- `do_check_interpolation`: Check interpolation on small grid at the end, report error
+- `dump_path`: set to save intermediate results every couple of sweeps
+- `resume_path`: set to resume calculation based on intermediate results
+- `npivot`: We have `npivot^3` initial pivots, evenly spread across the frequency grid
+- `pivot_step`: Pivots are on a npivot^3 equidistant grid with this step size, centered around the frequency grid centre
 """
 function Γ_core_TCI_KF(
     PSFpath::String,
@@ -1767,6 +1628,7 @@ function Γ_core_TCI_KF(
     unfoldingscheme=:interleaved,
     KEV::Type=KFCEvaluator,
     coreEvaluator_kwargs::Dict{Symbol,Any}=Dict{Symbol,Any}(:cutoff=>1.e-6),
+    evaluator_ret::Union{Nothing,Base.RefValue{ΓcoreEvaluator_KF}}=nothing,
     tcikwargs...
     )
 
@@ -1853,6 +1715,7 @@ function Γ_core_TCI_KF(
     sev = SigmaEvaluator_KF(Σ_R, Σ_L, ΣωconvMat, ωconvOff)
 
     gev = ΓcoreEvaluator_KF(GFs, iK, sev, KEV; coreEvaluator_kwargs...)
+    !isnothing(evaluator_ret) && (evaluator_ret[] = gev)
     if KEV==MultipoleKFCEvaluator{3}
         GFs = nothing
     end
@@ -1872,7 +1735,7 @@ function Γ_core_TCI_KF(
 end
 
 """
-To introduce function barrier and allow for garbage collection
+To introduce function barrier and allow for garbage collection. See overload for documentation.
 """
 function Γ_core_TCI_KF(
     gev::ΓcoreEvaluator_KF,
@@ -2748,13 +2611,12 @@ end
 
 
 """
-BatchEvaluator that supports caching with multiple threads.
-"""
-abstract type CachedBatchEvaluator{T} <: TCI.BatchEvaluator{T} end
-
-"""
 Evaluates full Matsubara vertex. Batch evaluation will be used in TCI, which
 is desirable when running on multiple threads.
+- `grid`: Quantics grid with grid step 1 (referring to grid indices, not to Matsubara frequencies)
+- `qf`: Cached function that evaluates the full vertex
+- `localdims`: Local dimensions of the quantics grid
+- `gev`: Underlying ΓEvaluator_MF, needed to access information.
 """
 struct ΓBatchEvaluator_MF <: CachedBatchEvaluator{ComplexF64}
     grid::QuanticsGrids.InherentDiscreteGrid{3}
@@ -2782,6 +2644,11 @@ struct ΓBatchEvaluator_MF <: CachedBatchEvaluator{ComplexF64}
     end
 end
 
+get_frequency_grid(gbev::ΓBatchEvaluator_MF) = get_frequency_grid(gbev.gev)
+get_frequency_grid(gbev::ΓcoreBatchEvaluator_MF) = get_frequency_grid(gbev.gev)
+get_frequency_grid(gev::ΓEvaluator_MF) = get_frequency_grid(gev.core)
+get_frequency_grid(core::ΓcoreEvaluator_MF) = get_frequency_grid(core.GFevs[1])
+
 function ΓBatchEvaluator_MF(
     PSFpath::String,
     R::Int
@@ -2806,6 +2673,11 @@ end
 """
 Evaluates full Keldysh vertex. Batch evaluation will be used in TCI, which
 is desirable when running on multiple threads.
+# Fields
+- `grid`: Quantics grid with grid step 1 (referring to grid indices, not to real frequencies)
+- `qf`: Cached function that evaluates the full vertex
+- `localdims`: Local dimensions of the quantics grid
+- `gev`: underlying ΓEvaluator_KF object, that evaluates the full vertex
 """
 struct ΓBatchEvaluator_KF <: CachedBatchEvaluator{ComplexF64}
     grid::QuanticsGrids.InherentDiscreteGrid{3}
@@ -2863,62 +2735,13 @@ function ΓBatchEvaluator_KF(
 end
 
 """
-Evaluates Matsubara core vertex. Batch evaluation will be used in TCI, which
-is desirable when running on multiple threads.
-"""
-struct ΓcoreBatchEvaluator_MF{T} <: CachedBatchEvaluator{T}
-    grid::QuanticsGrids.InherentDiscreteGrid{3}
-    qf::TCI.CachedFunction{T}
-    localdims::Vector{Int}
-    gev::ΓcoreEvaluator_MF{T} # to access information
-
-    function ΓcoreBatchEvaluator_MF(GFs::Vector{FullCorrelator_MF{3}}, sev; cutoff=1.e-20, use_ΣaIE::Bool=false, unfoldingscheme=:interleaved)
-        # set up grid
-        D = 3
-        R = grid_R(GFs[1])
-        @assert all(R .== grid_R.(GFs[2:end])) "Full correlator objects have different grid sizes"
-        T = eltype(GF.Gps[1].tucker.center)
-        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
-        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
-
-        gev = ΓcoreEvaluator_MF(GFs, sev; cutoff=cutoff)
-
-        # cached function
-        qf_ = if use_ΣaIE
-                v -> eval_LR(gev, QuanticsGrids.quantics_to_origcoord(grid, v)...)
-            else # use sIE for Σ
-                v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
-            end
-        qf = TCI.CachedFunction{T}(qf_, localdims)
-
-        return new{T}(grid, qf, localdims, gev)
-    end
-
-    function ΓcoreBatchEvaluator_MF(gev::ΓcoreEvaluator_MF{T}; use_ΣaIE::Bool=false, unfoldingscheme=:interleaved) where {T}
-        # set up grid
-        D = 3
-        R = grid_R(gev.GFevs[1].GF)
-        for i in eachindex(gev.GFevs)
-            @assert R == grid_R(gev.GFevs[i].GF) "Full correlator objects have different grid sizes"
-        end
-        grid = QuanticsGrids.InherentDiscreteGrid{D}(R; unfoldingscheme=unfoldingscheme)
-        localdims = grid.unfoldingscheme==:fused ? fill(grid.base^D, R) : fill(grid.base, D*R)
-
-        # cached function
-        qf_ = if use_ΣaIE
-                v -> eval_LR(gev, QuanticsGrids.quantics_to_origcoord(grid, v)...)
-            else # use sIE for Σ
-                v -> gev(QuanticsGrids.quantics_to_origcoord(grid, v)...)
-            end
-        qf = TCI.CachedFunction{T}(qf_, localdims)
-
-        return new{T}(grid, qf, localdims, gev)
-    end
-end
-
-"""
 Evaluates Keldysh core vertex. Batch evaluation will be used in TCI, which
 is desirable when running on multiple threads.
+# Fields
+- `grid`: Quantics grid with grid step 1 (referring to grid indices, not to real frequencies)
+- `qf`: Cached function that evaluates the core vertex
+- `localdims`: Local dimensions of the quantics grid
+- `gev`: underlying core evaluator, needed to access information
 """
 struct ΓcoreBatchEvaluator_KF{T} <: CachedBatchEvaluator{T}
     # discrete grid because we only need to address frequency indices, not actual frequencies
@@ -2963,7 +2786,10 @@ struct ΓcoreBatchEvaluator_KF{T} <: CachedBatchEvaluator{T}
     end
 end
 
-
+get_frequency_grid(gbev::ΓBatchEvaluator_KF) = get_frequency_grid(gbev.gev)
+get_frequency_grid(gbev::ΓcoreBatchEvaluator_KF) = get_frequency_grid(gbev.gev)
+get_frequency_grid(gev::ΓEvaluator_KF) = get_frequency_grid(gev.core)
+get_frequency_grid(core::ΓcoreEvaluator_KF) = get_frequency_grid(core.GFevs[1])
 
 """
 Evaluation on single Quantics index.
@@ -3061,4 +2887,227 @@ function (gbev::CachedBatchEvaluator{T})(
     =#
 
     return out
+end
+
+"""
+Compute Matsubara core vertex in QTT format using batched evaluation (multi-threaded).
+This corresponds to the first row in Fig 13, Lihm et. al.
+# Arguments
+- `PSFpath`: Path to PSF data
+- `R`: Number of bits per frequency axis (total grid size 2^R per axis)
+- `ωconvMat`: Channel transformation matrix.
+- `T`: Temperature
+- `flavor_idx`: Flavor index to use (1 or 2)
+- `use_ΣaIE`: Whether to use asymmetric improved estimators for self-energy (recommended)
+- `do_check_interpolation`: Whether to check interpolation accuracy after TCI by sampling points around the center of the grid.
+- `npivot`: Use `(2npivot+1)^3` initial pivots around centre to avoid missing features (setting to 0 is discouraged).
+
+Return 3*R bit quantics tensor train.
+
+Use BatchEvaluator and CachedFunction. Intended to run on multiple threads.
+"""
+function Γ_core_TCI_MF_batched(
+    PSFpath::String,
+    R::Int;
+    cache_center::Int=0,
+    ωconvMat::Matrix{Int},
+    T::Float64,
+    flavor_idx::Int=1,
+    use_ΣaIE::Bool=true,
+    do_check_interpolation::Bool=true,
+    npivot::Int=2,
+    unfoldingscheme=:interleaved,
+    evaluator_ret::Union{Nothing,Base.RefValue{ΓcoreBatchEvaluator_MF}}=nothing,
+    tcikwargs...
+)
+
+    kwargs_dict = Dict(tcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    gev = ΓcoreEvaluator_MF(
+        PSFpath,
+        R;
+        cache_center=cache_center,
+        ωconvMat=ωconvMat,
+        flavor_idx=flavor_idx,
+        T=T,
+        cutoff=cutoff
+    )
+
+    # create batch evaluator
+    gbev = ΓcoreBatchEvaluator_MF(gev; use_ΣaIE=use_ΣaIE, unfoldingscheme=unfoldingscheme)
+    !isnothing(evaluator_ret) && (evaluator_ret[] = gbev)
+
+    GC.gc(true)
+
+    initpivots_ω = initpivots_Γcore([gev.GFevs[i].GF for i in eachindex(gev.GFevs)]; npivot=npivot)
+    initpivots = [QuanticsGrids.origcoord_to_quantics(gbev.grid, tuple(iw...)) for iw in initpivots_ω]
+
+    vprintln("Memory usage [GB] of ΓcoreBatchEvaluator_MF: $(Base.summarysize(gbev) / (1024^3))", 2)
+
+    @info "BATCHED"
+    t = @elapsed begin
+        tt, _, _ = TCI.crossinterpolate2(ComplexF64, gbev, gbev.qf.localdims, initpivots; tcikwargs...)
+    end
+    qtt = QuanticsTCI.QuanticsTensorCI2{ComplexF64}(tt, gbev.grid, gbev.qf)
+    @info "quanticscrossinterpolate time batched (nocache): $t"
+
+    if do_check_interpolation
+        Nhalf = 2^(R-1)
+        gridmin = max(1, Nhalf-2^5)
+        gridmax = min(2^R, Nhalf+2^5)
+        grid1D = gridmin:2:gridmax
+        grid = collect(Iterators.product(ntuple(_->grid1D,3)...))
+        qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
+        maxerr = check_interpolation(qtt.tci, gbev, qgrid)
+        tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
+        println(" Maximum interpolation error: $maxerr (tol=$tol)")
+    end
+
+    return qtt
+
+end
+
+
+"""
+Like `Γ_core_TCI_MF_batched` but without batched evaluation.
+"""
+function Γ_core_TCI_MF(
+    PSFpath::String,
+    R::Int;
+    cache_center::Int=0,
+    ωconvMat::Matrix{Int},
+    T::Float64,
+    flavor_idx::Int=1,
+    use_ΣaIE::Bool=false,
+    npivot::Int=2,
+    qtcikwargs...
+)
+    if use_ΣaIE
+        error("Asymmetric self-energy estimators for non-batched MF vertex NYI!")
+    end
+
+    println(">>Starting Γcore calculation")
+    flush(stdout)
+
+    # make frequency grid
+    D = size(ωconvMat, 2)
+    Nhalf = 2^(R-1)
+    ωs_ext = MF_npoint_grid(T, Nhalf, D)
+
+    # all 16 4-point correlators
+    letter_combinations = letter_combinations_Γcore()
+    is_incoming = (false, true, false, true)
+
+    Ncorrs = length(letter_combinations)
+    GFs = Vector{FullCorrelator_MF{3}}(undef, Ncorrs)
+
+    read_GFs_Γcore!(
+        GFs, PSFpath, letter_combinations;
+        T=T, ωs_ext=ωs_ext, ωconvMat=ωconvMat, flavor_idx=flavor_idx
+        )
+
+    println(">>Loaded correlators")
+    flush(stdout)
+
+    # create full correlator evaluators
+    kwargs_dict = Dict(qtcikwargs)
+    cutoff = haskey(Dict(kwargs_dict), :tolerance) ? kwargs_dict[:tolerance]*1.e-2 : 1.e-12
+    GFevs = Vector{FullCorrEvaluator_MF{ComplexF64, 3, 2}}(undef, Ncorrs)
+    for l in 1:Ncorrs
+        GFevs[l] = FullCorrEvaluator_MF(GFs[l], true; cutoff=cutoff, tucker_cutoff=10.0*cutoff)
+    end
+
+    println(">>Created FullCorrEvaluators")
+    flush(stdout)
+
+    # create self-energy evaluator
+    incoming_trafo = diagm([inc ? -1 : 1 for inc in is_incoming])
+    sev = SigmaEvaluator_MF(PSFpath, R, T, incoming_trafo * ωconvMat; flavor_idx=flavor_idx)
+
+    println(">>Created SelfEnergy evaluators")
+    flush(stdout)
+
+    # search initial pivots
+    initpivots_ω = initpivots_Γcore([GFevs[i].GF for i in eachindex(GFevs)]; npivot=npivot)
+
+    GC.gc(true)
+    if cache_center > 0
+        printstyled("-- Preparing cache for core vertex of size ($(2*cache_center))^$D...\n"; color=:cyan)
+    # obtain cache values
+        cache_center = min(cache_center, 2^(R-1))
+        ω_cache_Σ = MF_grid(T, 2*cache_center, true)
+        Σ_calc_sIE = calc_Σ_MF_sIE(PSFpath, ω_cache_Σ; flavor_idx=flavor_idx, T=T)
+        ωs_ext_cache = MF_npoint_grid(T, cache_center, D)
+        cacheval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
+            "MF", PSFpath*"4pt/", Σ_calc_sIE; ωs_ext=ωs_ext_cache, T=T, ωconvMat=ωconvMat, flavor_idx=flavor_idx
+            )
+
+        # locate cached frequency grids in larger grids
+        cache_start = [findfirst(w -> abs(ωs_ext_cache[j][1] - w)<1.e-10, ωs_ext[j]) for j in 1:D]
+        cache_end =   [findfirst(w -> abs(ωs_ext_cache[j][end] - w)<1.e-10, ωs_ext[j]) for j in 1:D]
+        @assert !any(isnothing.(cache_start))
+        @assert !any(isnothing.(cache_end))
+
+        function is_cached(w::NTuple{3,Int})
+            return all((w .>= cache_start) .&& (w .<= cache_end))
+        end
+
+        println(">>Starting quanticscrossinterpolate (cache)")
+        flush(stdout)
+
+        # evaluation with caching
+        function eval_Γ_core_cache(w::Vararg{Int,3})
+            if is_cached(w)
+                w_c = w .- cache_start .+ 1
+                return cacheval[w_c...]
+            else
+                addvals = Vector{ComplexF64}(undef, Ncorrs)
+                Threads.@threads for i in 1:Ncorrs
+                    addvals[i] = GFevs[i](w...)
+                    for il in eachindex(letter_combinations[i])
+                        if letter_combinations[i][il]==='F'
+                            addvals[i] *= -sev(il, w...)
+                        end
+                    end
+                end
+            return sum(addvals)
+            end
+        end
+
+        report_mem()
+
+        t = @elapsed begin
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core_cache, ntuple(i -> 2^R, D), initpivots_ω; qtcikwargs...)
+        end
+        @info "quanticscrossinterpolate time (cache): $t"
+        return qtt
+    else
+
+        println(">>Starting quanticscrossinterpolate (nocache)")
+        flush(stdout)
+
+        # evaluation without caching
+        function eval_Γ_core(w::Vararg{Int,3})
+            addvals = Vector{ComplexF64}(undef, Ncorrs)
+            Threads.@threads for i in 1:Ncorrs
+                addvals[i] = GFevs[i](w...)
+                for il in eachindex(letter_combinations[i])
+                    if letter_combinations[i][il]==='F'
+                        addvals[i] *= -sev(il, w...)
+                    end
+                end
+            end
+            return sum(addvals)
+        end
+
+        report_mem()
+
+        t = @elapsed begin
+            qtt, _, _ = quanticscrossinterpolate(ComplexF64, eval_Γ_core, ntuple(i -> 2^R, D), initpivots_ω; qtcikwargs...)
+        end
+        report_mem()
+        @info "quanticscrossinterpolate time (nocache): $t"
+        return qtt
+    end
+
 end

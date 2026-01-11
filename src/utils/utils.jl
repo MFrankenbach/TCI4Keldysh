@@ -2061,3 +2061,8 @@ function vprintstyled(msg::AbstractString, minlevel::Int=1; kwargs...)
         printstyled(msg; kwargs...)
     end
 end
+
+default_frequency_varnames(D::Int) = ("om","nu","nup")[1:D]
+
+grid_origin(grid::NTuple{D,<:AbstractVector{Float64}}) where {D} = ntuple(d -> grid[d][1], D)
+grid_step(grid::NTuple{D,<:AbstractVector{Float64}}) where {D} = ntuple(d -> grid[d][2] - grid[d][1], D)

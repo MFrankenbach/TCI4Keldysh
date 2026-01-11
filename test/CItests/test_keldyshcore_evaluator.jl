@@ -21,7 +21,7 @@ function test_Γcore_KF(
     # reference
     ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
     Σωgrid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
-    (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, broadening_kwargs...)
+    (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, broadening_kwargs...)
     Γcore_ref = TCI4Keldysh.compute_Γcore_symmetric_estimator(
         "KF",
         PSFpath*"4pt/",
@@ -44,6 +44,8 @@ function test_Γcore_KF(
         tolerance=tolerance,
         unfoldingscheme=unfoldingscheme,
         batched=batched,
+        KEV=TCI4Keldysh.MultipoleKFCEvaluator{3},
+        coreEvaluator_kwargs = Dict{Symbol,Any}([(:nlevel, 2), (:cutoff, tolerance*1.e-3)]),
         broadening_kwargs...,
         kwargs...
         )
@@ -62,7 +64,7 @@ end
         for iK in 1:15
             println("==== iK: $iK")
             for flavor_idx in 1:2
-                test_Γcore_KF(iK, flavor_idx, channel; batched=true, unfoldingscheme=:fused, tolerance=1.e-8, R=3)
+                test_Γcore_KF(iK, flavor_idx, channel; batched=true, unfoldingscheme=:fused, tolerance=1.e-8, R=4)
             end
         end
     end
