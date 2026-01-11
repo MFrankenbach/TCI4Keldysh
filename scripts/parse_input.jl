@@ -374,7 +374,7 @@ function matsubaracore(
     kwargs...
     )
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
     times = []
     qttranks = []
     qttbonddims = []
@@ -480,7 +480,7 @@ function matsubarafull(
     kwargs...
     )
 
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
     tcikwargs = filter_tcikwargs(Dict(kwargs))
     npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 0
     unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol ,kwargs[:unfoldingscheme]) : :fused
@@ -577,7 +577,7 @@ function keldyshfull(
     kwargs...
     )
 
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
     ik = maybeparse(Int, ik)
     npivot = maybeparse(Int, npivot)
     if isnothing(pivot_steps)
@@ -688,7 +688,7 @@ function keldyshfull(
 end
 
 function all_broadening_settings(PSFpath::AbstractString, channel::AbstractString)
-    base_path = dirname(rstrip(PSFpath, '/'))
+    base_path = TCI4Keldysh.get_basepath(PSFpath)
     (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
     broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
     if !haskey(broadening_kwargs, :estep)
@@ -980,8 +980,8 @@ function matsubaraslice_conv(
         gev = TCI4Keldysh.ΓcoreEvaluator_MF(
             PSFpath,
             R;
-            ωconvMat = TCI4Keldysh.channel_trafo(channel),
-            T = TCI4Keldysh.dir_to_T(PSFpath),
+            ωconvMat=TCI4Keldysh.channel_trafo(channel),
+            T=TCI4Keldysh.read_temperature(PSFpath; channel=channel),
             flavor_idx=flavor_idx,
             # cutoff=cutoff
         )
@@ -1083,7 +1083,7 @@ function matsubarafull_conv(outname, d;
         if R>10
             error("This calculation (R=$R) is doomed.")
         end
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         ωs_ext = TCI4Keldysh.MF_npoint_grid(T,2^(R-1),3)
         gamcore = TCI4Keldysh.compute_Γfull_symmetric_estimator(
             "MF",
@@ -1158,7 +1158,7 @@ function keldyshfull_conv(outname, d;
                 ωs_ext = ntuple(_->TCI4Keldysh.KF_grid_bos(ommax, R), 3)
             end
         end
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         gamcore = TCI4Keldysh.compute_Γfull_symmetric_estimator(
             "KF",
             PSFpath;
@@ -1204,7 +1204,7 @@ function matsubaracore_conv(outname, d::Dict;
         if R>10
             error("This calculation (R=$R) is doomed.")
         end
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         ωs_ext = TCI4Keldysh.MF_npoint_grid(T,2^(R-1),3)
         om_sig = TCI4Keldysh.Σ_grid(ntuple(i -> ωs_ext[i],2))
         (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_MF_aIE(PSFpath, om_sig; flavor_idx=flavor_idx, T=T)
@@ -1272,7 +1272,7 @@ function keldyshcore_conv(outname, d::Dict;
             error("This calculation (R=$R) is doomed.")
         end
         ωs_ext = TCI4Keldysh.KF_grid(ommax, R, 3)
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         om_sig = TCI4Keldysh.Σ_grid(ntuple(i -> ωs_ext[i],2))
         (Σ_L, Σ_R) = if TCI4Keldysh.USE_FDR_SE()
             TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=flavor_idx, sigmak, γ, broadening_kwargs...)
@@ -1326,7 +1326,7 @@ function corrmatsubara(
     qttranks = []
     qttbonddims = []
     svd_kernel = true
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
     beta = 1.0/T
 
     # prepare output
@@ -1491,7 +1491,7 @@ function keldyshaccuracy(
         error("Requested grid size is not available")
     end
 
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
 
     # prepare core evaluator
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
