@@ -1429,11 +1429,13 @@ function absmax(v)
     return maximum(abs.(v))
 end
 
+const DATADIR_ENVVAR = "TCI4KELDYSH_DATADIR"
+
 """
-Where to find PSF data
+Where to find PSF data. Export TCI4KELDYSH_DATADIR to override default, which is a "data" folder in the project directory.
 """
 function datadir()
-    return joinpath(dirname(Base.current_project()), "data")
+    get(ENV, DATADIR_ENVVAR, joinpath(dirname(Base.current_project()), "data"))
 end
 
 """
@@ -1483,6 +1485,33 @@ end
 
 function dir_to_beta(PSFpath::String) :: Float64
     return 1.0 / dir_to_T(PSFpath)
+end
+
+function get_basepath(PSFpath::AbstractString)
+    dirname(rstrip(PSFpath, '/'))
+end
+
+"""
+`PSFpath`: Path to the directory containing the partial spectral functions. Parameter file is in the parent directory.
+First try to read from parameter file `mpNRG.mat`. Otherwise use `TCI4Keldysh.dir_to_T`.
+"""
+function read_temperature(PSFpath::AbstractString; channel="t")
+    base_path = get_basepath(PSFpath)
+    if !isdir(base_path)
+        base_path = joinpath(TCI4Keldysh.datadir(), base_path)
+    end
+    filepath = find_parameter_file(base_path; channel=channel)
+    T = nothing
+    if isfile(filepath)
+        matopen(filepath) do file
+            T = read(file, "T")
+        end
+    else
+        @info "Parameter file mpNRG.mat not found in $base_path."
+        T = TCI4Keldysh.dir_to_T(PSFpath)
+    end
+    isnothing(T) && error("Could not read temperature from $filepath nor from directory name $PSFpath.") # to be safe
+    return T
 end
 
 
@@ -1952,22 +1981,30 @@ function patchedTCI(A::Array{T,D}; kwargs...) where {T,D}
 end
 =#
 
+function find_parameter_file(path::String; channel="t")
+    if !isdir(path)
+        path = joinpath(datadir(), path)
+    end
+    file = joinpath(path, "mpNRG_$(channel_translate(channel)).mat")
+    if !isfile(file)
+        if isfile(joinpath(path, "mpNRG.mat"))
+            # channel-specific file does not exist
+            return joinpath(path, "mpNRG.mat")
+        else
+            @show joinpath(path, "mpNRG.mat")
+            error("Parameter file $file not found in path $path.")
+        end
+    end
+    return file
+end
+
 """
 Read broadening settings from file in the corresponding directory
 TODO: What about estep
 """
 function read_broadening_settings(path=joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50"); channel="t")
 
-    if !isdir(path)
-        path = joinpath(datadir(), path)
-    end
-
-    files = filter(f -> occursin("mpNRG", f), readdir(path; join=true))
-    file = if length(files)==1
-        only(files)
-    else
-        joinpath(path, "mpNRG_$(channel_translate(channel)).mat")
-    end
+    file = find_parameter_file(path; channel=channel)
     d = Dict{Symbol, Any}()
     matopen(file) do f
         d[:emin] = read(f, "emin")
@@ -1981,21 +2018,7 @@ Obtain broadening parameters from the corresponding mpNRG files
 """
 function read_broadening_params(path::String; channel="t")
 
-    if !isdir(path)
-        path = joinpath(datadir(), path)
-    end
-
-    files = filter(f -> occursin("mpNRG", f), readdir(path; join=true))
-    if length(files)==1
-        file = only(files)
-    else
-        file_id = findfirst(f -> occursin(channel_translate(channel), f), files)
-        if isnothing(file_id)
-            error("No file for channel $channel among files: $files")
-        end
-        file = files[file_id]
-    end
-
+    file = find_parameter_file(path; channel=channel)
     (γ, sigmak) = (0.0, [0.0])
     matopen(file, "r") do f
         γ = read(f, "Lwidth")
@@ -2061,3 +2084,8 @@ function vprintstyled(msg::AbstractString, minlevel::Int=1; kwargs...)
         printstyled(msg; kwargs...)
     end
 end
+
+default_frequency_varnames(D::Int) = ("om","nu","nup")[1:D]
+
+grid_origin(grid::NTuple{D,<:AbstractVector{Float64}}) where {D} = ntuple(d -> grid[d][1], D)
+grid_step(grid::NTuple{D,<:AbstractVector{Float64}}) where {D} = ntuple(d -> grid[d][2] - grid[d][1], D)

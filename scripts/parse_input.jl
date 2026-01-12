@@ -1,5 +1,6 @@
 using TCI4Keldysh
 using Serialization
+using JLD2
 using QuanticsTCI
 using QuanticsGrids
 using HDF5
@@ -221,16 +222,77 @@ function filter_KFCEvaluator_kwargs(;kwargs...)
     return ret
 end
 
+function save_qtt_function_mode_dispatch(
+    tt,
+    grid,
+    grid_origin,
+    grid_step,
+    outname::AbstractString,
+    folder::AbstractString,
+    save_as::String
+)
+    if save_as=="jld2"
+        save_qtt_function(
+            tt,
+            grid,
+            grid_origin,
+            grid_step;
+            outname=outname,
+            folder=folder,
+            varnames=TCI4Keldysh.default_frequency_varnames(3)
+        )
+    elseif save_as=="serialized"
+        # can't just serialize qtt because may contain anonymous functoins
+        serialize_tt(tt, grid, MF_grid, outname, folder)
+    elseif save_as=="none"
+        # do nothing
+    else
+        error("Invalid save_as option $save_as")
+    end
+end
+ 
+
+"""
+Save data on disk using JLD2.
+"""
+function save_qtt_function(
+    tt,
+    grid, # Quantics Grid
+    grid_origin::NTuple{D,Float64},
+    grid_step::NTuple{D,Float64};
+    outname::AbstractString,
+    folder::AbstractString,
+    varnames=TCI4Keldysh.default_frequency_varnames(D)
+    ) where D
+
+    R = grid.R
+    fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.jld2")
+    JLD2.save(
+        fname_tt,
+        Dict(
+            "qtt"=>tt,
+            "grid_origin"=>grid_origin,
+            "grid_step"=>grid_step,
+            "varnames"=>varnames,
+            "nbits"=>R,
+            "unfoldingscheme"=>grid.unfoldingscheme
+        )
+    )
+    println(" Stored tensor train under $fname_tt.\n")
+end
+
 function serialize_tt(qtt, outname::String, folder::String)
     R = qtt.grid.R
     fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
     serialize(fname_tt, qtt)
+    println(" Stored tensor train under $fname_tt.\n")
 end
 
-function serialize_tt(tci, grid, outname::String, folder::String)
+function serialize_tt(tci, grid, fgrid, outname::String, folder::String)
     R = grid.R
     fname_tt = joinpath(folder, outname*"_R=$(R)_qtt.serialized")
-    serialize(fname_tt, (tci, grid))
+    serialize(fname_tt, (tci, grid, fgrid))
+    println(" Stored tensor train under $fname_tt.\n")
 end
 
 # ==== JOBTYPES
@@ -292,6 +354,9 @@ function gen_KF_coreevaluator(
     end
 end
 
+"""
+Obtain the Matsubara core vertex in QTT format.
+"""
 function matsubaracore(
     outname::AbstractString,
     d::Dict,
@@ -305,17 +370,15 @@ function matsubaracore(
     cache_center=0,
     use_ΣaIE=true,
     batched_eval=true,
-    serialize_tts=true,
+    save_as="jld2", # jld2, serialized, none
     kwargs...
     )
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
     times = []
     qttranks = []
     qttbonddims = []
     svd_kernel = true
-    @show svd_kernel
-    @show batched_eval
     npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 0
     unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol, kwargs[:unfoldingscheme]) : :fused
 
@@ -334,9 +397,11 @@ function matsubaracore(
     TCI4Keldysh.logJSON(d, outname, folder)
 
     for R in Rs
+        MF_grid = nothing
         t = @elapsed begin
             qtt = if batched_eval
-                TCI4Keldysh.Γ_core_TCI_MF_batched(
+                gev_ref = Base.RefValue{TCI4Keldysh.ΓcoreBatchEvaluator_MF}()
+                qtt = TCI4Keldysh.Γ_core_TCI_MF_batched(
                 PSFpath,
                 R;
                 T=T,
@@ -348,10 +413,14 @@ function matsubaracore(
                 cache_center=cache_center,
                 npivot=npivot,
                 unfoldingscheme=unfoldingscheme,
+                evaluator_ret=gev_ref,
                 tcikwargs...
                 )
+                MF_grid = TCI4Keldysh.get_frequency_grid(gev_ref[])
+                qtt
             else
-                TCI4Keldysh.Γ_core_TCI_MF(
+                gev_ref = Base.RefValue{TCI4Keldysh.ΓcoreEvaluator_MF}()
+                qtt = TCI4Keldysh.Γ_core_TCI_MF(
                 PSFpath,
                 R;
                 T=T,
@@ -362,8 +431,11 @@ function matsubaracore(
                 cache_center=cache_center,
                 npivot=npivot,
                 unfoldingscheme=unfoldingscheme,
+                evaluator_ret=gev_ref,
                 tcikwargs...
                 )
+                MF_grid = TCI4Keldysh.get_frequency_grid(gev_ref[])
+                qtt
             end
         end 
         push!(times, t)
@@ -373,10 +445,15 @@ function matsubaracore(
         TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
         TCI4Keldysh.updateJSON(outname, "bonddims", qttbonddims, folder)
 
-        if serialize_tts
-            # can't just serialize qtt because may contain anonymous functoins
-            serialize_tt(qtt.tci, qtt.grid, outname, folder)
-        end
+        save_qtt_function_mode_dispatch(
+            qtt.tci,
+            qtt.grid,
+            TCI4Keldysh.grid_origin(MF_grid),
+            TCI4Keldysh.grid_step(MF_grid),
+            outname,
+            folder,
+            save_as
+        )
 
         println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
         TCI4Keldysh.report_mem(true)
@@ -384,7 +461,11 @@ function matsubaracore(
         flush(stderr)
     end
 end
-    
+
+   
+"""
+Obtain the full Matsubara vertex in QTT format.
+"""
 function matsubarafull(
     outname::String,
     d::Dict,
@@ -395,11 +476,11 @@ function matsubarafull(
     folder,
     flavor_idx,
     channel,
-    serialize_tts=true,
+    save_as="jld2", # jld2, serialized, none
     kwargs...
     )
 
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
     tcikwargs = filter_tcikwargs(Dict(kwargs))
     npivot= haskey(kwargs, :npivot) ? maybeparse(Int,kwargs[:npivot]) : 0
     unfoldingscheme= haskey(kwargs, :unfoldingscheme) ? maybeparse(Symbol ,kwargs[:unfoldingscheme]) : :fused
@@ -416,6 +497,7 @@ function matsubarafull(
     TCI4Keldysh.logJSON(d, outname, folder)
 
     for R in Rs
+        MF_grid = nothing
         t = @elapsed begin
                 foreign_channels = [ch for ch in ["a","p","t"] if ch!=channel]
                 gbev = TCI4Keldysh.ΓBatchEvaluator_MF(
@@ -427,6 +509,7 @@ function matsubarafull(
                     foreign_channels=Tuple(foreign_channels),
                     unfoldingscheme=unfoldingscheme
                 )
+                MF_grid = TCI4Keldysh.get_frequency_grid(gbev)
 
                 # collect initial pivots
                 initpivots_ω = TCI4Keldysh.initpivots_Γcore([gbev.gev.core.GFevs[i].GF for i in eachindex(gbev.gev.core.GFevs)]; npivot=npivot)
@@ -455,10 +538,15 @@ function matsubarafull(
         TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
         TCI4Keldysh.updateJSON(outname, "bonddims", qttbonddims, folder)
 
-        if serialize_tts
-            # can't just serialize qtt because may contain anonymous functoins
-            serialize_tt(qtt.tci, qtt.grid, outname, folder)
-        end
+        save_qtt_function_mode_dispatch(
+            qtt.tci,
+            qtt.grid,
+            TCI4Keldysh.grid_origin(MF_grid),
+            TCI4Keldysh.grid_step(MF_grid),
+            outname,
+            folder,
+            save_as
+        )
 
         println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
         TCI4Keldysh.report_mem(true)
@@ -467,6 +555,9 @@ function matsubarafull(
     end
 end
 
+"""
+Obtain the full Keldysh vertex in QTT format.
+"""
 function keldyshfull(
     outname::String,
     d::Dict,
@@ -482,11 +573,11 @@ function keldyshfull(
     folder,
     flavor_idx,
     channel,
-    serialize_tts=true,
+    save_as="jld2", # jld2, serialized, none
     kwargs...
     )
 
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
     ik = maybeparse(Int, ik)
     npivot = maybeparse(Int, npivot)
     if isnothing(pivot_steps)
@@ -533,6 +624,7 @@ function keldyshfull(
     TCI4Keldysh.logJSON(d, outname, folder)
 
     for (ir, R) in enumerate(Rs)
+        KF_grid = nothing
         t = @elapsed begin
                 foreign_channels = [ch for ch in ["a","p","t"] if ch!=channel]
                 gbev = TCI4Keldysh.ΓBatchEvaluator_KF(
@@ -549,6 +641,7 @@ function keldyshfull(
                     evaluator_kwargs...,
                     γ=γ, sigmak=sigmak, broadening_kwargs...
                 )
+                KF_grid = TCI4Keldysh.get_frequency_grid(gbev)
 
                 # collect initial pivots
                 initpivots_ω = TCI4Keldysh.initpivots_general(ntuple(_->2^R+1, 3), npivot, pivot_steps[ir]; verbose=true)
@@ -577,10 +670,15 @@ function keldyshfull(
         TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
         TCI4Keldysh.updateJSON(outname, "bonddims", qttbonddims, folder)
 
-        if serialize_tts
-            # can't just serialize qtt because may contain anonymous functoins
-            serialize_tt(qtt.tci, qtt.grid, outname, folder)
-        end
+        save_qtt_function_mode_dispatch(
+            qtt.tci,
+            qtt.grid,
+            TCI4Keldysh.grid_origin(KF_grid),
+            TCI4Keldysh.grid_step(KF_grid),
+            outname,
+            folder,
+            save_as
+        )
 
         println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
         TCI4Keldysh.report_mem(true)
@@ -590,7 +688,7 @@ function keldyshfull(
 end
 
 function all_broadening_settings(PSFpath::AbstractString, channel::AbstractString)
-    base_path = dirname(rstrip(PSFpath, '/'))
+    base_path = TCI4Keldysh.get_basepath(PSFpath)
     (γ, sigmak) = TCI4Keldysh.read_broadening_params(base_path; channel=channel)
     broadening_kwargs = TCI4Keldysh.read_broadening_settings(base_path; channel=channel)
     if !haskey(broadening_kwargs, :estep)
@@ -599,6 +697,9 @@ function all_broadening_settings(PSFpath::AbstractString, channel::AbstractStrin
     return (γ, sigmak, broadening_kwargs)
 end
 
+"""
+Obtain the Keldysh core vertex in QTT format.
+"""
 function keldyshcore(
     outname::AbstractString,
     d::Dict;
@@ -614,7 +715,7 @@ function keldyshcore(
     npivot=1,
     batched=true,
     pivot_steps=nothing,
-    serialize_tts=true,
+    save_as="jld2", # jld2, serialized, none
     dump_path=nothing,
     resume_path=nothing,
     kwargs...
@@ -676,7 +777,9 @@ function keldyshcore(
     TCI4Keldysh.report_mem(true)
 
     for (ir, R) in enumerate(Rs)
+        KF_grid = nothing
         t = @elapsed begin
+            gev_ref = Base.RefValue{TCI4Keldysh.ΓcoreEvaluator_KF}()
             qtt = TCI4Keldysh.Γ_core_TCI_KF(
                 PSFpath, R, ik, ommax
                 ; 
@@ -696,9 +799,11 @@ function keldyshcore(
                 npivot=npivot,
                 batched=maybeparse(Bool, batched),
                 pivot_step=pivot_steps[ir],
+                evaluator_ret=gev_ref,
                 evaluator_kwargs...,
                 tcikwargs...
                 )
+            KF_grid = TCI4Keldysh.get_frequency_grid(gev_ref[])
         end 
         push!(times, t)
         push!(qttranks, TCI4Keldysh.rank(qtt))
@@ -707,9 +812,15 @@ function keldyshcore(
         TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
         TCI4Keldysh.updateJSON(outname, "bonddims", bonddims, folder)
 
-        if serialize_tts            
-            serialize_tt(qtt.tci, qtt.grid, outname, folder)
-        end
+        save_qtt_function_mode_dispatch(
+            qtt.tci,
+            qtt.grid,
+            TCI4Keldysh.grid_origin(KF_grid),
+            TCI4Keldysh.grid_step(KF_grid),
+            outname,
+            folder,
+            save_as
+        )
 
         println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
         flush(stdout)
@@ -869,8 +980,8 @@ function matsubaraslice_conv(
         gev = TCI4Keldysh.ΓcoreEvaluator_MF(
             PSFpath,
             R;
-            ωconvMat = TCI4Keldysh.channel_trafo(channel),
-            T = TCI4Keldysh.dir_to_T(PSFpath),
+            ωconvMat=TCI4Keldysh.channel_trafo(channel),
+            T=TCI4Keldysh.read_temperature(PSFpath; channel=channel),
             flavor_idx=flavor_idx,
             # cutoff=cutoff
         )
@@ -972,7 +1083,7 @@ function matsubarafull_conv(outname, d;
         if R>10
             error("This calculation (R=$R) is doomed.")
         end
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         ωs_ext = TCI4Keldysh.MF_npoint_grid(T,2^(R-1),3)
         gamcore = TCI4Keldysh.compute_Γfull_symmetric_estimator(
             "MF",
@@ -1047,7 +1158,7 @@ function keldyshfull_conv(outname, d;
                 ωs_ext = ntuple(_->TCI4Keldysh.KF_grid_bos(ommax, R), 3)
             end
         end
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         gamcore = TCI4Keldysh.compute_Γfull_symmetric_estimator(
             "KF",
             PSFpath;
@@ -1093,7 +1204,7 @@ function matsubaracore_conv(outname, d::Dict;
         if R>10
             error("This calculation (R=$R) is doomed.")
         end
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         ωs_ext = TCI4Keldysh.MF_npoint_grid(T,2^(R-1),3)
         om_sig = TCI4Keldysh.Σ_grid(ntuple(i -> ωs_ext[i],2))
         (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_MF_aIE(PSFpath, om_sig; flavor_idx=flavor_idx, T=T)
@@ -1161,7 +1272,7 @@ function keldyshcore_conv(outname, d::Dict;
             error("This calculation (R=$R) is doomed.")
         end
         ωs_ext = TCI4Keldysh.KF_grid(ommax, R, 3)
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         om_sig = TCI4Keldysh.Σ_grid(ntuple(i -> ωs_ext[i],2))
         (Σ_L, Σ_R) = if TCI4Keldysh.USE_FDR_SE()
             TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=flavor_idx, sigmak, γ, broadening_kwargs...)
@@ -1215,7 +1326,7 @@ function corrmatsubara(
     qttranks = []
     qttbonddims = []
     svd_kernel = true
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
     beta = 1.0/T
 
     # prepare output
@@ -1380,7 +1491,7 @@ function keldyshaccuracy(
         error("Requested grid size is not available")
     end
 
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
 
     # prepare core evaluator
     ωconvMat = TCI4Keldysh.channel_trafo(channel)

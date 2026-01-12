@@ -317,6 +317,8 @@ struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
     end
 end
 
+get_frequency_grid(ev::MultipoleKFCEvaluator{D}) where {D} = ev.ωs_ext
+
 """
 Call with buffers
 ret has length D1 =2^(D+1)
