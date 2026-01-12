@@ -1442,7 +1442,7 @@ end
 Parent dir of datadir
 """
 function pdatadir()
-    return dirname(datadir())
+    return dirname(rstrip(datadir(),'/'))
 end
 
 function jld2_to_dictkey(jldfile::AbstractString)
@@ -1514,6 +1514,9 @@ function read_temperature(PSFpath::AbstractString; channel="t")
     return T
 end
 
+function read_beta(PSFpath::AbstractString; channel="t")
+    return 1.0 / read_temperature(PSFpath; channel=channel)
+end
 
 function iterate_binvec(R::Int)
     return Iterators.product(fill([1,2], R)...)
