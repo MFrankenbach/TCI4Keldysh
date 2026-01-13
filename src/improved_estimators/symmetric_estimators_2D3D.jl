@@ -1,13 +1,24 @@
 #=
-Methods for the computing MF/KF four-point vertex and K2 contributions.
+Methods for computing MF/KF four-point vertex and K2 contributions.
 For the method, see "Symmetric improved estimators for multipoint vertex functions", Lihm et.al. (2024).
 =#
 
-# whether to use fluctuation-dissipation theorem in asymmetric estimators of self-energy (relevant for core vertex, K2)
+"""
+Whether to use fluctuation-dissipation theorem in asymmetric estimators of self-energy (relevant for core vertex and K2).
+"""
 USE_FDR_SE() = false
 # 2d
 """
-Symmetric estimator for K2 class.
+Symmetric estimator to compute K2 class. Which channel and whether K₂ or K₂' is computed depends
+on ops. See [`oplabels_K2`](@ref).
+# Arguments
+- `formalism`: "MF" or "KF"
+- `PSFpath`: Path to the folder containing the PSFs.
+- `op_labels`: Three operators to use in sIE. See [`oplabels_K2`](@ref).
+- `Σ_calcR`: Right asymmetric estimator for the self-energy for incoming legs.
+- `Σ_calcL`: Left asymmetric estimator for the self-energy for outgoing legs. If not provided, `Σ_calcR` is used for both incoming and outgoing legs.
+- `ωs_ext`: Frequency grid on which to compute K₂.
+- `ωconvMat`: Channel transformation. See [`channel_trafo_K2`](@ref).
 """
 function compute_K2r_symmetric_estimator(
     formalism ::String,
@@ -98,10 +109,15 @@ end
 
 # 3d
 """
-cf. eq. (132) Lihm et. al.
+Compute core vertex Γ_core using symmetric estimator, cf. eq. (132) Lihm et. al.
 
+# Arguments
+* `formalism`: "MF" or "KF"
+* `PSFpath`: Path to the folder containing the PSFs.
 * Σ_calcL: If provided, Σ_calcR will be used for incoming legs and Σ_calcL for outgoing legs.
 They should then be the right (incoming) resp. left-sided(outgoing) asymmetric estimators for the self-energies.
+* `ωs_ext`: Frequency grid on which to compute Γ_core.
+* `ωconvMat`: Channel transformation. See [`channel_trafo`](@ref).
 """
 function compute_Γcore_symmetric_estimator(
     formalism ::String,
@@ -196,6 +212,9 @@ function compute_Γcore_symmetric_estimator(
     return Γcore_data
 end
 
+"""
+Compute core vertex Γ_core using symmetric estimator, cf. eq. (132) Lihm et. al.
+"""
 function compute_Γcore_symmetric_estimator(
     formalism::String,
     PSFpath::String,
@@ -250,7 +269,7 @@ function _mult_Σ_KF(G_data::Array{ComplexF64,N}, Σ::Array{ComplexF64,NΣ}; idi
 end
 
 """
-Bare Keldysh vertex
+Bare Keldysh vertex. Returns a 2x2x2x2 array.
 """
 function Γbare_KF(PSFpath::String, flavor_idx::Int)
     if flavor_idx==2
@@ -270,6 +289,11 @@ end
 """
 Compute full vertex in given formalism. Can store individual contributions (K1,K2 in different channels and core)
 by providing `store_dir`.
+# Arguments
+- `formalism`: "MF" or "KF"
+- `PSFpath`: Path to the folder containing the PSFs.
+- `ωs_ext`: Frequency grid on which to compute Γ_full.
+- `channel`: Frequency channel.
 """
 function compute_Γfull_symmetric_estimator(
     formalism ::String,
@@ -472,31 +496,4 @@ function compute_Γfull_symmetric_estimator(
     end
     
     return Γfull
-end
-
-"""
-NOT YET IMPLEMENTED
-"""
-function compute_Γcore_pointwise(
-    formalism ::String,
-    PSFpath::String,
-    R::Int=2^12
-    ;
-    T::Float64=dir_to_T(PSFpath),
-    flavor_idx::Int,
-    ωs_nonlin::Vector{Float64},
-    channel::String,
-    broadening_kwargs...
-)
-    if formalism=="MF"    
-        error("NYI")
-    else
-        # formalism=="KF"
-        # determine linear grid
-        ommax = maximum(abs.(ωs_nonlin))
-        ωs_ext = KF_grid(ommax, R, 3)
-        # TODO need to evaluate vertex on arbitrary frequencies
-        # by interpolation
-        error("NYI")
-    end
 end
