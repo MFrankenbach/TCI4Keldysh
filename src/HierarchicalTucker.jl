@@ -91,7 +91,7 @@ const Legs{D,T}=NTuple{D,Vector{Matrix{T}}} where {D,T}
 Implement a tucker decomposition
 G(ω,ν,ν')=∑_ϵ k(ω,ϵ1)k(ν,ϵ2)k(ν',ϵ3) center(ϵ)
 that performs blockwise SVD compression of kernel slices
-k[slice,:] and contracts SV into the corresponding part of the
+k[slice,:]≈USV and contracts SV into the corresponding part of the
 center. This can be used to achieve a balance between memory and
 single point evaluation cost.
 It can be viewed (kind of) as a multipole expansion of the kernels.
@@ -99,11 +99,16 @@ It can be viewed (kind of) as a multipole expansion of the kernels.
 In principle, one could also partition the range of ϵ's, but this
 did not look promising.
 
-* ids_cumulated: at which indices the different kernel matrices
+# Fields
+* `kernels`: Frequency kernel for each of the `D` dimensions split into intervals
+according to the explanation above and SVD compressed.
+They have the external frequency index as column index
+because reading columns is faster
+* `center`: Tucker center partitioned into blocks according to the kernel partitions,
+and contracted with the SV factors of the SVD compressions of the kernels.
+* `ids_cumulated`: at which indices the different kernel matrices
 start in each direction (minus 1), i.e., [0, length(FirstMatrix), ...]
 total length: number of kernels + 1
-* kernels: have external frequency index as column index
-because reading columns is faster
 """
 struct HierarchicalTucker{D,T}
     center::Array{Array{T,D},D}
@@ -281,12 +286,16 @@ end
 """
 Evaluate full Keldysh correlator with partial correlators represented as HierarchicalTucker
 decompositions
+# Fields
 * Gps: Dx(D+1)! matrix for D+1 (= no. of fully retarded kernels) hierarchical tucker decompositions for each partial correlator
+* ωconvOffs: index offsets for external -> internal frequency conversion for each partial correlator
+* ωconvMats: frequency transformations for each partial correlator
+* ωs_ext: external frequency grids
+* GR_to_GK: transformation from retarded to Keldysh index
 """
 struct MultipoleKFCEvaluator{D} <: AbstractCorrEvaluator_KF{D,ComplexF64}
     Gps::Matrix{HierarchicalTucker{D,ComplexF64}}
     ωconvOffs::Vector{SVector{D,Int}}
-    # SMatrix needs four (!) types to be concrete: {S1,S2,T,L}
     ωconvMats::Vector{Matrix{Int}}
     ωs_ext::NTuple{D,Vector{Float64}}
     GR_to_GK::Array{Float64,3}
