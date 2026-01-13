@@ -8,20 +8,17 @@ PartialCorrelator_reg
 
 Regular partial correlator ̃Gₚ(ω₁, ω₂, ...) = ∫dε₁dε₂ ̃K(ω₁-ε₁) ̃K( ω₂- ε₂)... Sₚ(ε₁,ε₂,...)
 
-Members:
-* formalism:: String                          # "MF" or "KF"
-* Adisc   ::  Array{Float64,D}                # discrete PSF data; best: compactified with compactAdisc(...)
-* ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
-* Kernels ::  Vector{Matrix{ComplexF64}}      # regular kernels
-* ωs_ext  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
-* ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
-* ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices ~ i_ωs_int = ωconvMat * i_ωs_ext + ωconvOff
-* ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of indices
+# Fields
+* `formalism`:: String                          # "MF" or "KF"
+* `tucker`:: TuckerDecomposition{ComplexF64,D}   # Storing the energy grids (ωdiscs/ε) and the internal (non-transformed) frequencies ω (ωs_int)
+* `Adisc_anoβ`::Array{ComplexF64,D}             # anomalous part of the discrete PSF data (only used for computing the anomalous contribution ∝ β)
+* `ωs_ext`  ::  NTuple{D,Vector{ComplexF64}}    # external complex frequencies
+* `ωconvMat`::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices ~ i_ωs_int = ωconvMat * i_ωs_ext + ωconvOff
+* `ωconvOff`::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of indices
+* `isFermi` ::  SVector{D,Bool}                 # encodes whether the i-th dimension of `tucker` encodes a bosonic or fermionic frequency (only relevant in MF)
 
-
-
-Kernel for formalism == "MF":  ̃K(ω₁-ε₁) = 1/(ω₁-ε₁)            [= regular kernel]
-                        "KF":  ̃K(ω₁-ε₁) = 1/(ω₁-ε₁ +im 0^+)    [= retarded kernel]
+Kernel the two formalisms formalism :   "MF":  ̃K(ω₁-ε₁) = 1/(ω₁-ε₁)            [= regular kernel]
+                                        "KF":  ̃K(ω₁-ε₁) = 1/(ω₁-ε₁ +im 0^+)    [= retarded kernel]
 Pointwise evaluation of PartialCorrelator_reg Gp: 
  * without frequency conversion (any formalism) --> Gp[i,j,...]
  * with    frequency conversion 
@@ -34,16 +31,16 @@ precompute_all_values:
 """
 mutable struct PartialCorrelator_reg{D} <: AbstractTuckerDecomp{D}
     T           ::Float64
-    formalism:: String                          # "MF" or "KF"
+    formalism:: String
     tucker      ::  TuckerDecomposition{ComplexF64,D}
     #Adisc   ::  Array{ComplexF64,D}             # discrete PSF data; best: compactified with compactAdisc(...)
-    Adisc_anoβ::Array{ComplexF64,D}             # anomalous part of the discrete PSF data (only used for computing the anomalous contribution ∝ β)
+    Adisc_anoβ::Array{ComplexF64,D}
     #ωdiscs  ::  Vector{Vector{Float64}}         # discrete frequencies for 
     #Kernels ::  Vector{Matrix{ComplexF64}}      # regular kernels
-    ωs_ext  ::  NTuple{D,Vector{Float64}}    # external complex frequencies
+    ωs_ext  ::  NTuple{D,Vector{Float64}}
     #ωs_int  ::  NTuple{D,Vector{ComplexF64}}    # internal complex frequencies
-    ωconvMat::  SMatrix{D,D,Int}                # matrix encoding frequency conversion in terms of indices ~ i_ωs_int = ωconvMat * i_ωs_ext + ωconvOff
-    ωconvOff::  SVector{D,Int}                  # Offset encoding frequency conversion in terms of (one-based!) indices
+    ωconvMat::  SMatrix{D,D,Int}
+    ωconvOff::  SVector{D,Int} 
     isFermi ::  SVector{D,Bool}                 # encodes whether the i-th dimension of tucker encodes a bosonic or fermionic frequency (only relevant in MF)
 
     ####################
@@ -301,8 +298,12 @@ function evaluate_ano_with_ωconversion(
 end
 
 """
-struct designed to evaluate anomalous term of PartialCorrelator efficiently, i.e., compute:
+struct designed to evaluate anomalous term of PartialCorrelator (in Matsubara formalism) efficiently, i.e., compute:
     -0.5*(β + sum_i≠j 1/(iω_j - ϵ_j)) ⋅ ∏_i≠j 1/(iω_j - ϵ_j)
+
+D is the dimension of the original PartialCorrelator, N=D-1.
+# Fields
+* ωlegs: Tucker legs of PartialCorrelator, omitting bosonic dimension
 * Adisc_ano_red: needed when number of PartialCorrelators has been reduced: Then
 Adisc_ano = Adisc_ano(Gp1) + (-1)^(D-1) * Adisc_ano(Gp2)
 Adisc_ano_red = Adisc_ano(Gp1) + (-1)^(D) * Adisc_ano(Gp2)

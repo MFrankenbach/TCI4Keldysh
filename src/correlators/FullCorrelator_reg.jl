@@ -106,7 +106,7 @@ function _get_Gp_to_G(D::Int, isBos::BitVector) ::Vector{Float64}
 end
 
 """
-evaluate regular part of GF
+Evaluate regular part of full Matsubara correlator (without anomalous term) on grid index `idx`.
 """
 function evaluate_reg(G::FullCorrelator_MF{D}, idx::Vararg{Int,D}) where{D}
     eval_gps_reg(gp) = gp(idx...)
@@ -115,6 +115,9 @@ function evaluate_reg(G::FullCorrelator_MF{D}, idx::Vararg{Int,D}) where{D}
     return sum(eval_gps_reg, G.Gps)
 end
 
+"""
+Evaluate full Matsubara correlator including anomalous terms on grid index `idx`.
+"""
 function evaluate(G::FullCorrelator_MF{D}, idx::Vararg{Int,D}) where{D}
     res = 0.0
     for Gp in G.Gps
@@ -128,14 +131,14 @@ end
 
 
 """
-Evaluate REGULAR part of FullCorrelator
+Evaluate **regular** part of Matsubara FullCorrelator on grid index `idx`.
 """
 function (G::FullCorrelator_MF{D})(idx::Vararg{Int,D}) where{D}
     return evaluate_reg(G, idx...)#[1]
 end
 
 """
-Lower bound on maxabs of G
+Provide a lower bound on maximum absolute value of G on the frequency grid by sampling around the mid-frequency.
 """
 function lowerbound(G::FullCorrelator_MF{D}) where {D}
     mid_idx = [div(length(omext), 2) for omext in G.ωs_ext]
@@ -152,8 +155,16 @@ end
 abstract type AbstractCorrEvaluator_MF{T,D,N} end
 
 """
-To evaluate FullCorrelator_MF pointwise.
-* tucker_cuts: In the Tucker center, elements (i,j,k) with i+j+k > prune_idx are neglected
+Structure to evaluate `FullCorrelator_MF` pointwise in an (approximate and) efficient way.
+Matsubara kernels in partial correlators are SVD-truncated with a given cutoff. The pruned
+singular values and right hand singular vectors are contracted into the Tucker center
+of the partial correlators, thus reducing the size of the Tucker center.
+# Fields
+* `GF`: `FullCorrelator_MF{D}` to be evaluated
+* `anevs`: Vector of `AnomalousEvaluator{T,D,N}` for each partial correlator that requires anomalous term evaluation.
+* `ano_terms_required`: Vector of Bools indicating which partial correlators require anomalous term evaluation.
+* `anoid_to_Gpid`: Mapping from anomalous evaluator index to partial correlator index.
+* `tucker_cuts`: In the Tucker center of each partial correlator, elements (i,j,k) with i+j+k > prune_idx are neglected
 """
 struct FullCorrEvaluator_MF{T,D,N} <: AbstractCorrEvaluator_MF{T,D,N}
 
@@ -279,11 +290,15 @@ function (fev::FullCorrEvaluator_MF{T,D,N})(w::Vararg{Int,D}) where {T,D,N}
 end
 
 """
-Contract one frequency into PSF.
-* MFC: Matsubara Correlator
-* omPSFs: ∑_ϵ1 k^R(ω,ϵ1)*Acont(ϵ1,ϵ2,ϵ3) for each partial correlator
-* remLegs: p×2 matrix of remaining tucker legs (kernels) to be contracted into omPSFs
-copied here to improve memory layout
+Object to evaluate a full 4-point Matsubara correlator. See also [`FullCorrEvaluator_MF`](@ref).
+Pointwise evaluations are sped up by contracting *one* frequency kernel with the PSF.
+This strikes a certain balance between precomputation time/memory and evaluation speed.
+# Fields
+* `GF`: Matsubara correlator
+* `omPSFs`: ∑_ϵ1 k^R(ω,ϵ1)*Acont(ϵ1,ϵ2,ϵ3) for each partial correlator
+* `remLegs`: p×2 matrix of remaining tucker legs (kernels) to be contracted into omPSFs
+copied here from the `GF` object to improve the memory layout of the kernels.
+p is the number of partial correlators, and there are 2 remaining legs after contracting one kernel into the PSF.
 """
 struct MFCEvaluator <: AbstractCorrEvaluator_MF{ComplexF64,3,2}
     GF::FullCorrelator_MF{3}
@@ -495,6 +510,11 @@ function evaluate(fbev::FullCorrBatchEvaluator_MF{T,D,N}, w::Vararg{Int,D}) wher
 end
 
 
+"""
+Whether the number of partial correlators is still `(D+1)!`, i.e., it has not been reduced.
+Also check whether tucker centers of partial correlators have been modified, as it happens
+when constructing a `FullCorrEvaluator_MF` with SVD-truncated kernels.
+"""
 function intact(GF::FullCorrelator_MF{D}) where {D}
     if length(GF.Gps) != factorial(D+1)
         @warn "The full correlator you are using here has a reduced number of partial correlators!"
@@ -502,14 +522,16 @@ function intact(GF::FullCorrelator_MF{D}) where {D}
     return all(intact.(GF.Gps))
 end
 
+"""
+Compute all the full Matsubara correlator on the entire frequency grid.
+"""
 function precompute_all_values(G :: FullCorrelator_MF{D}) ::Array{ComplexF64,D} where{D}
-    @assert intact(G) "TuckerDecomposition has been modified"
+    intact(G) || error("TuckerDecomposition has been modified")
     return  sum(gp -> precompute_all_values_MF(gp), G.Gps)
 end
 
 """
-Precompute values, including only regular kernel convolutions and frequency rotations
-TODO: TEST
+Precompute values, including only regular kernel convolutions and frequency rotations.
 """
 function precompute_all_values_MF_noano(
     G::FullCorrelator_MF{D}
@@ -523,6 +545,7 @@ end
     reduce_Gps!(G_in :: FullCorrelator_MF{D})
 
 Summarize the Gps that essentially have the same kernels, namely p and reverse(p), e.g. (1,2,3,4) and (4,3,2,1).
+Halves the number of partial correlators stored in `G_in`.
 """
 function reduce_Gps!(G_in :: FullCorrelator_MF{D}) where{D}
     function idx_of_p(p::Vector{Int}, ps::Vector{Vector{Int}}) ::Int
@@ -611,7 +634,7 @@ function speedup_FullCorrelator_MF()
 end
 
 """
-Determine linear broadening widths for all 1D kernels of a partial correlator.
+Determine linear broadening widths for all 1D kernels of a partial Keldysh correlator.
 """
 function broadening_widths(gamvec::Vector{Float64}, perm::Vector{Int})
     ell = length(gamvec)
@@ -637,7 +660,8 @@ where the *partial* correlators Gp are the contributions from individual permuta
 
 # Members:
 * name    ::Vector{String}                    : name to distinguish the objects (e.g.: list of operators)
-* Gps     ::Vector{PartialCorrelator_reg}     : list of partial correlators
+* Gps     ::Matrix{PartialCorrelator_reg}     : (D+1)!×(D+1) matrix of partial correlators. There are (D+1)! permutations of D+1 operators, and each of these can be combined with advanced/retarded kernels RRR, ARR, AAR or AAA (for D=3).
+* NGps    ::Int                               : how many partial correlators there are (currently NGps=(D+1)!)
 * Gp_to_G ::Vector{Float64}                   : prefactors for Gp's (currently this coefficient is applied to Adisc => no need to apply it during evaluation.)
 * GR_to_GK::Array{Float64,3}                  : Matrix of size (D+1, 2^{D+1}) mapping fully-retarded Gp to Keldysh Gp
 * ωs_ext  ::NTuple{D,Vector{ComplexF64}}      : external complex frequencies in the chosen parametrization
@@ -847,7 +871,7 @@ end
 """
     evaluate_all_iK(G::FullCorrelator_KF{D}, idx::Vararg{Int,D})
 
-Evaluate Keldysh correlator at indices idx. Returns all Keldysh components in a vector.
+Evaluate Keldysh correlator at indices `idx`. Returns all Keldysh components in a vector.
 iK ∈ 1:2^D is the linear index for the 2x...x2 Keldysh structure.
 
 """
@@ -886,14 +910,16 @@ and should implement a call method on a frequency index idx::Vararg{Int,D}.
 abstract type AbstractCorrEvaluator_KF{D,T} end
 
 """
-To evaluate FullCorrelator_KF on all Keldysh components and a given frequency point.
+Structure to evaluate a full Keldysh correlator on all Keldysh components and a given frequency point.
+The evaluation is approximate (and accelerated) using SVD truncations of the broadened Keldysh kernels.
 
-* iso_kernels: left isometries of SVD-decomp K^R=U^RSV^R of retarded kernels and conjugate of the first left isometry
+# Fields
+* `iso_kernels`: left isometries U^R of SVD-decomposition K^R=U^RSV^R of retarded kernels K^R and conjugate of the first left isometry
 store everything TRANSPOSED
-* tucker_centers: tucker_centers contracted with SV from each decomposed kernel;
-for each Gp, need to store D centers
-
-This gives for D=3 the 3 contractions
+* `tucker_centers`: tucker_centers contracted with SV from each decomposed kernel;
+for each Gp, need to store D different tucker centers:
+For each partial correlator, this gives for D=3 the 3 contractions
+```
 SV^R -- CEN -- SV^R
          |
          SV^R
@@ -905,7 +931,8 @@ SV^A -- CEN -- SV^R
 SV^A -- CEN -- SV^R
          |
          SV^A
-which are then written to tucker_centers
+```
+which are stored in `tucker_centers`.
 """
 struct FullCorrEvaluator_KF{D,T} <: AbstractCorrEvaluator_KF{D,T}
     KFC::FullCorrelator_KF{D}
@@ -961,10 +988,13 @@ struct FullCorrEvaluator_KF{D,T} <: AbstractCorrEvaluator_KF{D,T}
 end
 
 """
-Contract one frequency into PSF.
-* KFC: Keldysh Correlator
-* omPSFs: ∑_ϵ1 k^R(ω,ϵ1)*Acont(ϵ1,ϵ2,ϵ3) for each partial correlator. 24×4 matrix
-* remLegs: 24×2×4 matrix of remaining tucker legs (kernels) to be contracted into omPSFs
+Object to evaluate a full Keldysh 4-point correlator.
+Pointwise evaluations are sped up by contracting *one* frequency kernel with the PSF.
+See also [`MFCEvaluator`](@ref).
+# Fields
+* `KFC`: Keldysh Correlator
+* `omPSFs`: ∑_ϵ1 k^R(ω,ϵ1)*Acont(ϵ1,ϵ2,ϵ3) for each partial correlator. 24×4 matrix
+* `remLegs`: 24×2×4 matrix of remaining tucker legs (kernels) to be contracted into omPSFs
 copied here to improve memory layout
 """
 struct KFCEvaluator <: AbstractCorrEvaluator_KF{3,ComplexF64}
@@ -996,35 +1026,6 @@ end
 
 get_frequency_grid(G::FullCorrEvaluator_KF) = G.KFC.ωs_ext
 get_frequency_grid(G::KFCEvaluator) = G.KFC.ωs_ext
-
-"""
-NOT faster standard call...
-"""
-#=
-function evalKFC_BLAS(fev::KFCEvaluator, idx::Vararg{Int,3})
-    res = zeros(ComplexF64, 1, 2^4)
-    for (p,Gp) in enumerate(first_Gps(fev.KFC))
-        # rotate frequency
-        retarded = zeros(ComplexF64,4)
-        idx_int = Gp.ωconvMat * SA[idx...] + Gp.ωconvOff
-
-        # compute retarded
-        # @views tmp13 = transpose(fev.remLegs[p,1][:,idx_int[2]]) * fev.omPSFs[2*p-1][:,:,idx_int[1]]
-        tmp13 = BLAS.gemv('T', one(ComplexF64), view(fev.omPSFs[2*p-1], :,:,idx_int[1]), view(fev.remLegs[p,1], :,idx_int[2]))
-        retarded[1] = BLAS.dotu(tmp13, view(fev.remLegs[p,2], :,idx_int[3]))
-        retarded[2] = BLAS.dotu(
-                        view(fev.remLegs[p,1], :,idx_int[2]),
-                        gemv('N', one(ComplexF64), view(fev.omPSFs[2*p], :,:,idx_int[1]), view(fev.remLegs[p,2], :,idx_int[3]))
-                        )
-        retarded[3] = BLAS.dotc(tmp13, view(fev.remLegs[p,2], :,idx_int[3]))
-        retarded[end] = conj(retarded[1])
-
-        # transform to Keldysh
-        res += transpose(retarded) * fev.KFC.GR_to_GK[:,:,p]
-    end
-    return vec(res)
-end
-=#
 
 function (fev::KFCEvaluator)(idx::Vararg{Int,3})
     res = zeros(ComplexF64, 1, 2^4)
@@ -1094,6 +1095,7 @@ function (fev::FullCorrEvaluator_KF{3,T})(idx::Vararg{Int,3}) where {T}
     return vec(res)
 end
 
+# Test kept here for convenience.
 function test_FullCorrEvaluator_KF(npt::Int)
     # create correlator
     addpath = npt==4 ? "4pt" : ""
@@ -1143,8 +1145,9 @@ end
 
 
 """
-To evaluate FullCorrelator_KF pointwise.
-Specialized to evaluate a given Keldysh component.
+Structure made to evaluate a fixed Keldysh component of a full Keldysh correlator pointwise.
+**OUT OF ORDER** because it does not support linear broadening that varies with the fully retarded index and dimension.
+Compare the function ``
 """
 struct FullCorrEvaluator_KF_single{D, T}
 
@@ -1160,7 +1163,7 @@ struct FullCorrEvaluator_KF_single{D, T}
     Discard singvals <cutoff in Tucker legs (i.e., Kernels).
     """
     function FullCorrEvaluator_KF_single(KFC::FullCorrelator_KF{D}, iK::Int; cutoff::Float64=1.e-20) where {D}
-        error("DEPRECATED does not support linear broadening that varies with the fully retarded index and dimension")
+        error("OUT OF ORDER: `FullCorrEvaluator_KF_single` does not support linear broadening that varies with the fully retarded index and dimension")
         iRs_required = Vector{Vector{Int}}(undef, factorial(D+1))
         # relevant retarded components
         GRK = KFC.GR_to_GK
@@ -1284,7 +1287,7 @@ function precompute_all_values(G :: FullCorrelator_KF{D}) where{D}
 end
 
 """
-Replace Keldysh component G^22 by FDT-computed G^22: 
+Compute 1D Keldysh correlator using FDT for Keldysh component G^22:
 G22(ω) = coth(ω/(2T)) * (G^21 - G^12) = coth(ω/(2T)) * 2i * Im(G^21)(ω)
 """
 function precompute_all_values_replaceFDT(G::FullCorrelator_KF{1}, T::Float64, isFermionic=true)
@@ -1372,6 +1375,9 @@ end
 
 
 
+"""
+Compute fully retarded Keldysh correlator with operators `Ops` from spectral function in `path`.
+"""
 function get_GR(
     path::String, 
     Ops::Vector{String}
@@ -1382,7 +1388,7 @@ function get_GR(
     sigmak  ::Vector{Float64},              
     γ       ::Float64,                      
     broadening_kwargs...                    
-    ) #where{D}
+    )
     ##########################################################################
     ############################## check inputs ##############################
     if length(Ops) != 2
