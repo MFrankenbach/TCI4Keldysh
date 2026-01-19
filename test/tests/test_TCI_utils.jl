@@ -1,4 +1,5 @@
 using ITensors
+using ITensorMPS
 
 @testset "TCI utils" begin
 
