@@ -360,7 +360,7 @@ function compress_FullCorrelator_pointwise(
             grid = collect(Iterators.product(ntuple(_->grid1D,D)...))
             maxerr = check_interpolation(qtt, _eval, grid)
             tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+            GET_VERBOSITY()>=0 && println(" Maximum interpolation error: $maxerr (tol=$tol)")
         end
 
         return qtt
@@ -375,7 +375,7 @@ function compress_FullCorrelator_pointwise(
             grid = collect(Iterators.product(ntuple(_->grid1D,D)...))
             maxerr = check_interpolation(qtt, fev, grid)
             tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+            GET_VERBOSITY()>=0 && println(" Maximum interpolation error: $maxerr (tol=$tol)")
         end
 
         return qtt

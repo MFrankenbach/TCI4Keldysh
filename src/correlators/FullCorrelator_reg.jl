@@ -206,7 +206,7 @@ struct FullCorrEvaluator_MF{T,D,N} <: AbstractCorrEvaluator_MF{T,D,N}
             for Gp in GF.Gps
                 # if any(size(Gp.tucker.legs[1]) .> 1000) @warn "SVD-ing legs of sizes $(size.(Gp.tucker.legs))" end
                 size_old = size(Gp.tucker.center)
-                @time svd_kernels!(Gp.tucker; cutoff=cutoff)
+                svd_kernels!(Gp.tucker; cutoff=cutoff)
                 GC.gc(true)
                 # GC.enable_logging(true)
                 size_new = size(Gp.tucker.center)
@@ -222,7 +222,7 @@ struct FullCorrEvaluator_MF{T,D,N} <: AbstractCorrEvaluator_MF{T,D,N}
         tucker_cuts = Int[]
         for Gp in GF.Gps
             p = 2.0
-            @time prune_idx = compute_tucker_cut(Gp.tucker, GFmin, tucker_cutoff, p)
+            prune_idx = compute_tucker_cut(Gp.tucker, GFmin, tucker_cutoff, p)
             GC.gc(true)
             # GC.enable_logging(true)
         #     for idx_sum in reverse(3:sum(size(cen_)))
@@ -246,7 +246,7 @@ struct FullCorrEvaluator_MF{T,D,N} <: AbstractCorrEvaluator_MF{T,D,N}
             push!(tucker_cuts, prune_idx)
         end
 
-        @show tucker_cuts
+        GET_VERBOSITY()>1 && println("  Tucker cuts: ", tucker_cuts)
         return new{T,D,D-1}(GF, anevs, ano_terms_required, anoid_to_Gpid, tucker_cuts)
     end
 end
@@ -726,13 +726,14 @@ struct FullCorrelator_KF{D}
         ##########################################################################
         
         vprint("Loading stuff: ")
-        @time begin
+        t_load = @elapsed begin
         perms = permutations(collect(1:D+1))
         perms_vec = collect(perms)
         isBos = isBosonic.(Ops)
         ωdisc = load_ωdisc(path, Ops)
         Adiscs = [load_Adisc(path, Ops[p], flavor_idx) for (_,p) in enumerate(perms)]
         end
+        vprint("... $(round(t_load; sigdigits=6)) sec)\n")
         vprint("Creating Broadened PSFs: ")
         function get_Acont_p(i::Int, p, l::Int)
             # D broadening widths
@@ -742,7 +743,7 @@ struct FullCorrelator_KF{D}
             return BroadenedPSF(ωdisc, Adiscs[i], sigmak, gamvec; ωconts=(ωconts...,), broadening_kwargs...)
         end
         Aconts = Matrix{TuckerDecomposition{Float64,D}}(undef, length(perms_vec), D+1)
-        @time begin 
+        t_broaden = @elapsed begin 
             for l in 1:D+1
                 Threads.@threads for i in axes(Aconts, 1)
                     p = perms_vec[i]
@@ -750,6 +751,7 @@ struct FullCorrelator_KF{D}
                 end
             end
         end
+        vprint("... $(round(t_broaden; sigdigits=6)) sec)\n")
 
         # write to HDF5 format
         if !isnothing(write_Aconts)
@@ -832,7 +834,7 @@ struct FullCorrelator_KF{D}
         end
 
         vprint("All the rest: ")
-        @time begin
+        t_rest = @elapsed begin
         perms = permutations(collect(1:D+1))
         Gp_to_G = _get_Gp_to_G(D, isBos)
         for i in axes(Aconts,1)
@@ -857,6 +859,7 @@ struct FullCorrelator_KF{D}
         end
         GR_to_GK = get_GR_to_GK(D)
         end
+        vprint("... $(round(t_rest; sigdigits=6)) sec)\n")
         return new{D}(name, Gps, factorial(D+1), Gp_to_G, GR_to_GK, ωs_ext, ωconvMat, isBos)
     end
 end
@@ -955,7 +958,7 @@ struct FullCorrEvaluator_KF{D,T} <: AbstractCorrEvaluator_KF{D,T}
         if isnothing(tucker_cutoff)
             tucker_cutoff = cutoff
         end
-        @time KFC_max = lowerbound(KFC)
+        KFC_max = lowerbound(KFC)
         for p in axes(KFC.Gps,1)
             for l in axes(KFC.Gps,2)
                 Gp = KFC.Gps[p,l]
@@ -1397,7 +1400,7 @@ function get_GR(
     ##########################################################################
     
     vprint("Loading stuff: ")
-    @time begin
+    t_load = @elapsed begin
     #perms = permutations(collect(1:D+1))
     isBos = (o -> o[1] == 'Q' && length(o) == 3).(Ops)
     @assert all(isBos) || all(.!isBos)
@@ -1405,6 +1408,7 @@ function get_GR(
     ωdisc = load_ωdisc(path, Ops)
     Adisc = load_Adisc(path, Ops, flavor_idx) + reverse(load_Adisc(path, reverse(Ops), flavor_idx)) * (isBos ? -1 : 1)
     end
+    vprint("... $(round(t_load; sigdigits=6)) sec)\n")
     #print("Creating Broadened PSFs: ")
     #function get_Acont_p(i, p)
     #    ωs_int, _, _ = _trafo_ω_args(ωs_ext, cumsum(ωconvMat[p[1:D],:], dims=1))

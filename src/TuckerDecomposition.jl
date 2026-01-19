@@ -490,7 +490,7 @@ function compute_tucker_cut(center::Array{T,D}, legs::Vector{Matrix{T}}, GFmin::
     cuts = reverse(Knorm .* (sums_acc .^ (1.0/q)))
     prune_idx = findfirst(s -> s<=lower_thresh, cuts)
     if isnothing(prune_idx)
-        @warn "Tucker cutoff is pessimal"
+        GET_VERBOSITY()>0 && @info "Tucker cutoff is pessimal"
         prune_idx = sum(sz_cen)
     elseif prune_idx==0
         prune_idx = 1

@@ -533,7 +533,7 @@ function precompute_K2r(
 
         ωs_Σ = Σ_grid(ωs_ext)
         (ΣL, ΣR) = calc_Σ_MF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor_idx,T=T)
-        printstyled("  Compute K2...\n"; color=:blue)
+        vprintstyled("  Compute K2...\n", 2; color=:blue)
         K2 = compute_K2r_symmetric_estimator(
             "MF",
             PSFpath,
@@ -574,7 +574,7 @@ function precompute_K2r(
         # ωs_Σ = KF_grid_fer_(ωmax, 2*Nfer)
         ωs_Σ = Σ_grid(ωs_ext)
         (ΣL, ΣR) = calc_Σ_KF_aIE(PSFpath, ωs_Σ; flavor_idx=flavor_idx,T=T, γ=γ, sigmak=sigmak, broadening_kwargs...)
-        printstyled("  Compute K2...\n"; color=:blue)
+        vprintstyled("  Compute K2...\n", 2; color=:blue)
         K2 = compute_K2r_symmetric_estimator(
             "KF",
             PSFpath,
@@ -624,7 +624,7 @@ function precompute_K1r(
             else
                 _ESTEP_DEFAULT()
             end
-        println("ESTEP in K1: $(estep)")
+        vprintln("ESTEP in K1: $(estep)", 2)
 
         # are different broadening parameters requested?
         γ = if haskey(broaden_dict,:γ)
@@ -681,13 +681,13 @@ function K1_TCI(
         # leave out final frequency
         ωs_ext = MF_grid(T, Nhalf, false)
         GF = FullCorrelator_MF(PSFpath, Ops; flavor_idx=flavor_idx, T=T, ωconvMat=ωconvMat, ωs_ext=(ωs_ext,), name="K1$channel")
-        println("==== Computing $(GF.name)...")
+        vprintln("==== Computing $(GF.name)...", 2)
         GFval = precompute_all_values(GF)
         GFval .*= channel_K1_sign(channel)
         # check whether component is identically 0
         qtts = Array{Union{QuanticsTCI.QuanticsTensorCI2{eltype(GFval)}, Nothing}}(undef, 1)
         if maximum(abs.(GFval))<1.e-10
-            println("    K1 compent is zero!")
+            vprintln("    K1 compent is zero!", 2)
             qtts[1]=nothing
             return qtts
         end
@@ -704,7 +704,7 @@ function K1_TCI(
             broadening_kwargs[:estep] = estep
         end
         GF = FullCorrelator_KF(PSFpath, Ops; γ=γ, sigmak=sigmak, flavor_idx=flavor_idx, T=T, ωconvMat=ωconvMat, ωs_ext=(ωs_ext,), name="K1$channel", broadening_kwargs...)
-        println("==== Computing $(GF.name)...")
+        vprintln("==== Computing $(GF.name)...", 2)
         GFval = precompute_all_values(GF)
         GFval .*= channel_K1_sign(channel)
         # all Keldysh components
@@ -804,11 +804,6 @@ struct K2Evaluator_KF
         for i in 1:2
             trafo_act = reshape(ωconvMat_Σ[i+1,:], (1,2))
             ωs_Σ, ωconvOff_Σ = trafo_grids_offset(ωs_ext, trafo_act)
-            @show ωconvMat_Σ
-            @show ωconvOff_Σ
-            @show trafo_act
-            @show (first(only(ωs_Σ)), last(only(ωs_Σ)))
-            @show (first.(ωs_ext), last.(ωs_ext))
             (ΣL, ΣR) = if useFDR
                 calc_Σ_KF_aIE_viaR(
                     PSFpath, only(ωs_Σ);
@@ -1009,7 +1004,7 @@ function K2_TCI_precomputed(
         # check whether component is identically 0
         qtts = Array{Union{QuanticsTCI.QuanticsTensorCI2{eltype(K2)}, Nothing}}(undef, 1)
         if maximum(abs.(K2))<1.e-10
-            println("    K2 compent is zero!")
+            vprintln("    K2 compent is zero!", 2)
             qtts[1]=nothing
             return qtts
         end
@@ -1754,10 +1749,14 @@ function Γ_core_TCI_KF(
     kwargs_dict = Dict(tcikwargs)
     tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
 
-    println("==== CORE EVALUATOR: MEMORY")
-    report_mem(true)
-    @show Base.summarysize(gev) / 1.e9
-    println("==== MEMORY END")
+    if DEBUG_TCI_KF_RAM()
+        println("==== CORE EVALUATOR: MEMORY")
+        report_mem(true)
+        @show Base.summarysize(gev) / 1.e9
+        println("==== MEMORY END")
+    else
+        Base.GC.gc(true)
+    end
 
     # determine initial pivots
     D = 3
@@ -1787,7 +1786,7 @@ function Γ_core_TCI_KF(
             qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
             maxerr = check_interpolation(qtt.tci, gbev, qgrid)
             tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+            GET_VERBOSITY()>=0 && println(" Maximum interpolation error: $maxerr (tol=$tol)")
         end
 
 
@@ -1844,7 +1843,7 @@ function Γ_core_TCI_KF(
                 println("  After $((icheckpoint-1)*ncheckpoint + length(ranks)) sweeps: ranks=$ranks, errors=$errors")
                 if _tciconverged(ranks, errors, tolerance, 3)
                     converged = true
-                    println(" ==== CONVERGED")
+                    vprintln(" ==== CONVERGED")
                     break
                 elseif !isnothing(dump_path)
                     # save checkpoint
@@ -1869,7 +1868,7 @@ function Γ_core_TCI_KF(
             qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
             maxerr = check_interpolation(qtt.tci, gbev, qgrid)
             tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+            GET_VERBOSITY()>=0 && println(" Maximum interpolation error: $maxerr (tol=$tol)")
         end
 
     else
@@ -1890,7 +1889,7 @@ function Γ_core_TCI_KF(
             qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
             maxerr = check_interpolation(qtt, gev, grid)
             tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-            println(" Maximum interpolation error: $maxerr (tol=$tol)")
+            GET_VERBOSITY()>=0 && println(" Maximum interpolation error: $maxerr (tol=$tol)")
         end
 
     end
@@ -2960,7 +2959,7 @@ function Γ_core_TCI_MF_batched(
         qgrid = [QuanticsGrids.grididx_to_quantics(qtt.grid, g) for g in grid]
         maxerr = check_interpolation(qtt.tci, gbev, qgrid)
         tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-        println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        GET_VERBOSITY()>=0 && println(" Maximum interpolation error: $maxerr (tol=$tol)")
     end
 
     return qtt
@@ -2986,7 +2985,7 @@ function Γ_core_TCI_MF(
         error("Asymmetric self-energy estimators for non-batched MF vertex NYI!")
     end
 
-    println(">>Starting Γcore calculation")
+    vprintln(">>Starting Γcore calculation", 1)
     flush(stdout)
 
     # make frequency grid
@@ -3032,7 +3031,7 @@ function Γ_core_TCI_MF(
 
     GC.gc(true)
     if cache_center > 0
-        printstyled("-- Preparing cache for core vertex of size ($(2*cache_center))^$D...\n"; color=:cyan)
+        vprintstyled("-- Preparing cache for core vertex of size ($(2*cache_center))^$D...\n", 1; color=:cyan)
     # obtain cache values
         cache_center = min(cache_center, 2^(R-1))
         ω_cache_Σ = MF_grid(T, 2*cache_center, true)
@@ -3052,7 +3051,7 @@ function Γ_core_TCI_MF(
             return all((w .>= cache_start) .&& (w .<= cache_end))
         end
 
-        println(">>Starting quanticscrossinterpolate (cache)")
+        vprintln(">>Starting quanticscrossinterpolate (cache)", 1)
         flush(stdout)
 
         # evaluation with caching
@@ -3083,7 +3082,7 @@ function Γ_core_TCI_MF(
         return qtt
     else
 
-        println(">>Starting quanticscrossinterpolate (nocache)")
+        vprintln(">>Starting quanticscrossinterpolate (nocache)", 1)
         flush(stdout)
 
         # evaluation without caching

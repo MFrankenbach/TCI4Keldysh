@@ -19,7 +19,7 @@ end
 
 """
 Compress Keldysh Correlator at given contour index.
-* iK::Int linear index ranging from 1:2^D
+* iK: linear Keldysh index ranging from 1:2^D.
 * dump_path: if given, store intermediate results in this path; no other calculation should rely on this path
 * resume_path: if given, load previous results from this path and continue calculation; no other calculation should rely on this path
 """
@@ -46,11 +46,11 @@ function compress_FullCorrelator_pointwise(
     kwargs_dict = Dict(tcikwargs...)
     tolerance = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : 1.e-8
     if isnothing(resume_path)
-        KFev::Union{FullCorrEvaluator_KF_single, KFCEvaluator} = if D==3
+        KFev::Union{FullCorrEvaluator_KF, KFCEvaluator} = if D==3
             KFCEvaluator(GF)
         else
             cutoff = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance]*1.e-3 : 1.e-15
-            FullCorrEvaluator_KF_single(GF, iK; cutoff=cutoff)
+            FullCorrEvaluator_KF(GF; cutoff=cutoff)
         end
     else
         # load
@@ -90,9 +90,9 @@ function compress_FullCorrelator_pointwise(
 
     qKFev_ = 
             if D==1
-                q -> KFev(only(QuanticsGrids.quantics_to_origcoord(grid, q)))
+                q -> KFev(only(QuanticsGrids.quantics_to_origcoord(grid, q)))[iK]
             elseif D==2
-                q -> KFev(QuanticsGrids.quantics_to_origcoord(grid, q)...)
+                q -> KFev(QuanticsGrids.quantics_to_origcoord(grid, q)...)[iK]
             elseif D==3
                 # KFCEvaluator evaluates all Keldysh components
                 q -> KFev(QuanticsGrids.quantics_to_origcoord(grid, q)...)[iK]
@@ -123,10 +123,10 @@ function compress_FullCorrelator_pointwise(
     converged = false
     for icheckpoint in 1:Int(ceil(maxiter/ncheckpoint))
         ranks, errors = TCI.optimize!(tci, qKFev; maxiter=ncheckpoint, tcikwargs...)
-        println("  After <=$(icheckpoint*ncheckpoint) sweeps: ranks=$ranks, errors=$errors")
+        vprintln("  After <=$(icheckpoint*ncheckpoint) sweeps: ranks=$ranks, errors=$errors")
         if _tciconverged(ranks, errors, tolerance, ncheckhistory)
             converged = true
-            println(" ==== CONVERGED")
+            vprintln(" ==== CONVERGED")
             break
         elseif !isnothing(dump_path)
             # dump results
@@ -150,10 +150,10 @@ function compress_FullCorrelator_pointwise(
         if isa(KFev, KFCEvaluator)
             maxerr = check_interpolation(qtt, (w1,w2,w3) -> KFev(w1,w2,w3)[iK], grid)
         else
-            maxerr = check_interpolation(qtt, KFev, grid)
+            maxerr = check_interpolation(qtt, (w...) -> KFev(w...)[iK], grid)
         end
         tol = haskey(kwargs_dict, :tolerance) ? kwargs_dict[:tolerance] : :default
-        println(" Maximum interpolation error: $maxerr (tol=$tol)")
+        GET_VERBOSITY()>=0 && println(" Maximum interpolation error: $maxerr (tol=$tol)")
     end
 
     return qtt

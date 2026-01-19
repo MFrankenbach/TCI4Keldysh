@@ -162,7 +162,7 @@ function compute_Γcore_symmetric_estimator(
     gamcore_lock = ReentrantLock()
 
     Threads.@threads for letts in letter_combinations#[2:end]
-        println("letts: ", letts)
+        GET_VERBOSITY()>=1 && println("letts: ", letts)
         ops = [letts[i]*op_labels[i] for i in 1:4]
         if !any(parse_Ops_to_filename(ops) .== filelist)
             op_labels_symm = ("3", "3dag", "1", "1dag")   # if discrete PSFs where not computed explicitly, exchange labels 1 <-> 3 (the underlying operators in QSpace are identical)
@@ -172,7 +172,7 @@ function compute_Γcore_symmetric_estimator(
         if formalism == "MF"
             Γcore_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx, ωs_ext, ωconvMat);
             Γcore_data_tmp = TCI4Keldysh.precompute_all_values(Γcore_tmp)
-            println("max dat 1 ", letts," : ", maxabs(Γcore_data_tmp))
+            GET_VERBOSITY()>=2 && println("max dat 1 ", letts," : ", maxabs(Γcore_data_tmp))
             # multiply Σ if necessary:
             for il in eachindex(letts)
                 if letts[il] == 'F'
@@ -202,7 +202,7 @@ function compute_Γcore_symmetric_estimator(
             end
 
         end
-        println("max dat 2 ", letts," : ", maxabs(Γcore_data_tmp))
+        GET_VERBOSITY()>=2 && println("max dat 2 ", letts," : ", maxabs(Γcore_data_tmp))
 
         lock(gamcore_lock) do
             Γcore_data += Γcore_data_tmp
@@ -346,7 +346,7 @@ function compute_Γfull_symmetric_estimator(
         error("Channel $channel not supported")
     end
 
-    @show maximum(abs.(Γfull))
+    vprintln("Magnitude of full vertex: $(maximum(abs.(Γfull)))", 2)
 
     # add K2r, K2'r, r=a,t,p
     for ch in channels
@@ -448,7 +448,7 @@ function compute_Γfull_symmetric_estimator(
             changeMat = reshape(channel_change(channel, ch)[1,:], 1,3)
             ωs_extK1, offset = trafo_grids_offset(ωs_ext, changeMat)
             K1 = precompute_K1r(PSFpath, flavor_idx, formalism; ωs_ext=only(ωs_extK1), channel=ch, broadening_kwargs...)
-            printstyled("==== NORM K1 (channel=$(ch)): $(norm(K1))\n"; color=:magenta)
+            GET_VERBOSITY()>2 && printstyled("==== NORM K1 (channel=$(ch)): $(norm(K1))\n"; color=:magenta)
             if formalism=="MF"
                 off_stride = only(offset) + sum(changeMat) - 1
                 sv = StridedView(K1, size(Γfull), Tuple([1] * changeMat), off_stride)
@@ -456,16 +456,16 @@ function compute_Γfull_symmetric_estimator(
             else
                 K1 *= 0.5
                 before = copy(Γfull)
-                printstyled("==== NORM BEFORE: $(norm(before))\n"; color=:magenta)
+                GET_VERBOSITY()>2 && printstyled("==== NORM BEFORE: $(norm(before))\n"; color=:magenta)
                 for ik1 in ids_KF(2)
                     for iK in equivalent_iK_K1(ik1, ch)
                         off_stride = only(offset) + sum(changeMat) - 1
                         sv = StridedView(K1[:,ik1...], size(Γfull)[1:3], Tuple([1] * changeMat), off_stride)
-                        printstyled("  == NORM SV: $(norm(collect(sv)))\n"; color=:magenta)
+                        GET_VERBOSITY()>2 && printstyled("  == NORM SV: $(norm(collect(sv)))\n"; color=:magenta)
                         Γfull[:,:,:,iK...] .+= collect(sv)
                     end
                 end
-                printstyled("==== NORM AFTER: $(norm(Γfull))\n"; color=:magenta)
+                GET_VERBOSITY()>2 && printstyled("==== NORM AFTER: $(norm(Γfull))\n"; color=:magenta)
                 if !isnothing(store_dir)
                     outdata = Γfull .- before
                     h5write(joinpath(store_dir, "V_KF_U2_$(channel_translate(ch))_Nom$(Nom).h5"), "K1", collect(outdata))
@@ -474,7 +474,7 @@ function compute_Γfull_symmetric_estimator(
         end
     end
 
-    @show maximum(abs.(Γfull))
+    GET_VERBOSITY()>2 && @show maximum(abs.(Γfull))
 
     # add bare vertex Γ_0 for updown flavor
     gam0 = 2.0 * load_Adisc_0pt(PSFpath, "Q12")
