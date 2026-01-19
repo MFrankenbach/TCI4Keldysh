@@ -8,8 +8,8 @@ for path in PSFpath_list
 end
 
 # temporary change
-const _ESTEP_OLD_DEFAULT = TCI4Keldysh._ESTEP_DEFAULT()
-TCI4Keldysh._ESTEP_DEFAULT() = 50
+_ESTEP_OLD_DEFAULT = TCI4Keldysh._ESTEP_DEFAULT()
+TCI4Keldysh._ESTEP_DEFAULT() = 10
 
 @testset "SIE: Self-energy" begin
         
@@ -60,7 +60,7 @@ end
         basepath = "SIAM_u=0.50"
         PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=2_conn_zavg/")
         R = 8
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath)
 
         # TCI4Keldysh
         ωs_ext = if formalism=="MF"
@@ -126,7 +126,7 @@ end
         ωmax = 1.0
 
         # TCI4Keldysh: Reference
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath)
         ωs_ext = if formalism=="MF"
                 TCI4Keldysh.MF_npoint_grid(T, Nhalf, 2)
             else
@@ -334,8 +334,8 @@ end
 
     # test BatchEvaluator
     for PSFpath in PSFpath_list
-        test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.dir_to_beta(PSFpath), tolerance=1.e-6, batched=true)
-        test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.dir_to_beta(PSFpath), tolerance=1.e-6, batched=true, use_ΣaIE=true)
+        test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.read_beta(PSFpath), tolerance=1.e-6, batched=true)
+        test_Gamma_core_TCI_MF(PSFpath; R=4, freq_conv="a", beta=TCI4Keldysh.read_beta(PSFpath), tolerance=1.e-6, batched=true, use_ΣaIE=true)
     end
 
 end
@@ -348,10 +348,9 @@ end
         unfoldingscheme=:interleaved,
         kwargs...
         )
-        basepath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50")
         PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
         ωconvMat = TCI4Keldysh.channel_trafo(channel)
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(PSFpath)
         # broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath; channel=channel)
         # broadening_kwargs[:estep] = 50
         ωmax = 0.1
@@ -363,7 +362,7 @@ end
         ωs_ext = TCI4Keldysh.KF_grid(ωmax, R, D)
         Σωgrid = TCI4Keldysh.KF_grid_fer(2*ωmax, R+1)
         # Σ_ref = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, sigmak, γ)
-        (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, sigmak, γ)
+        (Σ_L,Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, Σωgrid; T=T, flavor_idx=flavor_idx, sigmak, γ)
         Γcore_ref = TCI4Keldysh.compute_Γcore_symmetric_estimator(
             "KF",
             PSFpath*"4pt/",
@@ -415,7 +414,7 @@ end
         broadening_kwargs = TCI4Keldysh.read_all_broadening_params(base_path; channel=channel)
         broadening_kwargs[:estep] = 5
         gev = TCI4Keldysh.ΓEvaluator_KF(
-            PSFpath, iK, TCI4Keldysh.MultipoleKFCEvaluator;
+            PSFpath, iK, TCI4Keldysh.MultipoleKFCEvaluator{3};
             channel=channel,
             foreign_channels=foreign_channels,
             flavor_idx=flavor_idx,
@@ -426,7 +425,7 @@ end
         # reference
         gev_ref = TCI4Keldysh.compute_Γfull_symmetric_estimator(
             "KF", PSFpath;
-            T=TCI4Keldysh.dir_to_T(PSFpath),
+            T=TCI4Keldysh.read_temperature(PSFpath),
             flavor_idx=flavor_idx,
             ωs_ext=ωs_ext,
             channel=channel,
@@ -448,7 +447,7 @@ end
         R=4,
         tolerance=1.e-3,
         batched=true,
-        KEV=TCI4Keldysh.MultipoleKFCEvaluator,
+        KEV=TCI4Keldysh.MultipoleKFCEvaluator{3},
         coreEvaluator_kwargs=Dict{Symbol,Any}(:cutoff=>1.e-6, :nlevel=>2),
         unfoldingscheme=:fused
         )

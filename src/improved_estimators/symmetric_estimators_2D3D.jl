@@ -1,13 +1,24 @@
 #=
-Methods for the computing MF/KF four-point vertex and K2 contributions.
+Methods for computing MF/KF four-point vertex and K2 contributions.
 For the method, see "Symmetric improved estimators for multipoint vertex functions", Lihm et.al. (2024).
 =#
 
-# whether to use fluctuation-dissipation theorem in asymmetric estimators of self-energy (relevant for core vertex, K2)
+"""
+Whether to use fluctuation-dissipation theorem in asymmetric estimators of self-energy (relevant for core vertex and K2).
+"""
 USE_FDR_SE() = false
 # 2d
 """
-Symmetric estimator for K2 class.
+Symmetric estimator to compute K2 class. Which channel and whether K₂ or K₂' is computed depends
+on ops. See [`oplabels_K2`](@ref).
+# Arguments
+- `formalism`: "MF" or "KF"
+- `PSFpath`: Path to the folder containing the PSFs.
+- `op_labels`: Three operators to use in sIE. See [`oplabels_K2`](@ref).
+- `Σ_calcR`: Right asymmetric estimator for the self-energy for incoming legs.
+- `Σ_calcL`: Left asymmetric estimator for the self-energy for outgoing legs. If not provided, `Σ_calcR` is used for both incoming and outgoing legs.
+- `ωs_ext`: Frequency grid on which to compute K₂.
+- `ωconvMat`: Channel transformation. See [`channel_trafo_K2`](@ref).
 """
 function compute_K2r_symmetric_estimator(
     formalism ::String,
@@ -98,10 +109,15 @@ end
 
 # 3d
 """
-cf. eq. (132) Lihm et. al.
+Compute core vertex Γ_core using symmetric estimator, cf. eq. (132) Lihm et. al.
 
+# Arguments
+* `formalism`: "MF" or "KF"
+* `PSFpath`: Path to the folder containing the PSFs.
 * Σ_calcL: If provided, Σ_calcR will be used for incoming legs and Σ_calcL for outgoing legs.
 They should then be the right (incoming) resp. left-sided(outgoing) asymmetric estimators for the self-energies.
+* `ωs_ext`: Frequency grid on which to compute Γ_core.
+* `ωconvMat`: Channel transformation. See [`channel_trafo`](@ref).
 """
 function compute_Γcore_symmetric_estimator(
     formalism ::String,
@@ -146,7 +162,7 @@ function compute_Γcore_symmetric_estimator(
     gamcore_lock = ReentrantLock()
 
     Threads.@threads for letts in letter_combinations#[2:end]
-        println("letts: ", letts)
+        GET_VERBOSITY()>=1 && println("letts: ", letts)
         ops = [letts[i]*op_labels[i] for i in 1:4]
         if !any(parse_Ops_to_filename(ops) .== filelist)
             op_labels_symm = ("3", "3dag", "1", "1dag")   # if discrete PSFs where not computed explicitly, exchange labels 1 <-> 3 (the underlying operators in QSpace are identical)
@@ -156,7 +172,7 @@ function compute_Γcore_symmetric_estimator(
         if formalism == "MF"
             Γcore_tmp      = TCI4Keldysh.FullCorrelator_MF(PSFpath, ops; T, flavor_idx, ωs_ext, ωconvMat);
             Γcore_data_tmp = TCI4Keldysh.precompute_all_values(Γcore_tmp)
-            println("max dat 1 ", letts," : ", maxabs(Γcore_data_tmp))
+            GET_VERBOSITY()>=2 && println("max dat 1 ", letts," : ", maxabs(Γcore_data_tmp))
             # multiply Σ if necessary:
             for il in eachindex(letts)
                 if letts[il] == 'F'
@@ -186,7 +202,7 @@ function compute_Γcore_symmetric_estimator(
             end
 
         end
-        println("max dat 2 ", letts," : ", maxabs(Γcore_data_tmp))
+        GET_VERBOSITY()>=2 && println("max dat 2 ", letts," : ", maxabs(Γcore_data_tmp))
 
         lock(gamcore_lock) do
             Γcore_data += Γcore_data_tmp
@@ -196,6 +212,9 @@ function compute_Γcore_symmetric_estimator(
     return Γcore_data
 end
 
+"""
+Compute core vertex Γ_core using symmetric estimator, cf. eq. (132) Lihm et. al.
+"""
 function compute_Γcore_symmetric_estimator(
     formalism::String,
     PSFpath::String,
@@ -250,7 +269,7 @@ function _mult_Σ_KF(G_data::Array{ComplexF64,N}, Σ::Array{ComplexF64,NΣ}; idi
 end
 
 """
-Bare Keldysh vertex
+Bare Keldysh vertex. Returns a 2x2x2x2 array.
 """
 function Γbare_KF(PSFpath::String, flavor_idx::Int)
     if flavor_idx==2
@@ -270,6 +289,11 @@ end
 """
 Compute full vertex in given formalism. Can store individual contributions (K1,K2 in different channels and core)
 by providing `store_dir`.
+# Arguments
+- `formalism`: "MF" or "KF"
+- `PSFpath`: Path to the folder containing the PSFs.
+- `ωs_ext`: Frequency grid on which to compute Γ_full.
+- `channel`: Frequency channel.
 """
 function compute_Γfull_symmetric_estimator(
     formalism ::String,
@@ -322,7 +346,7 @@ function compute_Γfull_symmetric_estimator(
         error("Channel $channel not supported")
     end
 
-    @show maximum(abs.(Γfull))
+    vprintln("Magnitude of full vertex: $(maximum(abs.(Γfull)))", 2)
 
     # add K2r, K2'r, r=a,t,p
     for ch in channels
@@ -424,7 +448,7 @@ function compute_Γfull_symmetric_estimator(
             changeMat = reshape(channel_change(channel, ch)[1,:], 1,3)
             ωs_extK1, offset = trafo_grids_offset(ωs_ext, changeMat)
             K1 = precompute_K1r(PSFpath, flavor_idx, formalism; ωs_ext=only(ωs_extK1), channel=ch, broadening_kwargs...)
-            printstyled("==== NORM K1 (channel=$(ch)): $(norm(K1))\n"; color=:magenta)
+            GET_VERBOSITY()>2 && printstyled("==== NORM K1 (channel=$(ch)): $(norm(K1))\n"; color=:magenta)
             if formalism=="MF"
                 off_stride = only(offset) + sum(changeMat) - 1
                 sv = StridedView(K1, size(Γfull), Tuple([1] * changeMat), off_stride)
@@ -432,16 +456,16 @@ function compute_Γfull_symmetric_estimator(
             else
                 K1 *= 0.5
                 before = copy(Γfull)
-                printstyled("==== NORM BEFORE: $(norm(before))\n"; color=:magenta)
+                GET_VERBOSITY()>2 && printstyled("==== NORM BEFORE: $(norm(before))\n"; color=:magenta)
                 for ik1 in ids_KF(2)
                     for iK in equivalent_iK_K1(ik1, ch)
                         off_stride = only(offset) + sum(changeMat) - 1
                         sv = StridedView(K1[:,ik1...], size(Γfull)[1:3], Tuple([1] * changeMat), off_stride)
-                        printstyled("  == NORM SV: $(norm(collect(sv)))\n"; color=:magenta)
+                        GET_VERBOSITY()>2 && printstyled("  == NORM SV: $(norm(collect(sv)))\n"; color=:magenta)
                         Γfull[:,:,:,iK...] .+= collect(sv)
                     end
                 end
-                printstyled("==== NORM AFTER: $(norm(Γfull))\n"; color=:magenta)
+                GET_VERBOSITY()>2 && printstyled("==== NORM AFTER: $(norm(Γfull))\n"; color=:magenta)
                 if !isnothing(store_dir)
                     outdata = Γfull .- before
                     h5write(joinpath(store_dir, "V_KF_U2_$(channel_translate(ch))_Nom$(Nom).h5"), "K1", collect(outdata))
@@ -450,7 +474,7 @@ function compute_Γfull_symmetric_estimator(
         end
     end
 
-    @show maximum(abs.(Γfull))
+    GET_VERBOSITY()>2 && @show maximum(abs.(Γfull))
 
     # add bare vertex Γ_0 for updown flavor
     gam0 = 2.0 * load_Adisc_0pt(PSFpath, "Q12")
@@ -472,31 +496,4 @@ function compute_Γfull_symmetric_estimator(
     end
     
     return Γfull
-end
-
-"""
-NOT YET IMPLEMENTED
-"""
-function compute_Γcore_pointwise(
-    formalism ::String,
-    PSFpath::String,
-    R::Int=2^12
-    ;
-    T::Float64=dir_to_T(PSFpath),
-    flavor_idx::Int,
-    ωs_nonlin::Vector{Float64},
-    channel::String,
-    broadening_kwargs...
-)
-    if formalism=="MF"    
-        error("NYI")
-    else
-        # formalism=="KF"
-        # determine linear grid
-        ommax = maximum(abs.(ωs_nonlin))
-        ωs_ext = KF_grid(ommax, R, 3)
-        # TODO need to evaluate vertex on arbitrary frequencies
-        # by interpolation
-        error("NYI")
-    end
 end

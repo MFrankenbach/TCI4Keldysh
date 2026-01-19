@@ -39,24 +39,22 @@ end
         KFC = TCI4Keldysh.FullCorrelator_KF(
             PSFpath, Ops;
             T=T, ωs_ext=ωs_ext, flavor_idx=1, ωconvMat=ωconvMat, sigmak=sigmak, γ=γ, name="Kentucky fried chicken",
-            estep=50, emin=1.e-6, emax=1.e4
+            estep=TCI4Keldysh._ESTEP_DEFAULT(), emin=1.e-6, emax=1.e4
             )
 
         # block
         data_block = TCI4Keldysh.precompute_all_values(KFC)
-        @show size(data_block)
 
         # pointwise
         data_pw = zeros(ComplexF64, vcat(collect(length.(ωs_ext)), [2^npt])...)
         data_pw_iK = zeros(ComplexF64, vcat(collect(length.(ωs_ext)), [2^npt])...)
-        num_eval = prod(size(data_pw))
-        count = 0
-        for id in Iterators.product(Base.OneTo.(size(data_pw))...)
+
+        ids = collect(Iterators.product(Base.OneTo.(size(data_pw))...))
+        Threads.@threads for id_ in 1:length(ids) 
+            id = ids[id_]
             data_pw[id...] = TCI4Keldysh.evaluate(KFC, id[1:D]...; iK=id[end])
-            data_pw_iK[id[1:D]...,:] .= TCI4Keldysh.evaluate_all_iK(KFC, id[1:D]...)
-            count += 1
-            if mod(count, 1000)==0
-                @printf("%.2f percent of evaluations\n", count/num_eval * 100)
+            if all(id[D+1:end] .== 1)
+                data_pw_iK[id[1:D]...,:] .= TCI4Keldysh.evaluate_all_iK(KFC, id[1:D]...)
             end
         end
 

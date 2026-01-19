@@ -2,6 +2,9 @@ using ITensors
 using QuanticsTCI
 using LinearAlgebra
 
+_ESTEP_OLD_DEFAULT = TCI4Keldysh._ESTEP_DEFAULT()
+TCI4Keldysh._ESTEP_DEFAULT() = 10
+
 @testset "PSF -> Correlator @ pointwise TCI" begin
 
     function maxdiff_qtt_ref(R::Int, qtt, refval::Array{T,D}) where {T,D}
@@ -105,15 +108,15 @@ using LinearAlgebra
         test_compress_FullCorrelator_pointwise1(3, svd_kernel)
         test_compress_FullCorrelator_pointwise1(4, svd_kernel)
     end
-    printstyled("CHANNEL t\n"; color=:green)
+    # printstyled("CHANNEL t\n"; color=:green)
     test_compress_FullCorrelator_pointwise2(4, true; tolerance=1.e-5, channel="t")
     test_compress_FullCorrelator_pointwise2(3, true; tolerance=1.e-5, channel="t")
     test_compress_FullCorrelator_pointwise2(2, true; tolerance=1.e-5, channel="t")
-    printstyled("CHANNEL a\n"; color=:green)
+    # printstyled("CHANNEL a\n"; color=:green)
     test_compress_FullCorrelator_pointwise2(4, true; tolerance=1.e-5, channel="a")
     test_compress_FullCorrelator_pointwise2(3, true; tolerance=1.e-5, channel="a")
     # test_compress_FullCorrelator_pointwise2(2, true; tolerance=1.e-5, channel="a")
-    printstyled("CHANNEL p\n"; color=:green)
+    # printstyled("CHANNEL p\n"; color=:green)
     test_compress_FullCorrelator_pointwise2(4, true; tolerance=1.e-8, channel="p")
     test_compress_FullCorrelator_pointwise2(3, true; tolerance=1.e-8, channel="p")
     test_compress_FullCorrelator_pointwise2(2, true; tolerance=1.e-8, channel="p")
@@ -148,7 +151,7 @@ end
             sigmak=sigmak,
             γ=γ,
             name="Kentucky fried chicken",
-            estep=50
+            estep=TCI4Keldysh._ESTEP_DEFAULT()
             )
 
         KFev2 = TCI4Keldysh.FullCorrEvaluator_KF(KFC)
@@ -192,7 +195,7 @@ end
             sigmak=sigmak,
             γ=γ,
             name="Kentucky fried chicken",
-            estep=50
+            estep=TCI4Keldysh._ESTEP_DEFAULT()
             )
 
         # reference
@@ -245,3 +248,4 @@ end
 
     test_tucker_cut()
 end
+TCI4Keldysh._ESTEP_DEFAULT() = _ESTEP_OLD_DEFAULT

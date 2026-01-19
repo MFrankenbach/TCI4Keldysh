@@ -169,7 +169,7 @@ function precompute_Σs(
                                         # Convention: The first row always corresponds to a bosonic frequency. The other rows to fermionic ones.
     is_incoming ::NTuple{N2,Bool}        # True if the fermionic leg is incoming aka daggered
     ) where{N,N1, N2}
-    println("size of Σ_vec:" , size(Σ_vec))
+    vprintln("size of Σ_vec: $(size(Σ_vec))" , 3)
     # prepare stuff to return:
     N_out = size(ωconvMat, 2) + ndims(Σ_vec)-1 # dims of Σs_return
     Σs_return = Vector{Array{ComplexF64,N_out}}(undef, size(ωconvMat)[1])
@@ -181,9 +181,9 @@ function precompute_Σs(
     i_Σ_straight_l = div(N_Σ - N_fer, 2) + 1
     i_Σ_straight_h = N_Σ - i_Σ_straight_l + 1
     Σ_straight = Σ_vec[i_Σ_straight_l:i_Σ_straight_h, [Colon() for _ in 2:N]...]
-    #println("size of Σ_straight", size(Σ_straight))
+    vprintln("size of Σ_straight $(size(Σ_straight))", 3)
     Σ_slanted = Array{ComplexF64,2+ndims(Σ_vec)-1}(undef, N_bos, N_fer, size(Σ_vec)[2:end]...)
-    println("size of Σ_slanted: ", size(Σ_slanted))
+    vprintln("size of Σ_slanted: $(size(Σ_slanted))", 3)
     iωbos0 = div(N_bos+1,2)
     for iωbos in 1:N_bos
         shift = -iωbos0+iωbos

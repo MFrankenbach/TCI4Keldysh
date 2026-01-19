@@ -38,6 +38,12 @@ function test_SIE()
     include(joinpath(test_dir, "test_improved_estimators.jl"))     
 end
 
+_DEBUG_TCI_KF_RAM_OLD = TCI4Keldysh.DEBUG_TCI_KF_RAM()
+TCI4Keldysh.DEBUG_TCI_KF_RAM() = false
+# silence output during tests
+const OLD_VERBOSITY = TCI4Keldysh.GET_VERBOSITY()
+TCI4Keldysh.SET_VERBOSITY(-1)
+
 if isempty(args) || ("ALL" in args)
     for test in readdir(test_dir)
         if test[1:4] == "test"
@@ -73,3 +79,5 @@ else
 end
 
 println("==== tests for $args DONE")
+TCI4Keldysh.SET_VERBOSITY(OLD_VERBOSITY)
+TCI4Keldysh.DEBUG_TCI_KF_RAM() = _DEBUG_TCI_KF_RAM_OLD

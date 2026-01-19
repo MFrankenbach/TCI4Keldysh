@@ -50,6 +50,7 @@ const VERBOSITY = Ref(2)
 function SET_VERBOSITY(level::Int)
     VERBOSITY[] = level
 end
+GET_VERBOSITY() = VERBOSITY[]
 
 macro VERBOSE(msgs)
     esc(:(if $(@__MODULE__).VERBOSE() print($msgs...) end))

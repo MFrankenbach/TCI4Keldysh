@@ -13,7 +13,16 @@ end
     TuckerDecomposition{T,D} <: AbstractTuckerDecomp{D}
 
 Stores a D-dimensional tensor in form of a Tucker decomposition (TD). \n
-It consists out of a center C and D legs L, such that for D=2 we get TDᵢⱼ = ∑ᵦᵧ Lᵢᵦ Lⱼᵧ Cᵦᵧ. 
+It consists out of a center C and D legs L¹,L²,…,Lᴰ. For D=2 we have TDᵢⱼ = ∑ᵦᵧ L¹ᵢᵦ L²ⱼᵧ Cᵦᵧ. 
+With the center (greek) indices, we associate frequencies ωs_center, and with the leg (latin) indices, we associate frequencies ωs_legs.
+# Fields
+* center: Array{T,D} - the Tucker center
+* legs: Tucker legs L¹,L²,…,Lᴰ stored as Vector{Matrix{T}}
+* sz: NTuple{D,Int} - size of center
+* name: String - optional name of the tucker decomposition
+* ωs_center: Vector{Vector{Float64}} - internal frequencies corresponding to the indices of the center
+* ωs_legs: Vector{Vector{Float64}} - external frequencies of the legs
+* modified: Bool - whether center or legs have been changed (e.g. in an SVD truncation)
 
 # Pointwise evaluation
 ```julia-repl
@@ -64,17 +73,12 @@ mutable struct TuckerDecomposition{T,D} <: AbstractTuckerDecomp{D}              
 
 end
 
-
 function Base.:getindex(
     td  :: TuckerDecomposition{T,D},
     w   :: Vararg{Union{Int, Colon, Vector{Int}, UnitRange}, D} # , UnitRange
     )   :: Union{T, AbstractArray{T}} where {T,D}
     return _getindex(td, w...)
 end
-
-
-
-
 
 function _getindex(
     td :: TuckerDecomposition{T,D},
@@ -486,7 +490,7 @@ function compute_tucker_cut(center::Array{T,D}, legs::Vector{Matrix{T}}, GFmin::
     cuts = reverse(Knorm .* (sums_acc .^ (1.0/q)))
     prune_idx = findfirst(s -> s<=lower_thresh, cuts)
     if isnothing(prune_idx)
-        @warn "Tucker cutoff is pessimal"
+        GET_VERBOSITY()>0 && @info "Tucker cutoff is pessimal"
         prune_idx = sum(sz_cen)
     elseif prune_idx==0
         prune_idx = 1
