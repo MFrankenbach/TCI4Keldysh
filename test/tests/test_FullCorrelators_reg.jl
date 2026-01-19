@@ -1,4 +1,5 @@
-
+_ESTEP_OLD_DEFAULT = TCI4Keldysh._ESTEP_DEFAULT()
+TCI4Keldysh._ESTEP_DEFAULT() = 10
 
 @testset "calc. Matsubara Correlators from PSFs: " begin
 
@@ -150,7 +151,7 @@ end
         ωfer = π * T *(collect(-Nωcont_pos*2:Nωcont_pos*2-1) * 2 .+ 1)
         ωs_ext = (ωbos, ωfer)
         
-        PSFpath = joinpath(dirname(@__FILE__), "../../data/SIAM_u=0.50/PSF_nz=2_conn_zavg/")
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=2_conn_zavg/")
         Gs      = [TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q12", "F3", "F3dag"]; T, flavor_idx=i, ωs_ext=(ωbos,ωfer), ωconvMat=ωconvMat_K2′t, name="SIAM 3pG", is_compactAdisc=false) for i in 1:2];
     end
 
@@ -191,8 +192,8 @@ end
 
     function test_MFEvaluator()
         R = 3
-        PSFpath = "SIAM_u=0.50/PSF_nz=4_conn_zavg/"
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+        T = TCI4Keldysh.read_temperature(PSFpath)
         beta = 1.0/T
         flavor_idx = 1
         channel = "p"
@@ -221,7 +222,7 @@ end
         PSFpath = joinpath(basepath, "PSF_nz=2_conn_zavg/4pt")
         D = npt-1
         Ops = TCI4Keldysh.dummy_operators(npt)
-        T = TCI4Keldysh.dir_to_T(PSFpath)
+        T = TCI4Keldysh.read_temperature(joinpath(basepath, "PSF_nz=2_conn_zavg"))
 
         ωmax = 0.318
         ωmin = -ωmax
@@ -254,3 +255,5 @@ end
     test_MFEvaluator()
     test_KFCEvaluator()
 end
+
+TCI4Keldysh._ESTEP_DEFAULT() = _ESTEP_OLD_DEFAULT 
