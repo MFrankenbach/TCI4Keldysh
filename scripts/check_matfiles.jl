@@ -1,5 +1,5 @@
 using MAT
-ddir::String = "/scratch/m/M.Frankenbach/tci4keldysh/data/PRX_jae-mo_PSF/PSF_nz=4_conn_zavg/"
+ddir::String = "/scratch/m/M.Frankenbach/tci4keldysh/data/HM_SquareLattice_T0.25_U4_mu2/PSF_nz=2_conn_zavg/"
 failcount = 0
 missingcount = 0
 failfiles = String[]

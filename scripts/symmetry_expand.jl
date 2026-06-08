@@ -1,7 +1,7 @@
 using Revise
 using TCI4Keldysh
 
-data_dir = "/scratch/m/M.Frankenbach/tci4keldysh/data/SIAM_u5_U0.05_T0.0005_Delta0.0031831/PSF_nz=2_conn_zavg/4pt";
+data_dir = "/scratch/m/M.Frankenbach/tci4keldysh/data/HM_SquareLattice_T0.25_U4_mu2/PSF_nz=2_conn_zavg/4pt"
 
 symmred_correlators = [
     ["F1", "F1dag", "F3", "F3dag"], # 1 FFFF

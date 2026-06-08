@@ -173,12 +173,12 @@ function check_V_MFfull(channel="t", flavor_idx=1)
     printstyled("Maximum deviation Julia vs. MuNRG: $(maximum(diff))\n"; color=:blue)
 
     # plot
-    heatmap(abs.(Vfull[Nhalf+1,:,:]))
-    savefig("V_MF_full.pdf")
-    heatmap(abs.(Vref_window[Nhalf+1,:,:]))
-    savefig("V_MF_full_ref.pdf")
-    heatmap(abs.(diff[Nhalf+1,:,:]))
-    savefig("V_MF_full_diff.pdf")
+    Plots.heatmap(abs.(Vfull[Nhalf+1,:,:]))
+    Plots.savefig("V_MF_full.pdf")
+    Plots.heatmap(abs.(Vref_window[Nhalf+1,:,:]))
+    Plots.savefig("V_MF_full_ref.pdf")
+    Plots.heatmap(abs.(diff[Nhalf+1,:,:]))
+    Plots.savefig("V_MF_full_diff.pdf")
 end
 
 

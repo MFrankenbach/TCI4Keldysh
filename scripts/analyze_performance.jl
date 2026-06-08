@@ -12,8 +12,10 @@ using PProf
 using HDF5
 # using AllocCheck
 
+const BASEPATH="cluster_output"
+
 function allocations_multipole()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     # trigger compilation
     x = TCI4Keldysh.eval_buff!(gev, 1, 1, 1);
     println("-- Allocations MultipoleKFCEvaluator: ")
@@ -30,7 +32,7 @@ end
 
 
 function allocations_ht()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     # trigger compilation
     x = TCI4Keldysh.eval_buff!(gev, 1, 1, 1);
     println("-- Allocations HierarchicalTucker: ")
@@ -43,7 +45,7 @@ function allocations_ht()
 end
 
 function test_eval_buff_multipole()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     ret_buff = MVector{16,ComplexF64}(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
     retarded_buff = MVector{4,ComplexF64}(0,0,0,0)
     idx_int = MVector{3,Int}(0,0,0)
@@ -59,7 +61,7 @@ function test_eval_buff_multipole()
 end
 
 function test_eval_buff()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     for _ in 1:200
         idx = rand(1:2^8, 3)
         nobuff = TCI4Keldysh.eval_nobuff(gev, idx...)
@@ -80,7 +82,7 @@ function allocations_tucker()
 end
 
 function allocations_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     # trigger compilation
     x = TCI4Keldysh.eval_buff!(gev, 1, 1, 1);
     x = gev(1,1,1);
@@ -100,7 +102,7 @@ function allocations_gev()
 end
 
 function benchmark_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     R = 8
     # b = @benchmark $gev(rand(1:2^$R, 3)...)
     b = @benchmark $gev(127, 128, 126)
@@ -108,7 +110,7 @@ function benchmark_gev()
 end
 
 function singlethreaded_eval(N::Int=10^4)
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gev.serialized"))
     R = 8
     res = gev(1,1,1)
     TCI4Keldysh.report_mem()
@@ -120,7 +122,7 @@ function singlethreaded_eval(N::Int=10^4)
 end
 
 function batched_eval(n::Int)
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gev.serialized"))
     R = 8
     d = 8
     gbev = TCI4Keldysh.ΓcoreBatchEvaluator_KF(gev; unfoldingscheme=:fused)
@@ -154,7 +156,7 @@ function batched_eval(n::Int)
 end
 
 function multithreaded_eval(N::Int=10^4)
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gev.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gev.serialized"))
     R = 8
     res = zeros(ComplexF64, N+1)
     res[1] = gev(1,1,1)
@@ -169,7 +171,7 @@ end
 
 
 function profile_allocations_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     # trigger compilation
     x = gev(1, 1, 1);
     Profile.Allocs.clear()
@@ -179,7 +181,7 @@ function profile_allocations_gev()
 end
 
 function profile_gev()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     R = 8
     Profile.clear()
     @profile begin
@@ -212,7 +214,7 @@ end
 
 function type_instability_gev()
     # force compilation
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR8.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR8.serialized"))
     println("==== ΓcoreEvaluator_KF")
     x = gev(1,1,1)
     x = TCI4Keldysh.eval_buff!(gev,1,1,1)
@@ -253,11 +255,11 @@ function gen_ΓcoreEvaluator_KF()
         KEV_kwargs=Dict(:cutoff => 1.e-6, :nlevel => 4),
         useFDR=false,
         broadening_kwargs...)
-    serialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR7t.serialized"), gev)
+    serialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR7t.serialized"), gev)
 end
 
 function test_ΓcoreEvaluator_KF()
-    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), "scripts", "gevR7t.serialized"))
+    @time gev = deserialize(joinpath(TCI4Keldysh.pdatadir(), BASEPATH, "gevR7t.serialized"))
     Vpath = joinpath(TCI4Keldysh.pdatadir(), "keldyshconv_R7_1thread", "V_KF_U4.h5");
     core = h5read(Vpath, "core");
     iK_tuple = (2,1,2,1)
