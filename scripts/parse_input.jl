@@ -118,7 +118,7 @@ function json_filename(jobtype::String, xmin, xmax, tolerance::Float64, beta::Fl
 end
 
 function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, folder, flavor_idx, channel, kwargs...)
-    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    beta = TCI4Keldysh.read_beta(PSFpath)
     outname = json_filename(jobtype, first(Rs), last(Rs), tolerance, beta; folder=folder)
     if TCI4Keldysh.DEBUG_TCI_KF_RAM()
         println("!!! Debugging RAM for KF calculations !!!")
@@ -728,7 +728,7 @@ function keldyshcore(
     kwargs...
     )
 
-    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    beta = TCI4Keldysh.read_beta(PSFpath)
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = 1.0/beta
     times = []
@@ -1434,7 +1434,7 @@ function corrkeldysh(
 
     @show kwargs
 
-    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    beta = TCI4Keldysh.read_beta(PSFpath)
     Ops = ["F1", "F1dag", "F3", "F3dag"]
     T = 1.0/beta
     npt = 4
@@ -1710,6 +1710,8 @@ To WATCH OUT for:
 function main(args)
     inp_file = args[1]    
     inp_args = parse_input(inp_file)
+
+    TCI4Keldysh.set_mpNRG_file_settings()
     
     println("==== INPUT BEGIN")
     open(inp_file) do f

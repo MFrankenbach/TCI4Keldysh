@@ -411,7 +411,7 @@ function test_MultipoleKFCEvaluator_largeR()
     G = TCI4Keldysh.FullCorrelator_KF(
         PSFpath,
         Ops;
-        T=TCI4Keldysh.dir_to_T(PSFpath),
+        T=read_temperature(PSFpath),
         ωconvMat=ωconvMat,
         ωs_ext=TCI4Keldysh.KF_grid(ommax, R, D),
         flavor_idx=1,
@@ -459,7 +459,7 @@ function speedup_MultipoleKFCEvaluator()
     G = TCI4Keldysh.FullCorrelator_KF(
         PSFpath,
         Ops;
-        T=TCI4Keldysh.dir_to_T(PSFpath),
+        T=read_temperature(PSFpath),
         ωconvMat=ωconvMat,
         ωs_ext=ωs_ext,
         flavor_idx=1,
@@ -510,7 +510,7 @@ function test_MultipoleKFCEvaluator()
     G = TCI4Keldysh.FullCorrelator_KF(
         PSFpath,
         Ops;
-        T=TCI4Keldysh.dir_to_T(PSFpath),
+        T=read_temperature(PSFpath),
         ωconvMat=ωconvMat,
         ωs_ext=TCI4Keldysh.KF_grid(ommax, R, D),
         flavor_idx=1,

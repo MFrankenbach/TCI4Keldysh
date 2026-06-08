@@ -228,7 +228,7 @@ function compute_Γcore_symmetric_estimator(
         PSFpath = joinpath(PSFpath, "4pt")
     end
     ωconvMat = channel_trafo(channel)
-    T = dir_to_T(PSFpath)
+    T = read_temperature(PSFpath)
 
     omsig = Σ_grid(ωs_ext[1:2])
     (ΣL,ΣR) = if formalism=="MF"

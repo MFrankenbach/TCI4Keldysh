@@ -604,7 +604,7 @@ function speedup_FullCorrelator_MF()
     Ops = TCI4Keldysh.dummy_operators(npt)
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     R = 12
-    T=TCI4Keldysh.dir_to_T(PSFpath)
+    T=read_temperature(PSFpath)
     ωs_ext = MF_npoint_grid(T, 2^(R-1), 3)
     G = TCI4Keldysh.FullCorrelator_MF(
         PSFpath,
@@ -1106,7 +1106,7 @@ function test_FullCorrEvaluator_KF(npt::Int)
     PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=2_conn_zavg", addpath)
     D = npt-1
     Ops = TCI4Keldysh.dummy_operators(npt)
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = read_temperature(PSFpath)
 
     ωmax = 1.0
     R = 4

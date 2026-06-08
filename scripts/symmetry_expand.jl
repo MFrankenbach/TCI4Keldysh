@@ -1,7 +1,8 @@
 using Revise
 using TCI4Keldysh
 
-data_dir = "/scratch/m/M.Frankenbach/tci4keldysh/data/HM_SquareLattice_T0.25_U4_mu2/PSF_nz=2_conn_zavg/4pt"
+data_dir = "/home/m/M.Frankenbach/Documents/MATLAB/mpNRG/data/test_2026-06-01_12-39-04/PSFdata_nz=1_conn_zavg/4pt"
+TCI4Keldysh.set_mpNRG_file_settings()
 
 symmred_correlators = [
     ["F1", "F1dag", "F3", "F3dag"], # 1 FFFF
