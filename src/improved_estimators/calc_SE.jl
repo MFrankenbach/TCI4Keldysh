@@ -82,7 +82,7 @@ convenience overload
 Compute Σ with pointwise matrix inversion.
 """
 function calc_Σ_KF_aIE(PSFpath::String, ω_fer::Vector{Float64}; mode::Symbol=:normal, flavor_idx::Int, sigmak::Vector{Float64}, γ::Float64, broadening_kwargs...)
-    T = dir_to_T(PSFpath)
+    T = read_temperature(PSFpath)
     ωconvMat = ωconvMat_K1()
     # precompute correlators
     if mode==:normal

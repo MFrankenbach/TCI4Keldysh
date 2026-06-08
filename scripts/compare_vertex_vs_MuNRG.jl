@@ -313,8 +313,9 @@ function check_K1_KF(iKtuple=(1,2,1,2);channel="t")
     # in parameter file estep=200; but it seems this was not used for K1; estep 500 matches much better!
     # also using fdt for K1 gives much better agreement at 0 frequency
     if !haskey(broadening_kwargs, :estep)
-        broadening_kwargs[:estep] = 500
+        broadening_kwargs[:estep] = 50
     end
+    @show broadening_kwargs
 
 
     # TCI4Keldysh
@@ -1019,19 +1020,31 @@ function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1)
     @show typeof(ωs_Σ)
 
     # TCI4Keldysh calculation
+    if channel in ["p","pQFT"]
+        error("Need pNRG for the p-channel")
+    end
 
     T = TCI4Keldysh.dir_to_T(PSFpath)
     om_small = TCI4Keldysh.MF_npoint_grid(T, Nhalf, 3)
     om_sig = TCI4Keldysh.MF_grid(T, 2*Nhalf, true)
 
     # Γ core
-    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    sgntrafo = -1
+    ωconvMat = sgntrafo * TCI4Keldysh.channel_trafo(channel)
     @time testval = if use_ΣaIE
-        G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(om_sig,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-        G_auxL   = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(om_sig,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
-        G_auxR   = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=spin, ωs_ext=(om_sig,), ωconvMat=reshape([ 1; -1], (2,1)), name="SIAM 2pG");
+        # check whether sign in two-point functions is OK; it is,i.e., sgn=1 is correct
+        sgn = 1
+        G        = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(om_sig,), ωconvMat=reshape([ sgn*1; -sgn*1], (2,1)), name="SIAM 2pG");
+        G_auxL   = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["Q1", "F1dag"]; T, flavor_idx=spin, ωs_ext=(om_sig,), ωconvMat=reshape([ sgn*1; -sgn*1], (2,1)), name="SIAM 2pG");
+        G_auxR   = TCI4Keldysh.FullCorrelator_MF(PSFpath, ["F1", "Q1dag"]; T, flavor_idx=spin, ωs_ext=(om_sig,), ωconvMat=reshape([ sgn*1; -sgn*1], (2,1)), name="SIAM 2pG");
 
         G_data = TCI4Keldysh.precompute_all_values(G)
+        p = TCI4Keldysh.default_plot()
+        plot!(p, real.(G_data))
+        plot!(p, imag.(G_data))
+        plot!(p, real.(reverse(G_data)); linestyle=:dot)
+        plot!(p, imag.(reverse(G_data)); linestyle=:dot)
+        savefig(p,"foo.pdf")
         G_auxL_data = TCI4Keldysh.precompute_all_values(G_auxL)
         G_auxR_data = TCI4Keldysh.precompute_all_values(G_auxR)
 
@@ -1066,33 +1079,41 @@ function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1)
     window_slice = data_half-window_half+1:data_half+window_half
     slice_ref = [div(length(ωs_ext[1]), 2)+1, window_slice, window_slice]
     @show ωs_ext[1][slice_ref[1]]
-    heatmap(scfun.(-Γcore_ref[slice_ref...]); right_margin=10Plots.mm)
+    heatmap(scfun.(Γcore_ref[slice_ref...]); right_margin=10Plots.mm)
     title!("Γcore reference")
     savefig("ref.pdf")
 
     # compare quantitatively
     window = (data_half-window_half+1:data_half+window_half+1, data_half-window_half+1:data_half+window_half, data_half-window_half+1:data_half+window_half)
     # Γ(ω,ν,ν')=Γ*(-ω,-ν,-ν')
-    diff = Γcore_ref[window...] .- reverse(testval)
+    diff = if sgntrafo==1
+        # need to reverse because the MuNRG channel transformations differ from ours by a global minus sign
+        Γcore_ref[window...] .- reverse(testval)
+    elseif sgntrafo==-1
+        Γcore_ref[window...] .- testval
+    else
+        error("Invalid value $(sgntrafo) of transformation prefactor")
+    end
     maxdiff = maximum(abs.(diff)) 
     amaxdiff = argmax(abs.(diff)) 
+    @show maximum(abs.(Γcore_ref))
     @show amaxdiff
     @show diff[amaxdiff]
     @show testval[amaxdiff]
     @show Γcore_ref[window...][amaxdiff]
     printstyled("---- Max. abs. deviation: $(maxdiff) (Γcore value: $(testval[amaxdiff]))\n"; color=:blue)
-    # difference comes from real part
+    printstyled("---- Max. rel. abs. deviation: $(maxdiff/maximum(abs.(Γcore_ref))) (max. Γcore value: $(maximum(abs.(Γcore_ref))))\n"; color=:blue)
     scfun = x -> abs(x)
     heatmap(scfun.(Γcore_ref[slice_ref...] .+ testval[slice...]); right_margin=10Plots.mm)
     savefig("diff.pdf")
 
-    reldiff = real.(testval) ./ real.(Γcore_ref)[window...]
-    reldiff = map(x -> ifelse(!isnan(x) && (1. / 1.1 < abs(x)<1.1), x, 1.0), reldiff)
-    @show maximum(abs.(reldiff))
-    mean = sum(reldiff) / length(reldiff)
-    @show mean
-    heatmap(abs.(reldiff[slice...]); right_margin=10Plots.mm)
-    savefig("reldiff.pdf")
+    # reldiff = real.(testval) ./ real.(Γcore_ref)[window...]
+    # reldiff = map(x -> ifelse(!isnan(x) && (1. / 1.1 < abs(x)<1.1), x, 1.0), reldiff)
+    # @show maximum(abs.(reldiff))
+    # mean = sum(reldiff) / length(reldiff)
+    # @show mean
+    # heatmap(abs.(reldiff[slice...]); right_margin=10Plots.mm)
+    # savefig("reldiff.pdf")
     return maxdiff
 end
 
@@ -1164,7 +1185,7 @@ function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
 
     broadening_kwargs = read_broadening_settings(joinpath(TCI4Keldysh.datadir(), base_path); channel=channel)
     if !haskey(broadening_kwargs, "estep")
-        broadening_kwargs[:estep] = 100
+        broadening_kwargs[:estep] = 50
     end
     # Σ_ref = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, om_sig; T=T, flavor_idx=spin, sigmak, γ, broadening_kwargs...)
     (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=spin, sigmak, γ, broadening_kwargs...)

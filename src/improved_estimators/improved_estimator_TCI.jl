@@ -142,7 +142,7 @@ function test_ΓcoreEvaluator_KF(;R::Int, iK::Int=2, tolerance=1.e-8, ωmax::Flo
     PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=$(nz)_conn_zavg/")
     channel = "p"
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath)
     (γ, sigmak) = read_broadening_params(basepath; channel=channel)
     broadening_kwargs = TCI4Keldysh.read_broadening_settings(basepath; channel=channel)
     ωconvMat = channel_trafo(channel)
@@ -249,7 +249,7 @@ function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
     println("Channel: $(channel)")
     println("PSFpath: $(PSFpath)")
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
-    T = TCI4Keldysh.dir_to_T(PSFpath)
+    T = TCI4Keldysh.read_temperature(PSFpath)
 
     # numerically exact evaluator
     cutoff = 0.01 * tolerance
@@ -524,7 +524,7 @@ function precompute_K2r(
         prime=false,
         broadening_kwargs_...
         )
-    T = dir_to_T(PSFpath)
+    T = read_temperature(PSFpath)
     ωconvMat = channel_trafo_K2(channel,prime)
     op_labels = Tuple(oplabels_K2(channel,prime))
     basepath = dirname(rstrip(PSFpath, '/'))
@@ -608,7 +608,7 @@ function precompute_K1r(
     broadening_kwargs...
     )
 
-    T = dir_to_T(PSFpath)
+    T = read_temperature(PSFpath)
     ops = channel_K1_Ops(channel)
     G = if formalism=="MF"
         FullCorrelator_MF(PSFpath, ops; T=T, flavor_idx=flavor_idx, ωs_ext=(ωs_ext,), ωconvMat=reshape([ 1; -1], (2,1)), name="K1$channel");
@@ -796,7 +796,7 @@ struct K2Evaluator_KF
         incoming_label = [false, true, false, true]
         is_incoming = (incoming_label[nonij[1]], incoming_label[nonij[2]])
         incoming_trafo = diagm([1, is_incoming[1] ? -1 : 1, is_incoming[2] ? -1 : 1])
-        T = dir_to_T(PSFpath)
+        T = read_temperature(PSFpath)
 
         # prepare self-energies
         sevs = Vector{SigmaEvaluator_KF}(undef, 2)
@@ -955,7 +955,7 @@ function test_ΓEvaluator_KF()
     # reference
     gev_ref = compute_Γfull_symmetric_estimator(
         "KF", PSFpath;
-        T=dir_to_T(PSFpath),
+        T=read_temperature(PSFpath),
         flavor_idx=flavor_idx,
         ωs_ext=ωs_ext,
         channel=channel,
@@ -1476,7 +1476,7 @@ function ΓcoreEvaluator_KF(
 )
     
     ωconvMat = channel_trafo(channel)
-    T = dir_to_T(PSFpath)
+    T = read_temperature(PSFpath)
     # all 16 4-point correlators
     letter_combinations = letter_combinations_Γcore()
     op_labels = ("1", "1dag", "3", "3dag")
@@ -2538,7 +2538,7 @@ function test_nonlin_keldyshfull(flavor_idx=1)
     Vref = compute_Γfull_symmetric_estimator(
         "KF",
         PSFpath;
-        T = dir_to_T(PSFpath),
+        T = read_temperature(PSFpath),
         flavor_idx=flavor_idx,
         ωs_ext=ωs_inter,
         channel=channel,
@@ -2598,7 +2598,7 @@ function test_eval_K12_ΓEvaluator_KF()
     Vref = compute_Γfull_symmetric_estimator(
         "KF",
         PSFpath;
-        T = dir_to_T(PSFpath),
+        T = read_temperature(PSFpath),
         flavor_idx=flavor_idx,
         ωs_ext=ωs_ext_ref,
         channel=channel,

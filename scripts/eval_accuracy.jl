@@ -4,34 +4,45 @@ Test accuracy of various evaluators
 
 using TCI4Keldysh
 using LinearAlgebra
+using MAT
 using HDF5
 using QuanticsTCI
 using Serialization
 import TensorCrossInterpolation as TCI
 import QuanticsGrids as QG
 
-function check_gev_accuracy()
+function check_gev_accuracy(R::Int, N::Int=10^5)
     println("==== Load data...")
-    Vpath = joinpath(TCI4Keldysh.pdatadir(), "keldyshconv_R7_updown", "V_KF_U4.h5")
-    core = h5read(Vpath, "core")
-    R = 10
-    iK = 6
-    gpath = joinpath(TCI4Keldysh.pdatadir(), "cluster_output_KCS", "gencoreiK$(iK)_updown", "gevR$(R)t.serialized")
+    Vpath = joinpath(TCI4Keldysh.pdatadir(), "cluster_output/V_KF_conventional_ommax0.65_bosgrid/V_KF_p_R=8.h5")
+    core = h5read(Vpath, "V_KF")
+    # grid spacing for ωmax=1.0
+    Rd = 8
+    dw = 2/2^R
+    cen = 2^(R-1)+1
+    dw_d = 2/2^Rd
+    cen_d = 2^(Rd-1)+1
+    dwrat = 2^(R-Rd)
+    gpath = joinpath(TCI4Keldysh.pdatadir(), "cluster_output", "gencoreR$(R)", "gevR$(R)p.serialized")
     gev = deserialize(gpath)
     println("==== Evaluate...")
-    shift = div(2^R, 2^7)
-    maxref = maximum(abs.(core[:,:,:,TCI4Keldysh.KF_idx(iK,3)...]))
-    N = 10^5
-    err = Vector{Float64}(undef, N)
-    nerr = Vector{Float64}(undef, N)
-    for n in 1:N
-        idx = rand(1:2^7, 3)
-        d = abs(core[idx..., TCI4Keldysh.KF_idx(iK,3)...] - gev(ntuple(i -> (idx[i]-1)*shift + 1, 3)...))
-        err[n] = d
-        nerr[n] = d/maxref
+    shift = div(2^R, 2^Rd)
+    maxrefs = [maximum(abs.(core[:,:,:,TCI4Keldysh.KF_idx(iK,3)...])) for iK in 1:16]
+    maxrefs[end] = 1.0
+    maxrefs = reshape(maxrefs, 2,2,2,2)
+    pts = Array{Int,2}(undef, 3,N)
+    err = Array{Float64,5}(undef, 2,2,2,2,N)
+    nerr = Array{Float64,5}(undef, 2,2,2,2,N)
+    Threads.@threads for n in 1:N
+        idx = rand(1:2^Rd, 3)
+        idx_gev = ntuple(i -> round(Int, dwrat*(idx[i]-cen_d) + cen), 3)
+        d = abs.(core[idx..., :,:,:,:] .- TCI4Keldysh.evaluate_all_iK(gev, idx_gev...))
+        err[:,:,:,:,n] .= d
+        nerr[:,:,:,:,n] .= d ./ maxrefs
+        pts[:,n] .= idx
     end
-    h5write("gev_accuracyR$(R)iK$(iK).h5", "err", err)
-    h5write("gev_accuracyR$(R)iK$(iK).h5", "nerr", nerr)
+    h5write("gev_accuracyR$(R)_alliK_N$(N).h5", "err", err)
+    h5write("gev_accuracyR$(R)_alliK_N$(N).h5", "nerr", nerr)
+    h5write("gev_accuracyR$(R)_alliK_N$(N).h5", "pts", pts)
 end
 
 """
@@ -170,32 +181,86 @@ function check_accuracy(refpath::AbstractString, iK::Int, R::Int=7)
     errs = nothing
 end
 
+function check_accuracy_ΓcoreEvaluator_MF(reffile::AbstractString; flavor_idx::Int=1, key="V_KF")
+    Vref = if endswith(reffile, ".mat")
+        open(reffile) do f
+            Vref_ = f["CFdat"][flavor_idx]
+        end
+        reverse(permutedims(Vref_, (3,1,2)))
+    elseif endswith(reffile, ".h5")
+        h5read(f, key)
+    else
+        error("File format not recognized")
+    end
 
+    Nbos = size(Vref,1)
 
-#=
-V_KF_eval_accuracy(
-    joinpath(TCI4Keldysh.pdatadir(), "cluster_output/V_KF_conventional1.5"),
-    7,
-    6,
-)
+    # create Evaluator
+    error("NYI")
+end
 
-V_KF_eval_accuracy(
-    joinpath(TCI4Keldysh.pdatadir(), "cluster_output/V_KF_conventional3.0"),
-    7,
-    6,
-)
+function test_ΓcoreEvaluator(;R::Int, tolerance=1.e-8)
+    PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+    channel = "p"
+    ωconvMat = TCI4Keldysh.channel_trafo(channel)
+    T = TCI4Keldysh.dir_to_T(PSFpath)
 
-V_KF_eval_accuracy(
-    joinpath(TCI4Keldysh.pdatadir(), "cluster_output/V_KF_conventional"),
-    7,
-    2,
-)
+    # numerically exact evaluator
+    gev_ref = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=1.e-20)
 
-V_KF_eval_accuracy(
-    joinpath(TCI4Keldysh.pdatadir(), "cluster_output/V_KF_conventional"),
-    7,
-    15,
-)
+    cutoff = 0.01 * tolerance
+    gev = ΓcoreEvaluator_MF(PSFpath, R; ωconvMat=ωconvMat, T=T, flavor_idx=1, cutoff=cutoff)
 
+    D = 3
+    N = 2^R
+    Neval = 2^5
+    eval_step = max(div(N, Neval), 1)
+    Ncenter_h = 4
+    gridslice = vcat(collect(1:eval_step:N), collect(div(N,2)-Ncenter_h+1 : div(N,2)+Ncenter_h))
+    Neval += 2*Ncenter_h
+    @assert length(gridslice)==Neval
 
-=#
+    printstyled("Memory usage [GB] of ΓcoreEvaluator_MF (ref): $(Base.summarysize(gev_ref) / (1024^3))\n"; color=:blue)
+    printstyled("Memory usage [GB] of ΓcoreEvaluator_MF (approx): $(Base.summarysize(gev) / (1024^3))\n"; color=:blue)
+
+    # reference values
+    println("Computing reference...")
+    flush(stdout)
+    refval = zeros(ComplexF64, ntuple(_->Neval, D))
+    Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
+        w = ntuple(i -> gridslice[idx[i]], D)
+        # if rand(Float64)<=1.e-2
+        #     @time gev_ref(w...)
+        # end
+        refval[idx...] = gev_ref(w...)
+    end
+
+    # approximate values
+    println("Computing test values...")
+    flush(stdout)
+    testval = zeros(ComplexF64, ntuple(_->Neval, D))
+    Threads.@threads for idx in collect(Iterators.product(ntuple(_->1:Neval,D)...))
+        w = ntuple(i -> gridslice[idx[i]], D)
+        testval[idx...] = gev(w...)
+    end
+
+    maxref = maximum(abs.(refval))
+    diff = abs.(testval - refval) ./ maxref
+    printstyled("Matsubara GammaCoreEvaluator error for tol=$tolerance\n"; color=:blue)
+    @show maxref
+    @show maximum(diff)
+    open("MFgamcoreEvaluator.txt", "a") do f
+        write(f, "R=$R, tol=$tolerance, maxref=$maxref, MAXERR=$(maximum(diff)) ($(length(testval)) evals)\n")
+    end
+end
+
+GC.gc()
+check_gev_accuracy(8,2*10^6)
+GC.gc(true)
+check_gev_accuracy(9,2*10^6)
+GC.gc(true)
+check_gev_accuracy(10,2*10^6)
+GC.gc(true)
+check_gev_accuracy(11,2*10^6)
+GC.gc(true)
+check_gev_accuracy(12,2*10^6)

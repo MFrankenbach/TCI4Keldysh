@@ -3,14 +3,18 @@ using Serialization
 using JLD2
 using QuanticsTCI
 using QuanticsGrids
+using ITensors
+using ITensorMPS
+using JLD2
 using HDF5
 import TensorCrossInterpolation as TCI
+import QuanticsGrids as QG
 
 """
 Determine whether a value to an input key should remain uppercase
 """
 function is_uppercase_key(kw::AbstractString)
-    list = ["psfpath", "kev", "coreevaluator_kwargs"]
+    list = ["psfpath", "kev", "coreevaluator_kwargs", "ttfile", "vh5path"]
     return (lowercase(kw) in list)
 end
 
@@ -28,7 +32,6 @@ function _to_type(s::Symbol)
 end
 
 _to_type(s::String)=_to_type(Symbol(s))
-
 """
 parse dictionary:
 key type value key type value
@@ -115,7 +118,7 @@ function json_filename(jobtype::String, xmin, xmax, tolerance::Float64, beta::Fl
 end
 
 function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, folder, flavor_idx, channel, kwargs...)
-    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    beta = TCI4Keldysh.read_beta(PSFpath)
     outname = json_filename(jobtype, first(Rs), last(Rs), tolerance, beta; folder=folder)
     if TCI4Keldysh.DEBUG_TCI_KF_RAM()
         println("!!! Debugging RAM for KF calculations !!!")
@@ -152,6 +155,8 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
         matsubarafull_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="conv_matsubaracore"
         matsubaracore_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="recompress"
+        recompress_tt(outname, d; tolerance=tolerance, folder=folder, kwargs...)
     # Correlator jobs
     elseif jobtype=="corrkeldysh"
         corrkeldysh(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
@@ -167,6 +172,8 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
         nonlin_keldyshfull(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="gen_kf_coreevaluator"
         gen_KF_coreevaluator(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+    elseif jobtype=="compress_precomputed"
+        compress_V_KF_precomputed(outname, d; Rs=Rs, folder=folder, tolerance=tolerance, kwargs...)
     else
         error("Invalid jobtype $jobtype")
     end
@@ -721,7 +728,7 @@ function keldyshcore(
     kwargs...
     )
 
-    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    beta = TCI4Keldysh.read_beta(PSFpath)
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
     T = 1.0/beta
     times = []
@@ -771,6 +778,8 @@ function keldyshcore(
     evaluator_kwargs = filter_KFCEvaluator_kwargs(;kwargs...)
     d["FullCorrEvaluator_kwargs"] = evaluator_kwargs
     d["npivot"] = npivot
+    bosgrid = haskey(kwargs,:bosgrid) ? maybeparse(Bool,kwargs[:bosgrid]) : false
+    d["bosgrid"] = bosgrid
 
     TCI4Keldysh.logJSON(d, outname, folder)
 
@@ -800,6 +809,7 @@ function keldyshcore(
                 batched=maybeparse(Bool, batched),
                 pivot_step=pivot_steps[ir],
                 evaluator_ret=gev_ref,
+                bosgrid=bosgrid,
                 evaluator_kwargs...,
                 tcikwargs...
                 )
@@ -1232,6 +1242,40 @@ function matsubaracore_conv(outname, d::Dict;
     end
 end
 
+function recompress_tt(outname, d::Dict; tolerance, folder, onesite=true, ttfile::AbstractString, sweepkwargs...)
+    tolerance = maybeparse(Float64, tolerance)
+    onesite = maybeparse(Bool, onesite)
+    tt_ = deserialize(ttfile)
+    d["onesite"] = onesite
+    d["ttfile"] = ttfile
+    TCI4Keldysh.logJSON(d, outname, folder)
+    # collect data
+    if tt_ isa TCI.TensorCI2 
+        tci = tt_
+        tt = TCI4Keldysh.TCItoMPS(tci)
+        f = v -> TCI4Keldysh.eval(tt,v)
+        ms = tt_.maxsamplevalue
+    elseif tt_ isa Tuple{TCI.TensorCI2, QG.InherentDiscreteGrid}
+        tci = tt_[1]
+        tt = TCI4Keldysh.TCItoMPS(tci)
+        f = v -> TCI4Keldysh.eval(tt,v)
+        ms = tci.maxsamplevalue
+    else
+        error("Non-supported input of type $(typeof(tt))")
+    end
+    TCI4Keldysh.updateJSON(outname, "bonddims_before", TCI.linkdims(tci), folder)
+    # recompress
+    if onesite
+        TCI.sweep1site!(tci,f; abstol=tolerance*ms, sweepkwargs...)
+    else onesite
+        # 2 stands for niter
+        TCI.sweep2site!(tci,f,2; iter1=1, abstol=tolerance*ms, sweepkwargs...)
+    end
+    fname_tt = joinpath(folder, outname*"_recompressed.serialized")
+    TCI4Keldysh.updateJSON(outname, "bonddims_after", TCI.linkdims(tci), folder)
+    serialize(fname_tt, tci)
+end
+
 
 
 """
@@ -1243,7 +1287,8 @@ function keldyshcore_conv(outname, d::Dict;
     PSFpath,
     flavor_idx,
     channel,
-    ommax = 0.3183098861837907,
+    ommax=0.3183098861837907,
+    bosgrid=false,
     kwargs...)
 
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
@@ -1265,13 +1310,19 @@ function keldyshcore_conv(outname, d::Dict;
     d["sigmak"] = sigmak
     d["broadening_kwargs"] = broadening_kwargs 
     d["ommax"] = ommax 
+    bosgrid = maybeparse(Bool,bosgrid)
+    d["bosgrid"] = bosgrid
     TCI4Keldysh.logJSON(d, outname, folder)
     
     for R in Rs
         if R>9
             error("This calculation (R=$R) is doomed.")
         end
-        ωs_ext = TCI4Keldysh.KF_grid(ommax, R, 3)
+        ωs_ext = if bosgrid
+                ntuple(_->TCI4Keldysh.KF_grid_bos(ommax, R), 3)
+            else
+                TCI4Keldysh.KF_grid(ommax, R, 3)
+            end
         T = TCI4Keldysh.read_temperature(PSFpath; channel=channel)
         om_sig = TCI4Keldysh.Σ_grid(ntuple(i -> ωs_ext[i],2))
         (Σ_L, Σ_R) = if TCI4Keldysh.USE_FDR_SE()
@@ -1383,7 +1434,7 @@ function corrkeldysh(
 
     @show kwargs
 
-    beta = TCI4Keldysh.dir_to_beta(PSFpath)
+    beta = TCI4Keldysh.read_beta(PSFpath)
     Ops = ["F1", "F1dag", "F3", "F3dag"]
     T = 1.0/beta
     npt = 4
@@ -1564,6 +1615,70 @@ function keldyshaccuracy(
 end
 =#
 
+function compress_V_KF_precomputed(
+    outname, d::Dict;
+    Rs,
+    folder,
+    psfpath_id=0, # make sure this does not end up in tcikwargs
+    # absolute path to .h5 file storing the vertex data
+    vh5path::AbstractString,
+    # modify this to compress a different contribution to the vertex
+    vertex_key="core",
+    unfoldingscheme=:fused,
+    ik,
+    tcikwargs...
+    )
+
+    printstyled("KWARGS\n"; color=:blue, bold=true)
+    @show tcikwargs
+    printstyled("======\n"; color=:blue, bold=true)
+    
+    d["vh5path"] = vh5path
+    d["numthreads"] = Threads.threadpoolsize()
+    d["tcikwargs"] = Dict(tcikwargs)
+    ik = maybeparse(Int,ik)
+    unfoldingscheme = maybeparse(Symbol, unfoldingscheme)
+
+    data = h5read(vh5path, vertex_key)
+    gridsize = size(data)[5:end]
+    times = []
+    qttranks = []
+    qttbonddims = []
+    d["times"] = times
+    d["ranks"] = qttranks
+    d["bonddims"] = qttbonddims
+    TCI4Keldysh.logJSON(d, outname, folder)
+
+    iK_tuple = TCI4Keldysh.KF_idx(ik,3)
+    T = eltype(data)
+
+    for R in Rs
+        # Keldysh index first
+        function _eval_data(idx...)
+            if all(idx .<= gridsize)
+                data[iK_tuple..., idx...]
+            else
+                return zero(T)
+            end
+        end
+        t = @elapsed begin
+            qtt,_,_ = quanticscrossinterpolate(T, _eval_data, ntuple(i -> 2^R, 3);
+                unfoldingscheme=unfoldingscheme, tcikwargs...)
+        end
+        push!(times,t)
+        push!(qttranks, TCI4Keldysh.rank(qtt))
+        push!(qttbonddims, TCI.linkdims(qtt.tci))
+        TCI4Keldysh.updateJSON(outname, "times", times, folder)
+        TCI4Keldysh.updateJSON(outname, "ranks", qttranks, folder)
+        TCI4Keldysh.updateJSON(outname, "bonddims", qttbonddims, folder)
+
+        JLD2.@save joinpath(folder,outname*"_R=$(R).jld2") tci=qtt.tci grid=qtt.grid
+        println(" ===== R=$R: time=$t, rankk(qtt)=$(TCI4Keldysh.rank(qtt))")
+        flush(stdout)
+        flush(stderr)
+    end
+end
+
 # ==== JOBTYPES END
 
 """
@@ -1595,6 +1710,8 @@ To WATCH OUT for:
 function main(args)
     inp_file = args[1]    
     inp_args = parse_input(inp_file)
+
+    TCI4Keldysh.set_mpNRG_file_settings()
     
     println("==== INPUT BEGIN")
     open(inp_file) do f

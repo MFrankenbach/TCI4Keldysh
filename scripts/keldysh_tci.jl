@@ -12,6 +12,7 @@ using Printf
 using MAT
 using LaTeXStrings
 using TCI4Keldysh
+using JLD2
 using Test
 
 import TensorCrossInterpolation as TCI
@@ -1072,14 +1073,18 @@ function iK_pivots(tt::TCI.TensorCI2)
     end
 end
 
-"""
-QTCI-compress all Keldysh components, using precomputed data from disk.
-"""
 function compress_KFCdata_all(R, γ, sigmak; tcikwargs...)
     # has D frequency, D+1 Keldysh indices
     fname = corrdata_fnameh5(R,γ,sigmak)
     @assert isfile(fname) "File $fname does not exist"
-    data = h5read(fname, "KFCdata")
+    compress_KFCdata_all(fname, "KFCdata"; tcikwargs...)
+end
+
+"""
+QTCI-compress all Keldysh components, using precomputed data from disk.
+"""
+function compress_KFCdata_all(fname, key; tcikwargs...)
+    data = h5read(fname, key)
     D = div(ndims(data)-1, 2)
     R = Int(log2(size(data, 1))) 
 
@@ -1099,6 +1104,170 @@ function compress_KFCdata_all(R, γ, sigmak; tcikwargs...)
     @show TCI.linkdims(tt)
 
     iK_pivots(tt)
+end
+
+"""
+Compress precomputed vertex data
+CAREFUL only works properly when vertex has size 2^R(+1), otherwise parts are cut off
+
+tol2:
+    iK=1 [8, 40, 70, 109, 130, 58, 8]
+    iK=2 [8, 37, 86, 130, 136, 64, 8]
+    iK=6 [8, 40, 106, 158, 159, 64, 8]
+    iK=10 [8, 36, 77, 118, 126, 62, 8]
+    iK=15 [8, 36, 67, 95, 93, 52, 8]
+"""
+function compress_vertex_singleIK(iK::Int; tcikwargs...)
+    fname = joinpath(TCI4Keldysh.pdatadir(), "cluster_output/V_KF_conventional0.65/V_KF_p_R=8.h5")
+    # fname = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/V_KF_pp/V_KF_U4.mat")
+    V = nothing
+    if endswith(fname, "h5")
+        h5open(fname) do f
+            V = read(f, "V_KF")
+        end
+    elseif endswith(fname, "mat")
+        matopen(fname) do f
+            CFdat = read(f, "CFdat")
+            V = reverse(permutedims(CFdat["Ggrid"][1], (3,1,2)))
+        end
+    end
+    R = round(Int, log2(size(V,2)))
+    D = 3
+    grid = QG.InherentDiscreteGrid{D}(R; unfoldingscheme=:fused)
+    # first Keldysh index, then rest
+    k = TCI4Keldysh.KF_idx(iK, D)
+    function evalV_(idx::Vector{Int})
+        om = QG.quantics_to_grididx(grid, idx)
+        return V[om..., k...]
+    end
+    localdims = QG.localdimensions(grid)
+    initpivot = vcat(fill(5, length(localdims)))
+    @time tt, _, _ = TCI.crossinterpolate2(ComplexF64, evalV_, localdims, [initpivot]; tcikwargs...)
+    @show TCI.linkdims(tt)
+    @show maximum(TCI.linkdims(tt))
+end
+
+"""
+Compress precomputed vertex data
+NOTE: The accuracy on individual components is lower, since the maxsample value is the largest among all Keldyshcomponents
+CAREFUL: only works properly when vertex has size 2^R(+1), otherwise parts are cut off
+
+tol=0.01: [5, 40, 173, 281, 344, 300, 64, 8]
+"""
+function compress_vertex_all_reduced(; scale_magnitude=false, tcikwargs...)
+    fname = joinpath(TCI4Keldysh.pdatadir(), "cluster_output/V_KF_conventional0.65/V_KF_p_R=8.h5")
+    # fname = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/V_KF_pp/V_KF_U4.mat")
+    V = nothing
+    if endswith(fname, "h5")
+        h5open(fname) do f
+            V = read(f, "V_KF")
+        end
+    elseif endswith(fname, "mat")
+        matopen(fname) do f
+            CFdat = read(f, "CFdat")
+            V = reverse(permutedims(CFdat["Ggrid"][1], (3,1,2)))
+        end
+    end
+    @show size(V)
+    for iK in 1:16
+        iKtuple = TCI4Keldysh.KF_idx(iK,3)
+        maxiK = maximum(abs.(V[:,:,:,iKtuple...]))
+        println("Maximum in component $(iKtuple): $(maxiK)")
+        if scale_magnitude && maxiK>1.e-8
+            V[:,:,:,iKtuple...] ./= maxiK
+        end
+    end
+    println("\n")
+    iK_reduced = [1,2,6,10,15]
+    R = round(Int, log2(size(V,2)))
+    D = 3
+    grid = QG.InherentDiscreteGrid{D}(R; unfoldingscheme=:fused)
+    # first Keldysh index, then rest
+    function evalV_(idx::Vector{Int})
+        om = QG.quantics_to_grididx(grid, idx[2:end])
+        k = TCI4Keldysh.KF_idx(iK_reduced[idx[1]], D)
+        return V[om..., k...]
+    end
+    localdims = vcat([length(iK_reduced)], QG.localdimensions(grid))
+    initpivot = vcat([3], fill(5, length(localdims)-1))
+    @time tt, _, _ = TCI.crossinterpolate2(ComplexF64, evalV_, localdims, [initpivot]; tcikwargs...)
+    @show TCI.linkdims(tt)
+    @show maximum(TCI.linkdims(tt))
+end
+
+"""
+Compress precomputed vertex data
+NOTE: The accuracy on individual components is lower, since the maxsample value is the largest among all Keldyshcomponents
+"""
+function compress_vertex_all(; scale_magnitude=false, tcikwargs...)
+    fname = joinpath(TCI4Keldysh.pdatadir(), "cluster_output/V_KF_conventional0.65/V_KF_p_R=8.h5")
+    V = nothing
+    h5open(fname) do f
+        V = read(f, "V_KF")
+    end
+    @show size(V)
+    for iK in 1:16
+        iKtuple = TCI4Keldysh.KF_idx(iK, 3)
+        maxiK = maximum(abs.(V[:,:,:,iKtuple...]))
+        println("Maximum in component $(iKtuple): $(maxiK)")
+        if scale_magnitude && maxiK>1.e-8
+            V[:,:,:,iKtuple...] ./= maxiK
+        end
+    end
+    println("\n")
+    R = round(Int, log2(size(V,2)))
+    D = 3
+    grid = QG.InherentDiscreteGrid{D}(R; unfoldingscheme=:fused)
+    # first Keldysh index, then rest
+    function evalV_(idx::Vector{Int})
+        om = QG.quantics_to_grididx(grid, idx[2:end])
+        k = TCI4Keldysh.KF_idx(idx[1], D)
+        return V[om..., k...]
+    end
+    localdims = vcat([2^(D+1)], QG.localdimensions(grid))
+    initpivot = vcat([6], fill(5, length(localdims)-1))
+    @time tt, _, _ = TCI.crossinterpolate2(ComplexF64, evalV_, localdims, [initpivot]; tcikwargs...)
+    @show TCI.linkdims(tt)
+    @show maximum(TCI.linkdims(tt))
+end
+
+"""
+Load precomputed tensor trains for Keldysh components and fit new tensor train to that
+"""
+function compress_vertex_tts(;tcikwargs...)
+    dirs = ["V_KF_bigbox_tol2.5_iK2",
+    "V_KF_bigbox_tol2.5_iK1",
+    "V_KF_bigbox_tol2.5_iK6",
+    "V_KF_bigbox_tol2.5_iK10",
+    "V_KF_bigbox_tol2.5_iK15"]
+
+    tts = [] 
+    grids = [] 
+    for d in dirs
+        file = only(filter(f -> endswith(f, ".serialized"), readdir(joinpath(TCI4Keldysh.pdatadir(), "cluster_output", d); join=true)))
+        tt, grid = deserialize(file)
+        push!(tts, tt)
+        push!(grids, grid)
+    end
+
+    function evalV_(v::Vector{Int})
+        # first Keldysh component
+        return tts[v[1]](v[2:end])
+    end
+
+    R = 12
+    localdims = vcat([5], QG.localdimensions(grids[1]))
+    initpivot = vcat([3], fill(5, R))
+    # compile
+    _ = evalV_(ones(Int,length(localdims)))
+    # run
+    ttnew, _, _ = TCI.crossinterpolate2(ComplexF64, evalV_, localdims, [initpivot]; tcikwargs...)
+    return ttnew
+end
+
+function compress_vertex_tts_store(;tcikwargs...)
+    ttnew = compress_vertex_tts(;tcikwargs...)
+    @save joinpath(TCI4Keldysh.pdatadir(), ENV["PWTCIDIR"], "alliK_qtt.jld2") ttnew tcikwargs
 end
 
 function compress_KFCdata(R; qtcikwargs...)

@@ -10,7 +10,7 @@ read(f, "odisc") (same as read(f, "PSF")["odisc_info"]["odisc"])
 
 # data_dir = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/4pt";
 # backup_dir = "data/siam05_U0.05_T0.005_Delta0.0318/PSF_nz=2_conn_zavg/original_files/4pt"
-data_dir = "/scratch/m/M.Frankenbach/tci4keldysh/data/SIAM_u5_U0.05_T0.0005_Delta0.0031831/PSF_nz=2_conn_zavg/"
+data_dir = "/scratch/m/M.Frankenbach/tci4keldysh/data/HM_SquareLattice_T0.25_U4_mu2/PSF_nz=2_conn_zavg/"
 
 using MAT
 
@@ -82,7 +82,7 @@ function check_layout(dir::String; layout=:old)
 end
 
 """
-Check whether all files have the given number of flavors in Adisc
+Check whether all files have the given number of flavors in Adisc. 1pt and 2pt PSFs only have one flavor.
 """
 function check_flavor_ids(dir::String; nflavor=2)
     println("Reading $dir ...")
@@ -118,5 +118,5 @@ function check_flavor_ids(dir::String; nflavor=2)
 end
 
 # check_flavor_ids(data_dir)
-# check_layout(data_dir; layout=:new)
-change_PSF_layout()
+check_layout(data_dir; layout=:new)
+# change_PSF_layout()

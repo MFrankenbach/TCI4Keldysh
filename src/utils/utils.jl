@@ -4,6 +4,45 @@ Collect various utilities.
 
 using JSON
 
+const PSF_prefix = Ref("PSF_((")
+
+get_PSF_prefix() = PSF_prefix[]
+set_PSF_prefix(pref::String) = PSF_prefix[] = pref
+
+const PSF_suffix = Ref(")).mat")
+get_PSF_suffix() = PSF_suffix[]
+set_PSF_suffix(pref::String) = PSF_suffix[] = pref
+
+const mpNRG_version = Ref(:old)
+get_mpNRG_version() = mpNRG_version[]
+set_mpNRG_version(version::Symbol) = mpNRG_version[] = version
+
+function get_Adisc_key()
+    if get_mpNRG_version()==:old
+        "Adisc"
+    else
+        "PSFdata"
+    end
+end
+
+
+"""
+This function is used to set filename and path conventions for different NRG versions (cf. 'README_data.md')
+"""
+function set_mpNRG_file_settings(mpNRG_version::Symbol)
+    set_mpNRG_version(mpNRG_version)
+    if mpNRG_version==:old
+        # do nothing
+    elseif mpNRG_version==:new
+        set_PSF_prefix("PSFdata_((")
+    else
+        error("Unknown mpNRG_version: $(mpNRG_version)")
+    end
+end
+
+set_mpNRG_file_settings() = set_mpNRG_file_settings(Symbol(get(ENV, "MPNRG_VERSION", "new")))
+
+
 """
 Counts number of evaluations of a function.
 Can also count number of evaluations where arguments satisfy a given condition
@@ -802,14 +841,22 @@ end
 Load 0-point PSF, i.e., a single value.
 """
 function load_Adisc_0pt(path::String, Op::String) :: Float64
-    f = matopen(joinpath(path, parse_Ops_to_filename([Op])), "r")
+    f = nothing
+    Adisc = nothing
     try 
-        keys(f)
-    catch
-        keys(f)
+        f = matopen(joinpath(path, parse_Ops_to_filename([Op])), "r")
+        Adisc = if haskey(f, "Adisc")
+            only(read(f, "Adisc"))
+        elseif haskey(f, "PSFdata")
+            only(read(f, "PSFdata"))
+        else
+            error("Could neither find key 'Adisc' nor key 'PSFdata' in file $fname (0pt). Cannot load data for operators $Ops and flavor $flavor_idx.")
+        end
+    catch e
+        throw(e)
+    finally 
+        isnothing(f) || close(f)
     end
-    Adisc = only(read(f, "Adisc"))
-    close(f)
     return only(Adisc)
 end
 
@@ -818,53 +865,102 @@ end
 Read PSF.
 Some 2-point PSFs only have one flavor.
 """
-function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int)
-    fname = "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"
-    f = matopen(joinpath(path, fname), "r")
+function load_Adisc(path::String, Ops::Vector{String}, flavor_idx::Int; key_return::Union{Nothing,Ref{String}}=nothing)
+    fname = get_PSF_prefix()*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*get_PSF_suffix()
+    f = nothing
+    Adisc = nothing
     try 
-        keys(f)
-    catch
-        keys(f)
-    end
-    Adisc_full = read(f, "Adisc")
-    Adisc = if length(Ops)==2 && length(Adisc_full)==1
-            only(Adisc_full) 
-        elseif length(Adisc_full)>1
-            Adisc_full[flavor_idx]
-        else
-            error("Flavor component may be missing in $(length(Ops))-point function")
+        f = matopen(joinpath(path, fname), "r")
+        try 
+            keys(f)
+        catch
+            keys(f)
         end
-    Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
-
-    close(f)
+        Adisc_full = if haskey(f, "Adisc") # old mpNRG
+                isnothing(key_return) || ( key_return[]="Adisc" )
+                read(f, "Adisc")
+            elseif haskey(f, "PSFdata") # newer mpNRG
+                isnothing(key_return) || ( key_return[]="PSFdata" )
+                read(f, "PSFdata")
+            else
+                error("Could neither find key 'Adisc' nor key 'PSFdata' in file $fname. Cannot load data for operators $Ops and flavor $flavor_idx.")
+            end
+        Adisc = if length(Ops)==2 && length(Adisc_full)==1
+                only(Adisc_full) 
+            elseif length(Adisc_full)>1
+                Adisc_full[flavor_idx]
+            else
+                error("Flavor component may be missing in $(length(Ops))-point function")
+            end
+        Adisc = dropdims(Adisc,dims=tuple(findall(size(Adisc).==1)...))
+    catch e 
+        throw(e)
+    finally
+        isnothing(key_return) || (key_return[] = "not found")
+        isnothing(f) || close(f)
+    end
     return Adisc 
 end
 
 
 function load_ωdisc(path::String, Ops::Vector{String}; nested_ωdisc::Bool=false)
-    f = matopen(joinpath(path, "PSF_(("*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*")).mat"), "r")
+    f = nothing
+    ωdisc = nothing
     try 
-        keys(f)
-    catch
-        keys(f)
+        f = matopen(joinpath(path, get_PSF_prefix()*mapreduce(*,*,Ops, ["," for i in 1:length(Ops)])[1:end-1]*get_PSF_suffix()), "r")
+        try 
+            keys(f)
+        catch
+            keys(f)
+        end
+        ωdisc  = if !nested_ωdisc
+            read(f, "odisc")[:]
+        else
+            read(f, "PSF")["odisc_info"]["odisc"][:]
+        end
+    catch e
+        if e isa KeyError
+            if splitpath(path)[end]=="4pt"
+                mpNRG_mat_path = dirname(path)
+            else
+                mpNRG_mat_path = path
+            end
+            mpNRG_mat_path = dirname(mpNRG_mat_path)
+            ωdisc = load_ωdisc_mpNRGmat(joinpath(mpNRG_mat_path, "mpNRG.mat"))
+        else
+            throw(e)
+        end
+    finally
+        isnothing(f) || close(f)
     end
-    ωdisc  = if !nested_ωdisc
-        read(f, "odisc")[:]
-    else
-        read(f, "PSF")["odisc_info"]["odisc"][:]
-    end
-    close(f)
     return ωdisc 
 end
 
+function load_ωdisc_mpNRGmat(mpNRG_mat_path::String)
+    f = nothing
+    ωdisc = nothing
+    try 
+        f = matopen(mpNRG_mat_path)
+        ωdisc = read(f,"odisc")[:]
+    catch e
+        if e isa KeyError
+            error("Key odisc not found in .mat file $mpNRG_mat_path")
+        else
+            throw(e)
+        end
+    finally
+        isnothing(f) || close(f)
+    end
+    return ωdisc
+end
 
 function parse_filename_to_Ops(fn)
-    return split(fn[7:end-6], ",")
+    return split(fn[length(get_PSF_prefix())+1:end-length(get_PSF_suffix())], ",")
 end
 
 function parse_Ops_to_filename(ops)
     temp = prod([o*"," for o in ops])
-    return "PSF_(("*temp[1:end-1]*")).mat"
+    return get_PSF_prefix()*temp[1:end-1]*get_PSF_suffix()
 end
 
 function isBosonic(Op::AbstractString)
@@ -1051,7 +1147,6 @@ function Σ_grid(ωs_ext::NTuple{2,Vector{Float64}})
 end
 
 """
-
 Deduce missing S[O₁,O₂,O₃,O₄] by use of symmetries => relate to exchange of the 2 creation (annihilation) operators
 """
 function symmetry_expand(path::String, Ops::Vector{String}; nested_ωdisc=false)
@@ -1067,7 +1162,7 @@ function symmetry_expand(path::String, Ops::Vector{String}; nested_ωdisc=false)
         
         filename = parse_Ops_to_filename(Ops[perm])
         fullfilename = joinpath(path, filename)
-        if any(filename .==filelist) # don't overwrite existing files
+        if isfile(fullfilename) # don't overwrite existing files
             @VERBOSE filename*" exists!\n"
         else
             @VERBOSE "Creating "* filename* ".\n"
@@ -1078,13 +1173,13 @@ function symmetry_expand(path::String, Ops::Vector{String}; nested_ωdisc=false)
             try
                 f = matopen(fullfilename)
 
-                write(f, "Adisc", Adiscs_new)
+                write(f, get_Adisc_key(), Adiscs_new)
                 write(f, "odisc", ωdisc)
                 close(f)
             catch
                 f = matopen(fullfilename, "w")
 
-                write(f, "Adisc", Adiscs_new)
+                write(f, get_Adisc_key(), Adiscs_new)
                 write(f, "odisc", ωdisc)
                 close(f)
             end
