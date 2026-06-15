@@ -1,5 +1,4 @@
 using TCI4Keldysh
-using PythonCall
 using PythonPlot
 using HDF5
 using MAT
@@ -91,7 +90,7 @@ function main(;)
     flavor_idx = 2
 
     # CORE VERTEX
-    core_ref = _readMAT!(joinpath(refdatapath, "V_KF_U4.mat"); flavor_idx=flavor_idx);
+    core_ref = _readMAT!("V_KF_U4.mat"; flavor_idx=flavor_idx);
     core_julia = h5read(joinpath(juliadatapath, "V_KF_U4.h5"), "core")
     @show size(core_ref)
     @show size(core_julia)
@@ -115,14 +114,15 @@ function main(;)
         @show maximum(abs.(diff[:,:,:,ik...]) / maxref)
     end
 
-    # 1D comparison
     ommax = 0.3183098861837907
     ommax_j = 0.20371832715762606
+
+    # 1D comparison
     # ommax_j = 0.050929581789406514/2
     juliagrid = TCI4Keldysh.KF_grid(ommax_j, 7, 3)[1]
+    refgrid = collect(range(-ommax, ommax, 201))
     @show juliagrid[10]
     @show refgrid[103]
-    refgrid = collect(range(-ommax, ommax, 201))
     fig, _ = compare_alliK1D(core_julia, core_ref, juliagrid, refgrid, (:,85,105), (:,121,141))
     PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "core_1D_comparison.pdf"))
 
@@ -152,8 +152,6 @@ function main(;)
     PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K2pref_prime.pdf"))
 
     # 1D comparison
-    ommax = 0.3183098861837907
-    ommax_j = 0.20371832715762606
     juliagrid = TCI4Keldysh.KF_grid(ommax_j, 7, 3)[1]
     refgrid = collect(range(-ommax, ommax, 201))
     fig, _ = compare_alliK1D(K2p_prime, K2pref_prime, juliagrid, refgrid, (65,:,65), (101,:,101))
@@ -190,7 +188,6 @@ function main(;)
     @show maximum(dp/pmax)
 
     dp = abs.(K2pref_prime[slice...] .- K2p_prime)
-    pmax = maximum(abs.(K2pref))
     pmax = maximum(abs.(K2pref_prime))
     @show maximum(dp)
     @show maximum(dp/pmax)
@@ -224,10 +221,10 @@ function main(;)
     @show maximum(dp)
     @show maximum(dp/pmax)
 
-    ommax = 0.3183098861837907
-    ommax_j = 0.20371832715762606
     juliagrid = TCI4Keldysh.KF_grid(ommax_j, 7, 3)[1]
     refgrid = collect(range(-ommax, ommax, 201))
     fig, _ = compare_alliK1D(K1t, K1tref, juliagrid, refgrid, (:,65,85), (:,101,121))
     PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K1t_1D_comparison.pdf"))
 end
+
+main()
