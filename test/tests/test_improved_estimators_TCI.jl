@@ -280,6 +280,46 @@ end
         @test maxerr < 5.0 * tolerance
     end
 
+    function test_ΓEvaluator_MF(;flavor_idx::Int=1, MEV_=MFCEvaluator)
+        PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
+        maxerr = 0.0
+        maxerrs = []
+
+        channel = "t"
+        foreign_channels = ("a", "p")
+        R = 3
+        T = TCI4Keldysh.read_temperature(PSFpath)
+        gev = TCI4Keldysh.ΓEvaluator_MF(
+            PSFpath, R;
+            T=T,
+            channel=channel,
+            foreign_channels=foreign_channels,
+            flavor_idx=flavor_idx,
+            MEV_=MEV_,
+        )
+        # reference
+        gev_ref = TCI4Keldysh.compute_Γfull_symmetric_estimator(
+            "MF", PSFpath;
+            T=T,
+            flavor_idx=flavor_idx,
+            ωs_ext = TCI4Keldysh.MF_npoint_grid(T,2^(R-1),3),
+            channel=channel,
+        )
+        maxref = maximum(abs.(gev_ref))
+        for ic_ in CartesianIndices(gev_ref)
+            ic = Tuple(ic_)
+            val = gev(ic...)
+            refval = gev_ref[ic...]
+            maxerr = max(maxerr, abs(val - refval)/maxref) 
+        end
+        push!(maxerrs, maxerr)
+
+        @test maxerr <= 1.e-12
+    end
+
+    test_ΓEvaluator_MF(;MEV_=TCI4Keldysh.MFCEvaluator)
+    test_ΓEvaluator_MF(;MEV_=TCI4Keldysh.FullCorrEvaluator_MF{ComplexF64,3,2})
+
     function test_K2_TCI(PSFpath; channel="a", R=5, beta=100.0, tolerance=1.e-7, prime=false)
         T = 1.0 / beta
         flavor = 1
@@ -340,7 +380,7 @@ end
 
 end
 
-@testset "SIE: Vertex@Keldysh" begin
+@testset "SIE: Vertex @ Keldysh" begin
     
     function test_Γcore_KF(
         iK::Int, flavor_idx, channel::String="a";
@@ -400,7 +440,7 @@ end
         @test maximum(reldiff) < 3.0*tolerance
     end
 
-    function test_ΓEvaluator_KF(;flavor_idx::Int=1, iK::Int=2)
+    function test_ΓEvaluator_KF(;flavor_idx::Int=1, iK::Int=2; gev_type=TCI4Keldysh.MultipoleKFCEvaluator{3})
         base_path = "SIAM_u=0.50"
         PSFpath = joinpath(TCI4Keldysh.datadir(), "SIAM_u=0.50/PSF_nz=4_conn_zavg/")
         ωs_ext = TCI4Keldysh.KF_grid(0.5, 3, 3)
@@ -414,7 +454,7 @@ end
         broadening_kwargs = TCI4Keldysh.read_all_broadening_params(base_path; channel=channel)
         broadening_kwargs[:estep] = 5
         gev = TCI4Keldysh.ΓEvaluator_KF(
-            PSFpath, iK, TCI4Keldysh.MultipoleKFCEvaluator{3};
+            PSFpath, iK, gev_type;
             channel=channel,
             foreign_channels=foreign_channels,
             flavor_idx=flavor_idx,
@@ -457,7 +497,8 @@ end
     test_Γcore_KF(9, 1, "p"; R=3, tolerance=1.e-8, batched=false)
     test_Γcore_KF(6, 1, "p"; R=4, tolerance=1.e-4, batched=true, unfoldingscheme=:fused)
 
-    test_ΓEvaluator_KF()
+    test_ΓEvaluator_KF(;gev_type=TCI4Keldysh.KFCEvaluator)
+    test_ΓEvaluator_KF(;gev_type=TCI4Keldysh.MultipoleKFCEvaluator{3})
 end
 
 # revert temporary change
