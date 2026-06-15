@@ -944,7 +944,7 @@ function test_ΓEvaluator_KF()
     broadening_kwargs = read_all_broadening_params(base_path; channel=channel)
     broadening_kwargs[:estep] = 5
     gev = ΓEvaluator_KF(
-        PSFpath, iK, MultipoleKFCEvaluator;
+        PSFpath, iK, KFCEvaluator;
         channel=channel,
         foreign_channels=foreign_channels,
         flavor_idx=flavor_idx,
@@ -952,6 +952,7 @@ function test_ΓEvaluator_KF()
         ωs_ext=ωs_ext,
         broadening_kwargs...
     )
+    @show typeof(gev.core)
     # reference
     gev_ref = compute_Γfull_symmetric_estimator(
         "KF", PSFpath;
@@ -969,6 +970,7 @@ function test_ΓEvaluator_KF()
     end
     push!(maxerrs, maxerr)
 
+    # @test maxerr <= 1.e-11
     printstyled("Maxerrs: $maxerrs\n"; color=:red)
 end
 
@@ -1261,10 +1263,11 @@ struct ΓEvaluator_MF
         T::Float64,
         flavor_idx::Int,
         channel::String,
-        foreign_channels::Tuple{String,String}
+        foreign_channels::Tuple{String,String},
+        MEV_=MFCEvaluator, MEV_kwargs=(;)
     )
         ωconvMat = channel_trafo(channel)
-        core = ΓcoreEvaluator_MF(PSFpath, R; T=T, flavor_idx=flavor_idx, ωconvMat=ωconvMat)
+        core = ΓcoreEvaluator_MF(PSFpath, R; T=T, flavor_idx=flavor_idx, ωconvMat=ωconvMat, MEV_=MEV_, MEV_kwargs...)
         ωs_ext = core.GFevs[1].GF.ωs_ext
 
         # precompute K2s
