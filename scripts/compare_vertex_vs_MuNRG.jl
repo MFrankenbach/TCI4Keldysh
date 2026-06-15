@@ -6,6 +6,7 @@ using JSON
 using HDF5
 using Combinatorics
 using LaTeXStrings
+using TCI4Keldysh
 import TensorCrossInterpolation as TCI
 
 #=
@@ -982,6 +983,126 @@ end
 Compare MuNRG Matsubara vertices with TCI4Keldysh.
 CAREFUL: Need channel="pNRG" for p-channel to get a consistent frequency convention
 """
+function check_V_full_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1, basepath="SIAM_u=0.50")
+    PSFpath = joinpath(TCI4Keldysh.datadir(), basepath, "PSF_nz=4_conn_zavg/")
+    Vpath = joinpath(TCI4Keldysh.datadir(), basepath, "V_MF_" * TCI4Keldysh.channel_translate(channel))
+
+    # Γfull data
+    full_file = "V_MF_sym.mat"
+    CF = nothing
+    Γfull_ref = nothing
+    ωs_ext = nothing
+    matopen(joinpath(Vpath, full_file), "r") do f
+        CF = read(f, "CF")
+        CFdat = read(f, "CFdat")
+        Γfull_ref = CFdat["Ggrid"][spin]
+        # bosonic grid comes last in the data
+        ωs_ext = ntuple(i -> imag.(vec(vec(CFdat["ogrid"])[4-i])), 3)
+    end
+    # bosonic grid comes last in the data
+    Γfull_ref = permutedims(Γfull_ref, (3,1,2))
+    @show size.(ωs_ext)
+    @show size(Γfull_ref)
+
+    # Σ data
+    ωs_Σ = nothing
+    Σ_file = "SE_MF_1.mat"
+    matopen(joinpath(Vpath, Σ_file), "r") do f
+        CF = read(f, "CF")
+        CFdat = read(f, "CFdat")
+        ωs_Σ_ = vec(vec(CFdat["ogrid"])[1])
+        @assert norm(real.(ωs_Σ_)) <= 1.e-10
+        ωs_Σ = imag.(ωs_Σ_)
+    end
+
+    @show size(ωs_Σ)
+    @show typeof(ωs_Σ)
+
+    # TCI4Keldysh calculation
+    if channel in ["p","pQFT"]
+        error("Need pNRG for the p-channel")
+    end
+
+    T = TCI4Keldysh.dir_to_T(PSFpath)
+    om_small = TCI4Keldysh.MF_npoint_grid(T, Nhalf, 3)
+    om_sig = TCI4Keldysh.MF_grid(T, 2*Nhalf, true)
+
+    # Γ full
+    sgntrafo = 1
+    ωconvMat = sgntrafo * TCI4Keldysh.channel_trafo(channel)
+    @time testval = if use_ΣaIE
+        TCI4Keldysh.compute_Γfull_symmetric_estimator(
+            "MF", PSFpath;
+            T=T, channel=channel, flavor_idx=spin, ωs_ext=om_small
+            )
+    else # use sIE for self-energy
+        error("sIE not supported for full vertex")
+        Σ_calc_sIE = TCI4Keldysh.calc_Σ_MF_sIE(PSFpath, om_sig; flavor_idx=spin, T=T)
+        TCI4Keldysh.compute_Γfull_symmetric_estimator(
+            "MF", PSFpath, Σ_calc_sIE;
+            ωs_ext=om_small, T=T, ωconvMat=ωconvMat, flavor_idx=spin
+            )
+    end
+
+    # calulation DONE
+
+    scfun = x -> real(x)
+
+    slice = [div(length(om_small[1]), 2)+1, :, :]
+    @show om_small[1][slice[1]]
+    heatmap(scfun.(testval[slice...]); right_margin=10Plots.mm)
+    title!("Γfull TCI4Keldysh")
+    file_prefix = "V_MF_$(channel)_spincomponent$(spin)_"
+    savefig(file_prefix * "gam.pdf")
+
+
+    window_half = div(length(om_small[2]), 2)
+    data_half = div(length(ωs_ext[2]), 2)
+    window_slice = data_half-window_half+1:data_half+window_half
+    slice_ref = [div(length(ωs_ext[1]), 2)+1, window_slice, window_slice]
+    @show ωs_ext[1][slice_ref[1]]
+    heatmap(scfun.(Γfull_ref[slice_ref...]); right_margin=10Plots.mm)
+    title!("Γfull reference")
+    savefig(file_prefix * "ref.pdf")
+
+    # compare quantitatively
+    window = (data_half-window_half+1:data_half+window_half+1, data_half-window_half+1:data_half+window_half, data_half-window_half+1:data_half+window_half)
+    # Γ(ω,ν,ν')=Γ*(-ω,-ν,-ν')
+    diff = if sgntrafo==1
+        # need to reverse because the MuNRG channel transformations differ from ours by a global minus sign
+        Γfull_ref[window...] .- reverse(testval)
+    elseif sgntrafo==-1
+        Γfull_ref[window...] .- testval
+    else
+        error("Invalid value $(sgntrafo) of transformation prefactor")
+    end
+    maxdiff = maximum(abs.(diff)) 
+    amaxdiff = argmax(abs.(diff)) 
+    @show maximum(abs.(Γfull_ref))
+    @show amaxdiff
+    @show diff[amaxdiff]
+    @show testval[amaxdiff]
+    @show Γfull_ref[window...][amaxdiff]
+    printstyled("---- Max. abs. deviation: $(maxdiff) (Γfull value: $(testval[amaxdiff]))\n"; color=:blue)
+    printstyled("---- Max. rel. abs. deviation: $(maxdiff/maximum(abs.(Γfull_ref))) (max. Γfull value: $(maximum(abs.(Γfull_ref))))\n"; color=:blue)
+    scfun = x -> abs(x)
+    heatmap(scfun.(Γfull_ref[slice_ref...] .+ testval[slice...]); right_margin=10Plots.mm)
+    savefig(file_prefix * "diff.pdf")
+
+    # reldiff = real.(testval) ./ real.(Γfull_ref)[window...]
+    # reldiff = map(x -> ifelse(!isnan(x) && (1. / 1.1 < abs(x)<1.1), x, 1.0), reldiff)
+    # @show maximum(abs.(reldiff))
+    # mean = sum(reldiff) / length(reldiff)
+    # @show mean
+    # heatmap(abs.(reldiff[slice...]); right_margin=10Plots.mm)
+    # savefig("reldiff.pdf")
+    return maxdiff
+end
+
+"""
+Compare MuNRG Matsubara vertices with TCI4Keldysh.
+CAREFUL: Need channel="pNRG" for p-channel to get a consistent frequency convention
+"""
 function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1)
     basepath = "SIAM_u=0.50"
     # basepath = "siam05_U0.05_T0.005_Delta0.0318"
@@ -1071,7 +1192,8 @@ function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1)
     @show om_small[1][slice[1]]
     heatmap(scfun.(testval[slice...]); right_margin=10Plots.mm)
     title!("Γcore TCI4Keldysh")
-    savefig("gam.pdf")
+    file_prefix = "V_MF_$(channel)_spincomponent$(spin)_"
+    savefig(file_prefix * "gam.pdf")
 
 
     window_half = div(length(om_small[2]), 2)
@@ -1081,7 +1203,7 @@ function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1)
     @show ωs_ext[1][slice_ref[1]]
     heatmap(scfun.(Γcore_ref[slice_ref...]); right_margin=10Plots.mm)
     title!("Γcore reference")
-    savefig("ref.pdf")
+    savefig(file_prefix * "ref.pdf")
 
     # compare quantitatively
     window = (data_half-window_half+1:data_half+window_half+1, data_half-window_half+1:data_half+window_half, data_half-window_half+1:data_half+window_half)
@@ -1105,7 +1227,7 @@ function check_V_MF(Nhalf=2^4;channel="t", use_ΣaIE=true, spin::Int=1)
     printstyled("---- Max. rel. abs. deviation: $(maxdiff/maximum(abs.(Γcore_ref))) (max. Γcore value: $(maximum(abs.(Γcore_ref))))\n"; color=:blue)
     scfun = x -> abs(x)
     heatmap(scfun.(Γcore_ref[slice_ref...] .+ testval[slice...]); right_margin=10Plots.mm)
-    savefig("diff.pdf")
+    savefig(file_prefix * "diff.pdf")
 
     # reldiff = real.(testval) ./ real.(Γcore_ref)[window...]
     # reldiff = map(x -> ifelse(!isnan(x) && (1. / 1.1 < abs(x)<1.1), x, 1.0), reldiff)
@@ -1138,9 +1260,7 @@ end
 Check Keldysh vertex of TCI4Keldysh against MuNRG results.
 MuNRG results have frequency grids of size 2n+1 symmetric around 0.0
 """
-function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
-    base_path = "SIAM_u=0.50"
-    joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
+function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t", base_path = "SIAM_u=0.50")
     PSFpath = joinpath(TCI4Keldysh.datadir(), base_path, "PSF_nz=4_conn_zavg/")
     Vpath = joinpath(TCI4Keldysh.datadir(), base_path, "V_KF_" * TCI4Keldysh.channel_translate(channel))
 
@@ -1184,11 +1304,14 @@ function check_V_KF(Nhalf=2^3; iK::Int=2, channel="t")
     om_sig = ωs_Σ[ω_Σ_cen - 2*Nhalf : ω_Σ_cen + 2*Nhalf]
 
     broadening_kwargs = read_broadening_settings(joinpath(TCI4Keldysh.datadir(), base_path); channel=channel)
+    @show broadening_kwargs
     if !haskey(broadening_kwargs, "estep")
         broadening_kwargs[:estep] = 50
     end
+    broadening_kwargs[:emin] = 1.e-6
+    broadening_kwargs[:emax] = 1.e4
     # Σ_ref = TCI4Keldysh.calc_Σ_KF_sIE_viaR(PSFpath, om_sig; T=T, flavor_idx=spin, sigmak, γ, broadening_kwargs...)
-    (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE_viaR(PSFpath, om_sig; T=T, flavor_idx=spin, sigmak, γ, broadening_kwargs...)
+    (Σ_L, Σ_R) = TCI4Keldysh.calc_Σ_KF_aIE(PSFpath, om_sig; T=T, flavor_idx=spin, sigmak, γ, broadening_kwargs...)
     testval = TCI4Keldysh.compute_Γcore_symmetric_estimator(
         "KF",
         PSFpath*"4pt/",
