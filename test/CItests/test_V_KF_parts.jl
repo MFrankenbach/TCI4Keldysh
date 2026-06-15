@@ -95,13 +95,13 @@ function main(;)
     @show size(core_ref)
     @show size(core_julia)
 
-    file_prefix = "parts_V_KF_core_$(channel)_spincomponent$(flavor_idx)_"
+    file_prefix = "parts_V_KF__spincomponent$(flavor_idx)_"
 
     # plot core
     figref, _ = plot_alliK(core_ref, 2, 101, imag)
+    PythonPlot.savefig(joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "core_ref.pdf"))
     fig, _ = plot_alliK(core_julia, 2, 65, imag)
-    PythonPlot.savefig(figref, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "core_ref.pdf"))
-    PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "core.pdf"))
+    PythonPlot.savefig(joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "core.pdf"))
 
     # inspect difference
     window = 37:165
@@ -124,7 +124,7 @@ function main(;)
     @show juliagrid[10]
     @show refgrid[103]
     fig, _ = compare_alliK1D(core_julia, core_ref, juliagrid, refgrid, (:,85,105), (:,121,141))
-    PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "core_1D_comparison.pdf"))
+    PythonPlot.savefig(joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "core_1D_comparison.pdf"))
 
 
     K2t = h5read(joinpath(juliadatapath, "V_KF_U3_ph_false.h5"), "K2")
@@ -147,15 +147,15 @@ function main(;)
 
     # plot
     fig, _ = plot_alliK(K2p_prime, 2, 65)
-    PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K2p_prime.pdf"))
+    PythonPlot.savefig(joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K2p_prime.pdf"))
     fig, _ = plot_alliK(K2pref_prime, 2, 101)
-    PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K2pref_prime.pdf"))
+    PythonPlot.savefig(joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K2pref_prime.pdf"))
 
     # 1D comparison
     juliagrid = TCI4Keldysh.KF_grid(ommax_j, 7, 3)[1]
     refgrid = collect(range(-ommax, ommax, 201))
     fig, _ = compare_alliK1D(K2p_prime, K2pref_prime, juliagrid, refgrid, (65,:,65), (101,:,101))
-    PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K2p_prime_1D_comparison.pdf"))
+    PythonPlot.savefig(joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K2p_prime_1D_comparison.pdf"))
 
 
     # inspect difference
@@ -224,7 +224,7 @@ function main(;)
     juliagrid = TCI4Keldysh.KF_grid(ommax_j, 7, 3)[1]
     refgrid = collect(range(-ommax, ommax, 201))
     fig, _ = compare_alliK1D(K1t, K1tref, juliagrid, refgrid, (:,65,85), (:,101,121))
-    PythonPlot.savefig(fig, joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K1t_1D_comparison.pdf"))
+    PythonPlot.savefig(joinpath(dirname(@__FILE__), "output", "plots", file_prefix * "K1t_1D_comparison.pdf"))
 end
 
-main()
+#main()
