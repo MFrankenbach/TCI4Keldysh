@@ -1,4 +1,3 @@
-using PythonCall
 using PythonPlot
 
 function annotate_topleft(ax, text; color="black")

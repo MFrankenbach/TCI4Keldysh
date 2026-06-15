@@ -28,7 +28,7 @@ These are normally provided by the mpNRG code by Lee et. al. [Lee2021].
    * $\Gamma$: four-point vertex
 
 ## References
-1. [Frankenbach2025]: "Compressing local vertex functions from the multipoint numerical renormalization group using quantics tensor cross interpolation", https://doi.org/10.1103/jx7h-lsqk
+1. [Frankenbach2025]: "Compressing local vertex functions from the multipoint numerical renormalization group using quantics tensor cross interpolation", doi:https://doi.org/10.1103/jx7h-lsqk
 2. [Lihm2024]: "Symmetric improved estimators for multipoint vertex functions", doi:10.1103/PhysRevB.109.125138
 3. [Kugler2021]: "Multipoint Correlation Functions: Spectral Representation and Numerical Evaluation", doi: 10.1103/PhysRevX.11.041006
 4. [Lee2021]: "Computing Local Multipoint Correlators Using the Numerical Renormalization Group", doi:10.1103/PhysRevX.11.041007
