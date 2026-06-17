@@ -34,6 +34,10 @@ These can be generated with the mpNRG code by Lee et.~al.\ \cite{Lee2021}.
 Off-the-shelf partial spectral functions (PSFs) can be downloaded from OpenDataLMU \href{https://doi.org/10.5282/ubm/data.613}{here}.
 Once you have suitable spectral data, set an environment variable \texttt{TCI4KELDYSH\_DATADIR} to
 the parent directory of the directory containing your set of spectral functions.
+
+If your PSFs come from an older version (before spring 2026) of MuNRG, you also have to export the environment variable \texttt{MPNRG\_VERSION} and set it to \texttt{old} (default is \texttt{new}).
+One way to find out which version was used to generate your PSF data is to check the PSF `.mat` files have keys `Adisc` or `PSFinfo` (\textit{old} version) or simply a key `PSFdata` holding a bare array of spectral peaks (\textit{new} version).
+
 With a single PSF data set, your \texttt{TCI4KELDYSH\_DATADIR} should be structured as follows:
 \begin{verbatim}
     <\texttt{TCI4KELDYSH\_DATADIR}>/
