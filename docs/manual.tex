@@ -210,6 +210,18 @@ grid. It contains three \texttt{Float64} vectors with keys \texttt{om1},\texttt{
 For details on the \texttt{KEV} and \texttt{coreEvaluator\_kwargs} options, see Sec.\ \ref{subsec:KeldyshCompression}.
 \end{section}
 
+\begin{section}{Preparing (ladder) D$\boldsymbol{\Gamma}$A calculations}
+\label{sec:DGammaA}
+\textit{Note: As of November 2026, the ladder D$\Gamma$A pipeline is still under development.}\\
+To perform a (ladder) D$\boldsymbol{\Gamma}$A calculation in the Matsubara formalism, you require:
+\begin{enumerate}
+\item[(i)] An impurity vertex in the desired channel. This can be generated
+as described in previous sections.
+\item[(ii)] A local self-energy. It can be generated using the script \texttt{scripts/get\_Sigma\_dense.jl}.
+\item[(iii)] A local Green's function. It can be generated using the script \texttt{scripts/get\_2pt\_corr.jl}.
+\end{enumerate}
+\end{section}
+
 \begin{section}{Contributing authors and acknowledgement}
 This document was written by Markus Frankenbach. The \texttt{TCI4Keldysh} code was
 written by Markus Frankenbach and Anxiang Ge in the group of Jan von Delft.
