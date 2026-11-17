@@ -135,7 +135,7 @@ __DO_FOURPOINT() = false
         zero_idx = findfirst(x -> abs(x)<=1.e-15, Gp.tucker.ωs_legs[bos_idx])
         state = QuanticsGrids.index_to_quantics(zero_idx; numdigits=R, base=2)
         @test length(Gano_mps)==R
-        @test isapprox(ano_val, TCI4Keldysh.eval(Gano_mps, state); atol=1.e-14)
+        @test isapprox(ano_val, TCI4Keldysh.eval_mps(Gano_mps, state); atol=1.e-14)
     end
 
     """
@@ -172,7 +172,7 @@ __DO_FOURPOINT() = false
             end
             to_interleave = npt==3 ? [nonstate, v1] : [nonstate, v1, v2]
             vtot = QuanticsGrids.interleave_dimensions(to_interleave[perm]...)
-            @test isapprox(0.0, TCI4Keldysh.eval(Gano_mps, vtot); atol=1.e-14)
+            @test isapprox(0.0, TCI4Keldysh.eval_mps(Gano_mps, vtot); atol=1.e-14)
         end
 
         # check nonzero
@@ -181,7 +181,7 @@ __DO_FOURPOINT() = false
         biniter = TCI4Keldysh.iterate_binvec((npt-2)*R)
         max_ = 0.0
         for v in biniter
-            max_ = max(max_, abs(TCI4Keldysh.eval(Gano_lowdim, collect(v))))
+            max_ = max(max_, abs(TCI4Keldysh.eval_mps(Gano_lowdim, collect(v))))
         end
         perm = collect(1:(npt-1))
         perm[1] = bos_idx
@@ -191,9 +191,9 @@ __DO_FOURPOINT() = false
             v2 = rand([1,2], R)
             to_interleave = npt==3 ? [state, v1] : [state, v1, v2]
             vtot = QuanticsGrids.interleave_dimensions(to_interleave[perm]...)
-            val = TCI4Keldysh.eval(Gano_mps, vtot)
+            val = TCI4Keldysh.eval_mps(Gano_mps, vtot)
             vref = QuanticsGrids.interleave_dimensions(deleteat!(to_interleave[perm], bos_idx)...)
-            refval = TCI4Keldysh.eval(Gano_lowdim, vref)
+            refval = TCI4Keldysh.eval_mps(Gano_lowdim, vref)
             @test isapprox(0.0, (refval-val) / max_; atol=1.e1*tolerance)
         end
         printstyled("\n  PASSED\n"; color=:green)
@@ -251,8 +251,8 @@ end
 
         for _ in 1:20
             v = rand([1,2], N)
-            fval = TCI4Keldysh.eval(Gpfull, v)
-            refval = TCI4Keldysh.eval(Gp1, v) + TCI4Keldysh.eval(Gp2, v) + TCI4Keldysh.eval(Gp3, v)
+            fval = TCI4Keldysh.eval_mps(Gpfull, v)
+            refval = TCI4Keldysh.eval_mps(Gp1, v) + TCI4Keldysh.eval_mps(Gp2, v) + TCI4Keldysh.eval_mps(Gp3, v)
             if !isapprox(fval, refval; atol=1.e-10)
                 return false
             end
@@ -270,8 +270,8 @@ end
 
         for _ in 1:20
             v = rand([1,2], N)
-            fval = TCI4Keldysh.eval(Gpfull, v)
-            refval = TCI4Keldysh.eval(Gp1, v) + TCI4Keldysh.eval(Gp2, v)
+            fval = TCI4Keldysh.eval_mps(Gpfull, v)
+            refval = TCI4Keldysh.eval_mps(Gp1, v) + TCI4Keldysh.eval_mps(Gp2, v)
             if !isapprox(fval, refval; atol=1.e-9)
                 return false
             end
