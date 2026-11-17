@@ -118,7 +118,7 @@ function FullCorrelator_recompress(Gps::Vector{MPS}; tcikwargs...)
     function eval_FullCorrelator(idx::Vector{Int})
         res = zero(ComplexF64)
         for Gp in Gps
-            res += eval(Gp, idx)
+            res += eval_mps(Gp, idx)
         end
         return res
     end

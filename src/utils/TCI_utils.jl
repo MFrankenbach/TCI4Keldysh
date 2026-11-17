@@ -326,7 +326,7 @@ function MPS_to_fatTensor(mps::MPS, slices::Vector{T}; reverse_idx=false, tags) 
         s_idx = QuanticsGrids.interleave_dimensions(s_quantics...)
         s_out = ntuple(i -> findfirst(ss -> ss==s[i], slices[i]), D)
         eval_idx = reverse_idx ? reverse(s_idx) : s_idx
-        out_arr[s_out...] = eval(mps, eval_idx)
+        out_arr[s_out...] = eval_mps(mps, eval_idx)
     end
     return out_arr
 end
@@ -364,7 +364,7 @@ function (obj::MPSEvaluator)(idx::Vector{Int})
     return scalar(res)
 end
 
-function eval(mps::MPS, idx::Vector{Int})
+function eval_mps(mps::MPS, idx::Vector{Int})
     TCI4Keldysh.@DEBUG length(idx)==length(mps) "idx and mps lengths do not match"
 
     res = ITensor(one(eltype(mps[1])))
@@ -1010,8 +1010,8 @@ function test_compress_full_frequencykernel()
     for i in 1:10
         samplevecs = [rand([1,2], R)  for _ in 1:3]
         # ugly...
-        refval = prod([eval(onedkernels[i], QuanticsGrids.interleave_dimensions(samplevecs[i], epsvec)) for i in eachindex(samplevecs)])
-        fullval = eval(fullkernel, QuanticsGrids.interleave_dimensions(samplevecs[1], epsvec, samplevecs[2], epsvec, samplevecs[3], epsvec))
+        refval = prod([eval_mps(onedkernels[i], QuanticsGrids.interleave_dimensions(samplevecs[i], epsvec)) for i in eachindex(samplevecs)])
+        fullval = eval_mps(fullkernel, QuanticsGrids.interleave_dimensions(samplevecs[1], epsvec, samplevecs[2], epsvec, samplevecs[3], epsvec))
 
         @show refval
         @show fullval

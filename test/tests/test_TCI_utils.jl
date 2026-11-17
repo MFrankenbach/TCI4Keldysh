@@ -85,7 +85,7 @@ using ITensorMPS
 
         for _ in 1:5
             v = rand([1,2], N)
-            e1 = TCI4Keldysh.eval(mps, v)
+            e1 = TCI4Keldysh.eval_mps(mps, v)
             e2 = TCI4Keldysh.eval_lr(mps, v, argmax(ld))
             ref = fat_mps[v...]
 
