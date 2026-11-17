@@ -117,7 +117,7 @@ function json_filename(jobtype::String, xmin, xmax, tolerance::Float64, beta::Fl
     return joinpath(TCI4Keldysh.pdatadir(), folder ,"$(jobtype)_R_min=$(xmin)_max=$(xmax)_tol=$(TCI4Keldysh.tolstr(tolerance))_beta=$beta")
 end
 
-function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, folder, flavor_idx, channel, kwargs...)
+function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, folder, flavor_idx, channel, prep_dga::Bool=false, kwargs...)
     beta = TCI4Keldysh.read_beta(PSFpath)
     outname = json_filename(jobtype, first(Rs), last(Rs), tolerance, beta; folder=folder)
     if TCI4Keldysh.DEBUG_TCI_KF_RAM()
@@ -139,10 +139,14 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
                     000000
                 end
 
+    if prep_dga && !(jobtype in ("matsubarafull", "matsubaracore", "conv_matsubarafull", "conv_matsubaracore"))
+        @info "prep_DGA=true is ignored for jobtype $jobtype"
+    end
+
     if jobtype=="matsubarafull"
-        matsubarafull(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+        matsubarafull(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, prep_dga=prep_dga, kwargs...)
     elseif jobtype=="matsubaracore"
-        matsubaracore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+        matsubaracore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, prep_dga=prep_dga, kwargs...)
     elseif jobtype=="keldyshcore"
         keldyshcore(outname, d; Rs=Rs, tolerance=tolerance, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="keldyshfull"
@@ -152,9 +156,9 @@ function run_job(jobtype::String; Rs::AbstractRange{Int}, tolerance, PSFpath, fo
     elseif jobtype=="conv_keldyshfull"
         keldyshfull_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
     elseif jobtype=="conv_matsubarafull"
-        matsubarafull_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+        matsubarafull_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, prep_dga=prep_dga, kwargs...)
     elseif jobtype=="conv_matsubaracore"
-        matsubaracore_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, kwargs...)
+        matsubaracore_conv(outname, d; Rs=Rs, PSFpath=PSFpath, folder=folder, flavor_idx=flavor_idx, channel=channel, prep_dga=prep_dga, kwargs...)
     elseif jobtype=="recompress"
         recompress_tt(outname, d; tolerance=tolerance, folder=folder, kwargs...)
     # Correlator jobs
@@ -302,6 +306,42 @@ function serialize_tt(tci, grid, fgrid, outname::String, folder::String)
     println(" Stored tensor train under $fname_tt.\n")
 end
 
+"""
+Write the impurity self-energy and Green's function for one quantics resolution `R`.
+HDF5 names and datasets match scripts/get_Sigma_dense.jl and scripts/get_2pt_corr.jl.
+Files are written into `folder` (the job output directory).
+"""
+function write_prep_DGA(
+    PSFpath::AbstractString,
+    R::Int,
+    folder::AbstractString;
+    flavor_idx::Int,
+    T::Float64,
+)
+    mkpath(folder)
+    Nhalf = 2^(R - 1)
+    ωfer = TCI4Keldysh.MF_grid(T, Nhalf, true)
+
+    Σ = TCI4Keldysh.calc_Σ_MF_sIE(PSFpath, ωfer; T=T, flavor_idx=flavor_idx)
+    sigma_path = joinpath(folder, "Sigma_dense_R$(R)_beta$(1/T).h5")
+    isfile(sigma_path) && rm(sigma_path)
+    h5write(sigma_path, "Sigma", Σ)
+    h5write(sigma_path, "om", ωfer)
+
+    G = TCI4Keldysh.FullCorrelator_MF(
+        PSFpath, ["F1", "F1dag"];
+        T, flavor_idx=flavor_idx, ωs_ext=(ωfer,),
+        ωconvMat=reshape([ 1; -1], (2, 1)), name="SIAM 2pG",
+    )
+    Gval = TCI4Keldysh.precompute_all_values(G)
+    gf_path = joinpath(folder, "GF_R$(R).h5")
+    isfile(gf_path) && rm(gf_path)
+    h5write(gf_path, "om", ωfer)
+    h5write(gf_path, "G", Gval)
+    println(" Stored DGA inputs under $sigma_path and $gf_path")
+    return (sigma_path, gf_path)
+end
+
 # ==== JOBTYPES
 
 function gen_KF_coreevaluator(
@@ -378,6 +418,7 @@ function matsubaracore(
     use_ΣaIE=true,
     batched_eval=true,
     save_as="jld2", # jld2, serialized, none
+    prep_dga::Bool=false,
     kwargs...
     )
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
@@ -466,6 +507,9 @@ function matsubaracore(
         TCI4Keldysh.report_mem(true)
         flush(stdout)
         flush(stderr)
+        if prep_dga
+            write_prep_DGA(PSFpath, R, folder; flavor_idx=flavor_idx, T=T)
+        end
     end
 end
 
@@ -484,6 +528,7 @@ function matsubarafull(
     flavor_idx,
     channel,
     save_as="jld2", # jld2, serialized, none
+    prep_dga::Bool=false,
     kwargs...
     )
 
@@ -559,6 +604,9 @@ function matsubarafull(
         TCI4Keldysh.report_mem(true)
         flush(stdout)
         flush(stderr)
+        if prep_dga
+            write_prep_DGA(PSFpath, R, folder; flavor_idx=flavor_idx, T=T)
+        end
     end
 end
 
@@ -1078,6 +1126,7 @@ function matsubarafull_conv(outname, d;
     PSFpath,
     flavor_idx,
     channel,
+    prep_dga::Bool=false,
     kwargs...)
 
     useFDR = if haskey(Dict(kwargs), :usefdr)
@@ -1115,6 +1164,9 @@ function matsubarafull_conv(outname, d;
         println("==== R=$R DONE")
         flush(stdout)
         flush(stderr)
+        if prep_dga
+            write_prep_DGA(PSFpath, R, folder; flavor_idx=flavor_idx, T=T)
+        end
     end
 end
 
@@ -1204,6 +1256,7 @@ function matsubaracore_conv(outname, d::Dict;
     PSFpath,
     flavor_idx,
     channel,
+    prep_dga::Bool=false,
     kwargs...)
 
     ωconvMat = TCI4Keldysh.channel_trafo(channel)
@@ -1239,6 +1292,9 @@ function matsubaracore_conv(outname, d::Dict;
         println("==== R=$R DONE")
         flush(stdout)
         flush(stderr)
+        if prep_dga
+            write_prep_DGA(PSFpath, R, folder; flavor_idx=flavor_idx, T=T)
+        end
     end
 end
 
@@ -1253,12 +1309,12 @@ function recompress_tt(outname, d::Dict; tolerance, folder, onesite=true, ttfile
     if tt_ isa TCI.TensorCI2 
         tci = tt_
         tt = TCI4Keldysh.TCItoMPS(tci)
-        f = v -> TCI4Keldysh.eval(tt,v)
+        f = v -> TCI4Keldysh.eval_mps(tt,v)
         ms = tt_.maxsamplevalue
     elseif tt_ isa Tuple{TCI.TensorCI2, QG.InherentDiscreteGrid}
         tci = tt_[1]
         tt = TCI4Keldysh.TCItoMPS(tci)
-        f = v -> TCI4Keldysh.eval(tt,v)
+        f = v -> TCI4Keldysh.eval_mps(tt,v)
         ms = tci.maxsamplevalue
     else
         error("Non-supported input of type $(typeof(tt))")
@@ -1743,10 +1799,16 @@ function main(args)
                 "pwtcidata"
             end
 
+    prep_dga = if haskey(inp_args, "prep_dga")
+        parse(Bool, inp_args["prep_dga"])
+    else
+        false
+    end
+
     # dispatch on jobtype
     jobtype = read_arg(inp_args, "jobtype")
     # avoid double keyword arguments...
-    explicit_args = [:jobtype, :psfpath, :folder, :rrange, :flavor_idx, :channel, :tolerance]
+    explicit_args = [:jobtype, :psfpath, :folder, :rrange, :flavor_idx, :channel, :tolerance, :prep_dga]
     kwargs_dict = Dict{Symbol,Any}()
     for (k,v) in pairs(inp_args)
         if Symbol(k) in explicit_args
@@ -1765,6 +1827,7 @@ function main(args)
         flavor_idx=flavor_idx,
         channel=channel,
         tolerance=tolerance,
+        prep_dga=prep_dga,
         kwargs_dict...
     )
     println("==== ELVIS HAS LEFT THE BUILDING")

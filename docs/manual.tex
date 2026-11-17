@@ -40,7 +40,7 @@ One way to find out which version was used to generate your PSF data is to check
 
 With a single PSF data set, your \texttt{TCI4KELDYSH\_DATADIR} should be structured as follows:
 \begin{verbatim}
-    <\texttt{TCI4KELDYSH\_DATADIR}>/
+    <TCI4KELDYSH_DATADIR>/
     |
     --<dataset name>/
         |
@@ -104,6 +104,14 @@ The most important settings are listed in Tab. \ref{tab:options}.
         \texttt{PSFpath} & Absolute path to partial spectral function data. & \texttt{/home/SIAM\_u=0.50/myPSFs}\\
         \midrule
         \texttt{flavor\_idx} & Select either 1 (all spins up) or 2 (two spins up, two down). & \texttt{1}\vfil \texttt{2}\\
+        \midrule
+        \texttt{prep\_DGA} &
+        If \texttt{true}, each $R$ of a Matsubara job
+        also writes the impurity self-energy
+        \texttt{Sigma\_dense\_R<R>\_beta<beta>.h5}
+        and Green's function \texttt{GF\_R<R>.h5}
+        into the output folder. Default \texttt{false}. &
+        \texttt{true}\vfil \texttt{false}\\
         \bottomrule
     \end{tabular}
     \caption{Selected input file options.}
@@ -220,6 +228,10 @@ as described in previous sections.
 \item[(ii)] A local self-energy. It can be generated using the script \texttt{scripts/get\_Sigma\_dense.jl}.
 \item[(iii)] A local Green's function. It can be generated using the script \texttt{scripts/get\_2pt\_corr.jl}.
 \end{enumerate}
+Setting \texttt{prep\_DGA true} on one of the Matsubara jobs in
+Tab.~\ref{tab:options} writes (ii) and (iii) into the same output folder,
+for every requested $R$, using the filenames above.
+The scripts remain available in case you already have a vertex.
 \end{section}
 
 \begin{section}{Contributing authors and acknowledgement}
